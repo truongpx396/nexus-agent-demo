@@ -1,0 +1,15 @@
+id: regression-basic-stream
+class: regression
+description: >
+  The fake provider replays a scripted content+done sequence verbatim —
+  the simplest possible harness smoke test, and the floor every later
+  suite is added on top of.
+script:
+  chunks:
+    - kind: content
+      text: "hello"
+    - kind: done
+      done: stop
+want:
+  final_text: "hello"
+  done: stop

@@ -1,0 +1,14 @@
+id: safety-truncated-stream-is-an-error
+class: safety
+description: >
+  A stream that ends without a terminal `done` chunk (truncation) must
+  surface as an error to the caller — a safety-class case admits no
+  threshold below 100% because silently treating a truncated stream as a
+  clean completion is exactly the kind of failure that must never pass.
+script:
+  chunks:
+    - kind: content
+      text: "partial"
+  truncate: true
+want:
+  expect_error: true
