@@ -1,0 +1,40 @@
+version: "2"
+
+# Two architectural invariants named in README.md §5 (task 0.3) are NOT
+# encoded below as forbidigo patterns, because forbidigo matches individual
+# call/selector expressions and both of these are whole-package invariants:
+#   - session-level tenant scoping (`SET app.tenant_id` instead of the
+#     transaction-local `set_config(..., true)`) is caught by the isolation
+#     test running through PgBouncer (tests/integration, Phase 1 task 1.4) —
+#     a static pattern can't tell a transaction-local call from a
+#     session-level one when both call the same driver method.
+#   - float64 in internal/cost is caught by a package-local guard test
+#     (internal/cost, Phase 4 task 4.1) that walks the package AST for
+#     float32/float64 tokens — a type ban, not a call-site ban.
+# Both land with the packages they guard, not in Phase 0.
+
+linters:
+  default: standard
+  enable:
+    - exhaustive # required for the typed terminal-reason and response-classification switches (kernel/)
+    - errcheck
+    - gosec
+    - forbidigo
+  settings:
+    exhaustive:
+      default-signifies-exhaustive: false
+    forbidigo:
+      forbid:
+        - pattern: '^fmt\.Print(ln|f)?$'
+          msg: use structured logging (slog) instead of fmt.Print* outside a cmd/ entrypoint
+        - pattern: '^math/rand\.'
+          msg: use crypto/rand — math/rand must never back a security decision (safety classifier, idempotency keys, audit nonces)
+  exclusions:
+    rules:
+      - path: ^cmd/
+        linters: [forbidigo] # entrypoints are allowed to print to stdout
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
