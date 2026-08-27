@@ -1,0 +1,56 @@
+name: nexus-agent-demo
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: nexus
+      POSTGRES_PASSWORD: nexus
+      POSTGRES_DB: nexus
+    ports:
+      # Host port 5433, not 5432: this machine already runs an unrelated
+      # postgres on 5432 for another project. The container's own port
+      # stays 5432 — only the host mapping shifts.
+      - "5433:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexus -d nexus"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Transaction-pooling PgBouncer sits between nexusd and Postgres. This is
+  # not an optimization — it is what the tenant-isolation test in Phase 1
+  # (README.md §5, task 1.4) runs against: RLS scoping must be
+  # transaction-local (`set_config(..., true)`) precisely because a
+  # transaction-pooling tier reassigns a physical connection between
+  # tenants between statements. A test that only exercises a direct
+  # connection to `postgres` proves nothing about the deployed topology.
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://nexus:nexus@postgres:5432/nexus
+      POOL_MODE: transaction
+      AUTH_TYPE: scram-sha-256
+      MAX_CLIENT_CONN: "200"
+      DEFAULT_POOL_SIZE: "20"
+    ports:
+      - "6432:5432"
+
+  redis:
+    image: redis:7
+    ports:
+      # Host port 6380, not 6379: same reason as postgres above.
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres-data:
