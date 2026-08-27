@@ -1,0 +1,53 @@
+# --- Go ---
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+coverage.txt
+coverage.html
+/vendor/
+
+# Go workspace files
+go.work
+go.work.sum
+
+# --- Build artifacts ---
+/cmd/nexusd/nexusd
+/cmd/nexusctl/nexusctl
+/cmd/signerd/signerd
+
+# --- Local env / secrets ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+!deploy/**/*.example
+
+# Local dev key material (KEK file, signerd key)
+/.dev/
+/secrets/
+
+# --- Docker / compose local state ---
+deploy/data/
+deploy/postgres-data/
+deploy/redis-data/
+
+# --- Blob store (offloaded oversized tool outputs, local dev only) ---
+/blobs/
+/.nexus/
+
+# --- Eval / test artifacts ---
+/evals/results/
+/evals/.cache/
+*.eval.log
+
+# --- IDE / OS ---
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
+
+# --- Logs ---
+*.log
