@@ -31,8 +31,8 @@ linters:
           msg: use crypto/rand — math/rand must never back a security decision (safety classifier, idempotency keys, audit nonces)
   exclusions:
     rules:
-      - path: ^cmd/
-        linters: [forbidigo] # entrypoints are allowed to print to stdout
+      - path: (^|/)cmd/
+        linters: [forbidigo] # entrypoints (top-level cmd/, and evals/cmd/runner) may print to stdout
 
 formatters:
   enable:

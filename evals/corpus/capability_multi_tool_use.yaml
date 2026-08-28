@@ -1,0 +1,24 @@
+id: capability-multi-tool-use
+class: capability
+description: >
+  Content interleaved with more than one tool_use chunk still concatenates
+  content correctly and reaches a clean `stop`.
+script:
+  chunks:
+    - kind: content
+      text: "checking two things: "
+    - kind: tool_use
+      tool_use_id: "t1"
+      tool_name: "file_read"
+      input: '{"path":"a.txt"}'
+    - kind: tool_use
+      tool_use_id: "t2"
+      tool_name: "file_read"
+      input: '{"path":"b.txt"}'
+    - kind: content
+      text: "done."
+    - kind: done
+      done: stop
+want:
+  final_text: "checking two things: done."
+  done: stop

@@ -1,0 +1,14 @@
+id: negative-malformed-stream-is-an-error
+class: negative
+description: >
+  A stream that breaks mid-delivery (malformed) must surface as an error,
+  not as a shorter-than-expected success.
+script:
+  chunks:
+    - kind: content
+      text: "ok"
+    - kind: done
+      done: stop
+  malformed: true
+want:
+  expect_error: true

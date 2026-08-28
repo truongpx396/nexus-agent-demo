@@ -1,5 +1,7 @@
 .PHONY: up down build run test lint migrate seed eval verify-chain
 
+TENANT ?= acme
+
 # --- Infrastructure (Postgres + PgBouncer + Redis) ---
 
 up: ## start postgres, pgbouncer, redis
@@ -27,14 +29,14 @@ lint: ## static analysis (golangci-lint 2.5.0, matches the source repo's pin)
 
 # --- Data plane operations (stubs until their owning phase lands) ---
 
-migrate: ## apply SQL migrations incl. RLS policies — lands Phase 1 (README.md §5)
-	@echo "not yet implemented: migrations/ is empty until Phase 1"
+migrate: build ## apply SQL migrations incl. RLS policies, direct to postgres (bypasses pgbouncer on purpose)
+	./bin/nexusd migrate
 
-seed: ## seed one tenant + agent + a demo skill — lands Phase 1/7
-	@echo "not yet implemented: seeding lands alongside migrate (Phase 1) and skills (Phase 7)"
+seed: build ## seed one tenant (TENANT=name, default acme); agent + skill seeding lands Phase 1/7
+	./bin/nexusd seed --tenant=$(TENANT)
 
-eval: ## run the eval corpus as the CI release gate — lands Phase 1 (skeleton) / Phase 9 (full gate)
-	@echo "not yet implemented: evals/ runner lands Phase 1, hardens in Phase 9"
+eval: ## run the eval corpus as the CI release gate (Phase 1 skeleton; hardens in Phase 9)
+	go run ./evals/cmd/runner
 
 verify-chain: ## verify the hash-chained audit log has no break or gap — lands Phase 5
 	@echo "not yet implemented: internal/audit/verify.go lands Phase 5"
