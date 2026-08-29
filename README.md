@@ -4,7 +4,7 @@ A **simplified, single-binary Go reimplementation** of
 [`truongpx396/nexus-agent`](https://github.com/truongpx396/nexus-agent) that still exercises **every core pattern** of the original design.
 
 **Target**: Go, one binary (`nexusd`) + one CLI (`nexusctl`), Postgres + PgBouncer + Redis,
-Docker-based sandbox. ~11 phases, ~7–9 weeks solo at a steady pace, every phase shippable.
+Docker-based sandbox. ~13 phases, ~8–11 weeks solo at a steady pace, every phase shippable.
 
 ---
 
@@ -134,12 +134,12 @@ Legend: **F** = full fidelity · **S** = simplified but structurally identical �
 | 61 | Config-not-forks onboarding | **F** | `internal/config/` | Tenant/agent/profile/policy are DB rows + markdown bootstrap |
 | 62 | Control↔data-plane versioned contract | **K** | `internal/controlplane/` | Interface + `v1` shapes + import-boundary test; one process |
 | 63 | Integration ports + authority boundary | **K** | port interfaces only | No third-party adapters — the state the original calls "must keep working forever" |
-| 64 | MCP client, per-user OAuth connectors, Telegram/Zalo, email, cron, web UI | **✗** | — | Surface *pattern* proven by REST + CLI; these add no new idea |
+| 64 | MCP client, per-user OAuth connectors, Telegram/Zalo, email, cron, web UI | **S** | `internal/surfaces/{mcp,telegram,zalo,email,cron}/`, `internal/connectors/`, `web/` | Phase 11 — six more thin adapters over the existing capability-descriptor pattern (#49); zero kernel change |
 | 65 | Credit ledger, billing periods, FX, price overrides, chargeback | **✗** | — | Commercial process, not architecture |
 | 66 | Multi-region residency, BYOK, four-topology packaging, rainbow deploy | **✗** | — | `region` and `key_id` columns kept as seams |
-| 67 | Retrieval/pgvector tier, document conversion, adversarial scan, adaptation proposals | **✗** | — | Each gated on a trigger the demo never reaches |
+| 67 | Retrieval/pgvector tier, document conversion, adversarial scan, adaptation proposals | **S** / ✗ | `internal/retrieval/`, `internal/ingest/` | Phase 12 ships retrieval + document conversion; adversarial scan and adaptation proposals stay out — each still gated on a trigger the demo never reaches |
 
-**Score: 55 of 67 patterns at full or simplified fidelity, 4 as seams, 8 deliberately out.**
+**Score: 57 of 67 patterns at full or simplified fidelity, 4 as seams, 6 deliberately out.**
 Every omission is a deployment, commercial, or connector concern — no architectural idea is dropped.
 
 One addition sits outside this count: peer agent teams (Phase 9) — shared task boards with
@@ -147,6 +147,15 @@ Kanban-style claiming. It is not a simplification of anything in the original's 
 scope, added after the fact and scoped tightly (fixed roster, shared budget envelope, read-time
 taint propagation) so it reuses this plan's existing primitives instead of adding a second set of
 rules alongside them.
+
+Two more rows from the commercial/compliance-tail collapse move back in the same way, as
+Phases 11–12: **additional surfaces** (MCP client, per-user OAuth connectors,
+Telegram/Zalo/email/cron, React web app) and the **retrieval tier** (pgvector + document
+conversion). Both extend the plan rather than change what the core 10 phases drop — REST + CLI
+already prove the surface pattern (#49) and file-first memory already proves the memory pattern
+(#46), so neither phase introduces a new architectural idea. They're built anyway, on the same
+seams, once there's a concrete integration need and a durable-knowledge corpus that outgrows
+file-first memory — see §5 Phases 11–12.
 
 ---
 
@@ -157,6 +166,7 @@ flowchart TB
     subgraph Surfaces["Surfaces (thin adapters — translate I/O only)"]
         REST[REST /v1/runs]
         CLI[nexusctl]
+        EXT["Phase 11: MCP client · per-user OAuth<br/>Telegram · Zalo · email · cron · React web"]
     end
 
     subgraph CP["Control plane (package boundary, same process)"]
@@ -174,7 +184,7 @@ flowchart TB
     end
 
     subgraph Trust["Trust surface"]
-        PG[(Postgres: append-only events + RLS<br/>via PgBouncer transaction pooling)]
+        PG[(Postgres: append-only events + RLS<br/>via PgBouncer transaction pooling<br/>+ pgvector, Phase 12)]
         SD[signerd: sign-only audit key]
         KEK[KEK file wraps per-tenant DEK]
     end
@@ -219,11 +229,15 @@ nexus-agent-demo/
 │   ├── sandbox/                # docker exec, limits, deny-net, (optional) broker
 │   ├── plan/                   # orchestration plane: schema, validator, predicate AST, evaluator
 │   ├── delegate/               # sub-agent seam (a tool invocation, not a side channel)
-│   ├── surfaces/               # rest/, cli/, capability descriptors, principal resolution, outbox
+│   ├── surfaces/               # rest/, cli/, telegram/, zalo/, email/, cron/, mcp/ — Phase 11 adds the last five
+│   ├── connectors/             # Phase 11: per-user OAuth token vault, sealed under crypto/
+│   ├── retrieval/              # Phase 12: pgvector index, tenant-scoped like every other table
+│   ├── ingest/                 # Phase 12: document conversion — PDF/DOCX/HTML → scanned, digested chunks
 │   ├── obs/                    # allowlisted attributes, log-derived spans, content-access grants
 │   ├── harness/                # harness_digest computation
 │   ├── config/                 # tenant/agent/profile/policy loading — config, never forks
 │   └── controlplane/           # the versioned CP<->DP contract as Go interfaces + local impl
+├── web/                        # Phase 11: React app over the existing REST + SSE API — no backend surface change
 ├── migrations/                 # numbered SQL, expand/contract discipline, RLS policies
 ├── evals/                      # corpus/*.yaml, runner, graders, judge, digest, CI gate
 ├── deploy/
@@ -301,6 +315,12 @@ Plus, all with `tenant_id` + RLS: `checkpoints`, `snapshots`, `idempotency_claim
 
 ~32 tables. The original has ~50; the 18 dropped are billing, FX, connectors, integration
 adapters, and the eval entities (which live in `evals/` as files here, not rows).
+
+Phases 11–12 add their own tables when they ship — `oauth_tokens` (`tenant_id`, `user_id`,
+`provider`, sealed under the same per-tenant DEK as any encrypted payload) and
+`retrieval_chunks` (`tenant_id`, `doc_id`, `chunk_id`, `embedding`, `source_digest`) — both
+`tenant_id`-scoped and RLS-enabled like every table above; nothing about them changes the Phase 1
+schema, which is the whole point of adding them late.
 
 **Tenant scoping — the only sanctioned form:**
 
@@ -698,6 +718,62 @@ a green check."
 
 ---
 
+### Phase 11 — Additional surfaces: MCP client, per-user OAuth connectors, Telegram/Zalo/email/cron, React web app (8–9 days)
+
+Not derived from new architecture — pattern #64 is already proven by REST + CLI (Phase 2, 7). This
+phase is six more instances of the same capability-descriptor seam (#49), built once a concrete
+integration need exists rather than deferred indefinitely (§8's trigger for this row has fired).
+Nothing here changes `kernel/`; 7.15's "empty kernel diff" proof extends to every surface added below.
+
+| # | Task | Proves |
+|---|---|---|
+| 11.1 | `internal/surfaces/mcp/` — MCP client adapter: each remote MCP server's tools are qualified as `mcp/{server}/{tool}@{version}` and admitted through the ordinary identity (#13), manifest (#14), and descriptor-scan (#15) path | No new tool ABI; an external tool is exactly as trusted as a builtin one, never more |
+| 11.2 | `internal/connectors/oauth.go` — per-user OAuth token vault: authorization-code flow per `(tenant_id, user_id, provider)`; tokens sealed under the existing per-tenant envelope encryption (#32), readable only inside a tool's `Call`, never placed in an event payload, log, or span | Reuses #32 and the allowlist discipline of #34 for a new content class |
+| 11.3 | Connector tools declare `Taint().reads_private_data` / `mutates_external` per action like any other tool — gated by the permission chain (#17) and Rule of Two (#21) unchanged | No connector-specific carve-out in the chain |
+| 11.4 | `internal/surfaces/telegram/`, `internal/surfaces/zalo/` — webhook surfaces; each declares a capability descriptor (#49), resolves the per-turn principal from the inbound sender (#49), replies through the existing outbox (#50) | Zero kernel change; reuses outbox at-least-once/idempotent delivery |
+| 11.5 | `internal/surfaces/email/` — inbound via provider webhook or IMAP poll, outbound through the outbox; `failed_permanent` stays distinguishable from unanswered (#50) | Reuses #50 unchanged |
+| 11.6 | `internal/surfaces/cron/` — a scheduler surface: a synthetic `principal_kind=scheduler` submits a run on a fixed schedule through the ordinary queue admission (#41) | No new admission path |
+| 11.7 | `web/` — React app against the existing `POST /v1/runs` + SSE (`GET /v1/runs/{id}/events`, #2.10); renders approval context (digests, never a bare UUID, per Phase 5's demo), taint state, terminal reasons | No backend surface change — proves the API was surface-agnostic all along |
+| 11.8 | Conformance test suite (#7.12) extended to all eight surfaces (REST, CLI, MCP, Telegram, Zalo, email, cron, web) | Same per-surface capability test, now run eight times |
+| 11.9 | Egress allowlist (#5.13) extended per connector/provider host; connector traffic from inside the sandbox stays in the deny set (#5.13, #8.15) — the in-sandbox broker, if it ever ships, remains the only route | No bypass introduced by adding connectors |
+
+**Demo**: the same task submitted via Telegram, email, and the React web app produces identical
+event sequences and terminal reasons to REST/CLI. An MCP-provided tool is admitted, then denied at
+permission layer 4 for a tenant whose tool profile excludes it, audited identically to a builtin
+tool refusal.
+**Acceptance**: 11.8 across all eight surfaces, and a test that greps every event payload, log
+line, and span for a live OAuth token — none ever appears (the same class of test #34 runs for
+telemetry, aimed at a new secret class).
+
+---
+
+### Phase 12 — Retrieval tier (pgvector) + document conversion (5–6 days)
+
+Ships once file-first memory (#46) is actually exhausted (~1M tokens of durable per-tenant
+knowledge, §8's original trigger) rather than pre-built speculatively. Retrieval sits **beside**
+memory, not instead of it — the same injection-screening and tenant-scoping discipline just
+applies to a second store.
+
+| # | Task | Proves |
+|---|---|---|
+| 12.1 | `internal/ingest/` — document conversion: PDF/DOCX/HTML/plaintext → normalized text; deterministic per-document digest; chunking with declared, stable chunk boundaries | Reuses the digest-over-plaintext idea from #32 |
+| 12.2 | `internal/ingest/admit.go` — a converted document runs the same admission-scan discipline as a skill bundle or board card (`pending → clean/flagged/rejected`, fail closed) before a chunk is ever indexed | Reuses #15/#48/9.7's injection-scan pattern for a new artifact |
+| 12.3 | `internal/retrieval/` — pgvector index: `(tenant_id, doc_id, chunk_id, embedding, source_digest)`; RLS + `InTenantTx` scoping (#29), no exception for embeddings | Reuses #29 with zero new scoping mechanism |
+| 12.4 | Embedding calls routed through the same `Provider` port and `BudgetGate.Reserve` (#37, #40) — indexing is metered, never off the paying loop | Extends #40's "every model call metered" to embeddings |
+| 12.5 | `provider/fake` extended with a deterministic embedding fake | Extends #10's mandate: no correctness test calls a live embedding model |
+| 12.6 | `platform/retrieve` — an ordinary `Tool` through the 16-step pipeline (#16); `Taint().reads_private_data=true`; result budgeted/paginated like any tool result (#3.13) | No new ABI — retrieval is a tool, not a kernel primitive |
+| 12.7 | Retrieved chunks pass through the same injection-screening as memory (#46) before entering the prompt | Reuses #46's screening for a second knowledge source |
+| 12.8 | Erasure test extended (#33, 5.4–5.5): shredding a tenant's DEK makes its retrieval index unrecoverable too — indexed chunks are a derived artifact, hard-deleted in the same erasure transaction | Retrieval must obey crypto-shredding, not open a durable-knowledge side door around it |
+
+**Demo**: ingest a 200-page PDF; `retrieve("...")` returns ranked chunks with source digests
+through the same event-logged, permission-gated, budgeted path as any other tool call. Then erase
+the tenant — the retrieval index is empty and the reconciliation job (#33) finds nothing
+outstanding.
+**Acceptance**: 12.8, and a test that no embedding call bypasses `BudgetGate.Reserve` (the same
+AST-level check #4.8 already runs, extended to the embedding call site).
+
+---
+
 ## 6. Effort summary
 
 | Phase | Days | Cumulative | Ships |
@@ -713,9 +789,13 @@ a green check."
 | 8 · Orchestration + delegation | 7 | 53 | Processes, not just conversations |
 | 9 · Peer agent teams | 7 | 60 | Peers, not just a tree |
 | 10 · Eval gate + go-live | 5 | 65 | An agent you can safely **change** |
+| 11 · Additional surfaces (MCP, OAuth, Telegram/Zalo/email/cron, web) | 9 | 74 | Every surface the original names, not just the two that prove the pattern |
+| 12 · Retrieval tier (pgvector) + document conversion | 6 | 80 | Durable knowledge beyond what file-first memory can carry |
 
-≈ **65 working days** solo. Phases 2 and 3 alone (12 days after setup + seams, i.e. day 20) give
+≈ **80 working days** solo. Phases 2 and 3 alone (12 days after setup + seams, i.e. day 20) give
 you a demonstrable, governed, single-surface agent — that is the natural first public milestone.
+Phases 11–12 are additive and ship last, on a trigger (§8), not on a fixed schedule — the 65-day
+core plan through Phase 10 is a complete, governed agent on its own.
 
 ## 7. Testing strategy
 
@@ -745,8 +825,6 @@ none requires migrating the event log, the audit chain, or the encryption model.
 | NATS JetStream; multi-process worker pool | Concurrency exceeds one process's comfortable load |
 | gVisor/Kata runtime classes, warm sandbox pool | Hostile multi-tenant isolation is required (the image and limits are already identical; it is a `runtimeClassName` change) |
 | **Physical** control/data-plane split | A BYOC customer exists — the contract and package boundary already ship |
-| MCP client, per-user OAuth connectors, Telegram/Zalo/email/cron surfaces, React web app | A real integration need; the surface *pattern* is already proven by REST + CLI |
-| Retrieval tier (pgvector), document conversion | The file-first memory tier is exhausted (~1M tokens durable knowledge) |
 | Credit ledger, billing periods, FX, price overrides, chargeback export | The platform bills someone |
 | Multi-region residency, BYOK, Helm/Terraform, rainbow deploy | A tenant contract requires it; `region` and `key_id` are already columns |
 | Third-party integration adapters (LiteLLM, Langfuse, Temporal…) | One is actually wanted; the ports exist and the platform must keep working with all of them off |
@@ -765,6 +843,8 @@ none requires migrating the event log, the audit chain, or the encryption model.
 | **Cost metering gets bolted onto foreground turns only** | 4.8 is a task, and a test asserts every `Provider.Stream` caller in the codebase passes through `BudgetGate.Reserve` — enforced by an AST check, not by review. |
 | **Scope creep back toward all 191 FRs** | Section 8 has a named trigger per deferral. If the trigger has not fired, the answer is no. |
 | **"Simplified" quietly becomes "weakened"** | Section 3's fidelity column is the contract. Anything marked **F** that ships as **S** is a plan change requiring a note here — the same discipline the source constitution applies to itself. |
+| **Six new surfaces (Phase 11) each grow their own bespoke auth/permission logic** | They don't get any: every new surface reuses the capability descriptor (#49) and the unmodified permission chain (#17); 11.8's conformance suite is what catches a surface that quietly special-cases itself. |
+| **Retrieval (Phase 12) becomes a second, unscoped copy of tenant knowledge that erasure can't reach** | 12.8 makes this the phase's gate, the same way 1.4 gates Phase 1: erasure must empty the retrieval index in the same transaction, not on a best-effort follow-up job. |
 
 ## 10. Source references
 
