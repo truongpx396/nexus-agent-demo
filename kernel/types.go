@@ -10,6 +10,8 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/google/uuid"
+
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 )
 
@@ -28,6 +30,36 @@ type ToolResult struct {
 	IsError   bool
 	Reason    string // set when IsError, or to explain a Synthetic result
 	Synthetic bool
+
+	// PermissionDenied marks a result the permission chain's final DENY
+	// produced (internal/permissions, Phase 3 task 3.6) — the loop's
+	// dispatch step (kernel/loop.go) reacts to this by terminating the run
+	// with TerminalPermissionDenied instead of continuing to the next turn:
+	// a denial is fatal to the run, not just to this one call.
+	PermissionDenied bool
+
+	// AwaitingApproval marks a result the chain's final ASK produced with no
+	// standing scope to satisfy it. Phase 3 ships no oversight service
+	// (that's Phase 5's internal/oversight) to act on an ASK, so the loop
+	// reacts by suspending the run — appending an EventApprovalRequested and
+	// marking the session's status suspended — rather than terminating or
+	// continuing; resuming a suspended run is Phase 5/6's concern, not this
+	// one's.
+	AwaitingApproval bool
+	AskKind          string // "once" | "session" | "multi_party" — set only when AwaitingApproval
+}
+
+// ExecContext carries the per-run facts a ToolExecutor needs beyond one
+// call's own request: identifiers for scoping/audit, and the session's
+// pinned autonomy level (permission chain layer 3). It is a small local
+// type rather than internal/permissions.AutonomyLevel because this
+// package's own doc comment restricts its imports to
+// internal/{provider,tools,promptctx,store,cost,reliability,obs} —
+// permissions is downstream of tools, not a package kernel names directly.
+type ExecContext struct {
+	TenantID      uuid.UUID
+	SessionID     uuid.UUID
+	AutonomyLevel string
 }
 
 // ToolExecutor runs one tool_use to completion. internal/tools/pipeline.go
@@ -35,7 +67,7 @@ type ToolResult struct {
 // the loop's dispatch step compiles and appends a correctly paired result
 // now, even though nothing can actually execute a tool until Phase 3 lands.
 type ToolExecutor interface {
-	Execute(ctx context.Context, req ToolUseRequest) ToolResult
+	Execute(ctx context.Context, req ToolUseRequest, rc ExecContext) ToolResult
 }
 
 // NotImplementedToolExecutor is the only ToolExecutor Phase 2 ships. Every
@@ -43,7 +75,7 @@ type ToolExecutor interface {
 // even though no tool actually runs yet.
 type NotImplementedToolExecutor struct{}
 
-func (NotImplementedToolExecutor) Execute(_ context.Context, _ ToolUseRequest) ToolResult {
+func (NotImplementedToolExecutor) Execute(_ context.Context, _ ToolUseRequest, _ ExecContext) ToolResult {
 	return ToolResult{
 		IsError:   true,
 		Synthetic: true,
@@ -87,4 +119,17 @@ type RunConfig struct {
 	// before the turn loop starts. Empty for a resumed/continued run (not
 	// exercised this phase — Phase 6 owns resume).
 	Input string
+	// AutonomyLevel is the session's pinned autonomy level ("read_only" |
+	// "supervised" | "autonomous"), forwarded to every ToolExecutor.Execute
+	// call this run makes (Phase 3's permission chain layer 3). Empty
+	// defaults to "supervised" at the executor, matching
+	// store.CreateSession's own default.
+	AutonomyLevel string
+	// LoadedTools is the resident catalog's qualified tool refs, pinned
+	// into this session's manifest at session start (internal/tools/
+	// manifest.go, README task 3.2). Run appends one EventToolLoaded per
+	// entry into the volatile zone before the turn loop starts — "tool_loaded
+	// lands in the volatile zone" (task 3.2's own wording) rather than being
+	// baked into the byte-stable system-prompt prefix.
+	LoadedTools []string
 }

@@ -21,11 +21,16 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent-demo/internal/hooks"
+	"github.com/truongpx396/nexus-agent-demo/internal/permissions"
+	"github.com/truongpx396/nexus-agent-demo/internal/permissions/safety"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/anthropic"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
+	"github.com/truongpx396/nexus-agent-demo/internal/tools"
+	"github.com/truongpx396/nexus-agent-demo/internal/tools/builtin"
 	"github.com/truongpx396/nexus-agent-demo/internal/version"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 	"github.com/truongpx396/nexus-agent-demo/migrations"
@@ -113,18 +118,26 @@ func serve(ctx context.Context) error {
 		return fmt.Errorf("configure provider: %w", err)
 	}
 
+	pipeline, catalog, catalogManifestDigest := newToolPipeline()
+	loadedTools := make([]string, len(catalog))
+	for i, c := range catalog {
+		loadedTools[i] = c.Name
+	}
+
 	starter := &kernelRunStarter{
 		kernel: &kernel.Kernel{
 			Provider: provider.Wrap([]provider.Provider{prov}),
-			Tools:    kernel.NotImplementedToolExecutor{}, // real tool pipeline lands Phase 3
-			Budget:   kernel.NoopBudgetGate{},             // real cost gate lands Phase 4
+			Tools:    kernel.PipelineExecutor{Pipeline: pipeline}, // real tool pipeline, Phase 3
+			Budget:   kernel.NoopBudgetGate{},                     // real cost gate lands Phase 4
 			Store:    st,
 		},
-		system:   "You are a helpful agent.",
-		maxTurns: 25,
+		system:      "You are a helpful agent. Tools may be denied or require approval depending on the session's autonomy level.",
+		catalog:     catalog,
+		loadedTools: loadedTools,
+		maxTurns:    25,
 	}
 
-	srv := rest.NewServer(starter, st, keyStore)
+	srv := rest.NewServer(starter, st, keyStore, catalogManifestDigest)
 	addr := envOr("NEXUS_HTTP_ADDR", ":8080")
 	fmt.Printf("listening on %s (provider=%s)\n", addr, envOr("NEXUS_PROVIDER", "fake"))
 	return http.ListenAndServe(addr, srv.Handler()) //nolint:gosec // dev/demo server; timeouts are a hardening task, not a Phase 2 one
@@ -158,6 +171,72 @@ func newProvider() (provider.Provider, error) {
 	}
 }
 
+// newToolPipeline wires the Phase 3 tool pipeline: the resident catalog
+// (the five builtin tools), the permission chain's tenant-independent
+// config, and the hook dispatcher. There is no tenant config store yet
+// (that's Phase 7's internal/config) — one process-wide profile bound to
+// every builtin tool is the honest Phase 3 stand-in, the same way Phase 2
+// pinned one hardcoded system prompt.
+func newToolPipeline() (*tools.Pipeline, []provider.ToolSchema, []byte) {
+	reg := tools.NewRegistry()
+	if err := reg.DeclareNamespace("platform", "nexusd"); err != nil {
+		fatalf("declare platform namespace: %v", err)
+	}
+
+	builtinTools := []tools.Tool{
+		builtin.FileRead{},
+		builtin.FileWrite{},
+		builtin.FileSearch{},
+		builtin.Shell{},
+		builtin.WebFetch{},
+	}
+	var toolRefs []string
+	var catalog []provider.ToolSchema
+	for _, t := range builtinTools {
+		if err := reg.Register(t); err != nil {
+			fatalf("register tool %s: %v", t.ID(), err)
+		}
+		status, findings := tools.Scan(t.Descriptor())
+		if err := reg.SetAdmissionStatus(t.ID(), status); err != nil {
+			fatalf("set admission status for %s: %v", t.ID(), err)
+		}
+		if status != tools.AdmissionClean {
+			fatalf("builtin tool %s failed admission (%s): %v", t.ID(), status, findings)
+		}
+		toolRefs = append(toolRefs, t.ID().String())
+		d := t.Descriptor()
+		catalog = append(catalog, provider.ToolSchema{Name: d.ID.String(), Description: d.Description, InputSchema: d.InputSchema})
+	}
+
+	manifest := tools.BuildManifest(reg)
+	chain := permissions.NewChain(permissions.ChainConfig{
+		Profiles: permissions.ProfileSet{Profiles: []permissions.ToolProfile{permissions.NewToolProfile("default", 1, toolRefs...)}},
+		Safety:   safety.NewClassifier(safety.DefaultRules(), demoSafetyModel{}, 0),
+	})
+
+	pipeline := tools.NewPipeline(tools.PipelineConfig{
+		Registry:      reg,
+		Manifest:      manifest,
+		Chain:         chain,
+		Hooks:         hooks.NewDispatcher(),
+		Blobs:         tools.BlobStore{Dir: envOr("NEXUS_BLOB_DIR", ".dev/blobs")},
+		WorkspaceRoot: envOr("NEXUS_WORKSPACE_ROOT", ".dev/workspaces"),
+	})
+	return pipeline, catalog, manifest.Digest
+}
+
+// demoSafetyModel stands in for Gate 3's model leg (internal/permissions/
+// safety.ModelClassifier): Phase 3 ships no real model-backed classifier —
+// wiring one through the ordinary Provider port is future work, not a
+// Phase 3 task — so this always defers instead of asking about every call
+// safety.DefaultRules doesn't recognize, which would otherwise swamp the
+// "governed agent" demo in approval requests for plainly harmless calls.
+type demoSafetyModel struct{}
+
+func (demoSafetyModel) Classify(context.Context, string, string) (safety.Verdict, string, error) {
+	return safety.VerdictDefer, "no real safety model configured (Phase 3 demo default)", nil
+}
+
 func loadOrGenerateKEK(path string) (crypto.KEK, error) {
 	f, err := os.Open(path) //nolint:gosec // path is an operator-controlled config value (NEXUS_KEK_PATH), never request input
 	if err == nil {
@@ -187,10 +266,11 @@ func loadOrGenerateKEK(path string) (crypto.KEK, error) {
 // internal/surfaces/rest never constructs either directly (starter.go's doc
 // comment).
 type kernelRunStarter struct {
-	kernel   *kernel.Kernel
-	system   string
-	catalog  []provider.ToolSchema
-	maxTurns int
+	kernel      *kernel.Kernel
+	system      string
+	catalog     []provider.ToolSchema
+	loadedTools []string
+	maxTurns    int
 }
 
 func (a *kernelRunStarter) StartRun(_ context.Context, req rest.RunRequest) (<-chan rest.RunEvent, error) {
@@ -200,11 +280,13 @@ func (a *kernelRunStarter) StartRun(_ context.Context, req rest.RunRequest) (<-c
 		Seal:      kernel.SealFunc(req.Seal),
 	}
 	cfg := kernel.RunConfig{
-		System:   a.system,
-		Catalog:  a.catalog,
-		ModelID:  req.ModelID,
-		MaxTurns: a.maxTurns,
-		Input:    req.Input,
+		System:        a.system,
+		Catalog:       a.catalog,
+		LoadedTools:   a.loadedTools,
+		ModelID:       req.ModelID,
+		MaxTurns:      a.maxTurns,
+		Input:         req.Input,
+		AutonomyLevel: req.AutonomyLevel,
 	}
 
 	ch := make(chan rest.RunEvent, 8)

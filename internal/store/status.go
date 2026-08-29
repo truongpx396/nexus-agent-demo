@@ -8,12 +8,18 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Session status values this phase produces. "suspended" (an approval or
-// input request pending) is Phase 5's — this phase's runs only ever reach
-// running and one of the two terminal statuses below.
+// Session status values. SessionStatusSuspended is Phase 3's: the
+// permission chain resolved ASK with no standing scope and no oversight
+// service yet to act on it (kernel/loop.go's suspendForApproval), so the
+// run pauses here rather than terminating or continuing. It is not a
+// terminal status — Phase 5's internal/oversight owns turning the
+// EventApprovalRequested that produced it into a real decision, and Phase
+// 6's internal/runctl + checkpoint own resuming the run from it; this phase
+// only ships the pause itself.
 const (
 	SessionStatusQueued    = "queued" // the schema default; a session that has never had Run() start
 	SessionStatusRunning   = "running"
+	SessionStatusSuspended = "suspended"
 	SessionStatusCompleted = "completed"
 	SessionStatusFailed    = "failed"
 )

@@ -22,11 +22,12 @@ type SealFunc func(plaintext []byte) (sealed, digest []byte, keyID string, err e
 // RunRequest is everything StartRun needs to begin one run. The session row
 // has already been durably created (handleCreateRun) before this is called.
 type RunRequest struct {
-	SessionID uuid.UUID
-	TenantID  uuid.UUID
-	Seal      SealFunc
-	Input     string
-	ModelID   string
+	SessionID     uuid.UUID
+	TenantID      uuid.UUID
+	Seal          SealFunc
+	Input         string
+	ModelID       string
+	AutonomyLevel string
 }
 
 // RunEvent is one item from the channel StartRun returns — store.Event

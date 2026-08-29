@@ -263,7 +263,7 @@ func TestRESTRunEndToEnd(t *testing.T) {
 		Store:    st,
 	}}
 
-	srv := rest.NewServer(starter, st, keyStore)
+	srv := rest.NewServer(starter, st, keyStore, nil)
 	httpSrv := httptest.NewServer(srv.Handler())
 	defer httpSrv.Close()
 
