@@ -21,6 +21,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/harness"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
@@ -83,6 +84,14 @@ type createRunRequest struct {
 	// "autonomous". Empty defaults to "supervised", matching
 	// store.CreateSession's own default.
 	Autonomy string `json:"autonomy,omitempty"`
+	// BudgetUSD, if set, is a per-task hard ceiling in decimal USD (e.g.
+	// "0.05") — internal/cost, Phase 4, task 4.5's worker-local, per-run
+	// ceiling. Parsed via cost.ParseDecimal (never a binary float) into a
+	// session-scoped budgets row created alongside the session itself.
+	// Empty means no session-level ceiling — cost.Gate.Reserve resolves
+	// DecisionSkip for this leg (a tenant-scoped ceiling, if configured
+	// out of band, still applies).
+	BudgetUSD string `json:"budget_usd,omitempty"`
 }
 
 type createRunResponse struct {
@@ -125,6 +134,16 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var budgetCeiling *cost.Money
+	if req.BudgetUSD != "" {
+		amount, perr := cost.ParseDecimal(req.BudgetUSD, cost.DefaultCurrency)
+		if perr != nil {
+			http.Error(w, `"budget_usd" is invalid: `+perr.Error(), http.StatusBadRequest)
+			return
+		}
+		budgetCeiling = &amount
+	}
+
 	sessionID := uuid.New()
 	digest := harness.Digest(harness.Config{
 		SystemPromptVersion:   "phase2-v1",
@@ -139,7 +158,7 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		if derr != nil {
 			return derr
 		}
-		return store.CreateSession(ctx, tx, store.Session{
+		if err := store.CreateSession(ctx, tx, store.Session{
 			SessionID:     sessionID,
 			SessionKey:    sessionID.String(),
 			TenantID:      tenantID,
@@ -152,7 +171,20 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 			RouteModelID:  route.ModelID,
 			RouteReason:   route.Reason,
 			AutonomyLevel: autonomy,
-		})
+		}); err != nil {
+			return err
+		}
+		if budgetCeiling != nil {
+			// A session-scoped budget (internal/cost, Phase 4 task 4.5) —
+			// created in the SAME transaction as the session row it
+			// references (budgets.scope_ref has an FK to sessions), so a
+			// caller never observes a session with no way to enforce the
+			// ceiling it asked for.
+			if _, err := cost.CreateBudget(ctx, tx, tenantID, cost.BudgetScopeSession, &sessionID, *budgetCeiling); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		http.Error(w, "create run: "+err.Error(), http.StatusInternalServerError)

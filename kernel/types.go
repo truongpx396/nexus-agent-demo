@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 )
 
@@ -84,18 +85,38 @@ func (NotImplementedToolExecutor) Execute(_ context.Context, _ ToolUseRequest, _
 }
 
 // BudgetGate is consulted before every Provider.Stream call — the "reserve"
-// step in README task 2.1's loop order (hygiene -> reserve -> stream -> ...).
-// internal/cost/gate.go (Phase 4, README task 4.4) is the real
-// reserve-then-reconcile implementation; NoopBudgetGate always allows, so the
-// loop's shape is real now without cost logic existing yet.
+// step in README task 2.1's loop order (hygiene -> reserve -> stream ->
+// ... -> reconcile) — and again after the stream completes, to reconcile
+// the reservation against real usage. internal/cost.Gate (Phase 4, README
+// task 4.4) is the real reserve-then-reconcile implementation; this
+// interface uses internal/cost's own request/response types directly
+// (rather than a kernel-local translation, the way ToolExecutor needs one
+// for internal/tools' richer Invocation/ExecuteResult shapes) because
+// kernel is allowed to import internal/cost outright (this package's own
+// doc comment) and cost.Gate's constructor-level shape already matches
+// what the loop needs one-for-one.
 type BudgetGate interface {
-	Reserve(ctx context.Context) error
+	Reserve(ctx context.Context, req cost.ReserveRequest) (cost.Reservation, error)
+	Reconcile(ctx context.Context, res cost.Reservation, usage provider.Usage, reported bool) error
 }
 
-// NoopBudgetGate is the only BudgetGate Phase 2 ships.
+// NoopBudgetGate is a BudgetGate that never enforces anything — every
+// Reserve call resolves cost.DecisionSkip and Reconcile is a no-op. It
+// exists for tests and any call site that doesn't care about cost
+// governance, not as Phase 2's production default anymore (cmd/nexusd
+// wires the real internal/cost.Gate as of Phase 4).
 type NoopBudgetGate struct{}
 
-func (NoopBudgetGate) Reserve(_ context.Context) error { return nil }
+func (NoopBudgetGate) Reserve(_ context.Context, req cost.ReserveRequest) (cost.Reservation, error) {
+	return cost.Reservation{
+		ID: uuid.New(), TenantID: req.TenantID, SessionID: req.SessionID, ModelID: req.ModelID,
+		Decision: cost.Decision{Kind: cost.DecisionSkip, Reason: "NoopBudgetGate: cost governance not wired"},
+	}, nil
+}
+
+func (NoopBudgetGate) Reconcile(context.Context, cost.Reservation, provider.Usage, bool) error {
+	return nil
+}
 
 // SealFunc seals one event's plaintext payload, returning the sealed bytes,
 // a digest over the plaintext (survives crypto-shredding, FR-081), and the

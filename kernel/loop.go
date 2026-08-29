@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"iter"
+	"log/slog"
 	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	"github.com/truongpx396/nexus-agent-demo/internal/promptctx"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
@@ -125,8 +127,19 @@ func (k *Kernel) Run(ctx context.Context, st *RunState, cfg RunConfig) iter.Seq2
 				}
 			}
 
-			if err := k.Budget.Reserve(ctx); err != nil {
-				k.terminate(ctx, st, yield, TerminalCostExhausted(err.Error()))
+			reservation, reserveErr := k.Budget.Reserve(ctx, cost.ReserveRequest{
+				TenantID: st.TenantID, SessionID: st.SessionID, ModelID: cfg.ModelID, Purpose: cost.PurposeTurn,
+			})
+			bev, err := k.appendBudgetDecision(ctx, st, reservation)
+			if err != nil {
+				yield(store.Event{}, err)
+				return
+			}
+			if !yield(bev, nil) {
+				return
+			}
+			if reserveErr != nil {
+				k.terminate(ctx, st, yield, TerminalCostExhausted(reservation.Decision.Reason))
 				return
 			}
 
@@ -134,6 +147,7 @@ func (k *Kernel) Run(ctx context.Context, st *RunState, cfg RunConfig) iter.Seq2
 
 			stream, err := k.Provider.Stream(ctx, prompt, cfg.Catalog, provider.RunContext{TenantID: st.TenantID, SessionID: st.SessionID})
 			if err != nil {
+				k.reconcile(ctx, st, reservation, provider.Usage{}, false)
 				k.terminateFromStreamError(ctx, st, yield, err)
 				return
 			}
@@ -142,6 +156,7 @@ func (k *Kernel) Run(ctx context.Context, st *RunState, cfg RunConfig) iter.Seq2
 			var reasoningChunks [][]byte
 			var toolUses []ToolUseRequest
 			var usage provider.Usage
+			var usageReported bool
 			var done provider.DoneReason
 			var streamErr error
 			for {
@@ -162,11 +177,21 @@ func (k *Kernel) Run(ctx context.Context, st *RunState, cfg RunConfig) iter.Seq2
 					toolUses = append(toolUses, ToolUseRequest{ToolUseID: chunk.ToolUseID, ToolName: chunk.ToolName, Input: chunk.Input})
 				case provider.ChunkUsage:
 					usage = chunk.Usage
+					usageReported = true
 				case provider.ChunkDone:
 					done = chunk.Done
 				}
 			}
-			_ = usage // recorded for cache-read measurement (internal/promptctx.CacheReadRate); no accumulator wired yet this phase
+			// Reconcile unconditionally, success or failure: task 4.7's
+			// UNREPORTED case is a streamErr, even one arriving AFTER a
+			// usage chunk was already seen — failover.go's "committed
+			// after first chunk" only says a mid-stream error is never
+			// retried, not that a usage figure emitted before the error is
+			// still trustworthy for everything that came after it.
+			// Reconcile charges the full reserved worst case instead of a
+			// partial/zero usage figure from a stream that failed
+			// ("an unreliable provider must not look free").
+			k.reconcile(ctx, st, reservation, usage, usageReported && streamErr == nil)
 			if streamErr != nil {
 				k.terminateFromStreamError(ctx, st, yield, streamErr)
 				return
@@ -256,6 +281,19 @@ func (k *Kernel) Run(ctx context.Context, st *RunState, cfg RunConfig) iter.Seq2
 				return
 			}
 		}
+	}
+}
+
+// reconcile calls BudgetGate.Reconcile and logs (never terminates the run
+// on) a failure — Reserve's own decision-persist failure already fails
+// closed BEFORE any spend is incurred (internal/cost.Gate.Reserve's doc
+// comment); by the time Reconcile runs, the call has already happened, so
+// a reconciliation failure means the true cost may be under-accounted,
+// never that the run's own turn failed. Escalating it into a hard stop
+// here would let an accounting write outage kill an otherwise-healthy run.
+func (k *Kernel) reconcile(ctx context.Context, st *RunState, res cost.Reservation, usage provider.Usage, reported bool) {
+	if err := k.Budget.Reconcile(ctx, res, usage, reported); err != nil {
+		slog.Error("kernel: cost reconciliation failed", "error", err, "session_id", st.SessionID, "reservation_id", res.ID)
 	}
 }
 
@@ -370,6 +408,13 @@ type approvalRequestedPayload struct {
 	AskKind string `json:"ask_kind,omitempty"`
 }
 
+type budgetDecisionPayload struct {
+	Decision string `json:"decision"`
+	Reason   string `json:"reason,omitempty"`
+	BudgetID string `json:"budget_id,omitempty"`
+	Reserved string `json:"reserved,omitempty"`
+}
+
 func (k *Kernel) appendEvent(ctx context.Context, st *RunState, typ store.EventType, actor store.Actor, toolID *string, pairRef *uuid.UUID, modelID *string, payload any) (store.Event, error) {
 	plaintext, err := json.Marshal(payload)
 	if err != nil {
@@ -437,6 +482,26 @@ func (k *Kernel) appendApprovalRequested(ctx context.Context, st *RunState, tool
 		tid = *toolID
 	}
 	return k.appendEvent(ctx, st, store.EventApprovalRequested, store.ActorSystem, toolID, nil, nil, approvalRequestedPayload{ToolID: tid, Reason: reason, AskKind: askKind})
+}
+
+// appendBudgetDecision appends the store.EventBudgetDecision every Reserve
+// resolution produces (README task 4.6 — every resolution, including
+// DecisionSkip), regardless of whether the reservation was ultimately
+// granted or refused. This is a separate durable write from
+// internal/cost.RecordDecision's own budget_decisions row (see
+// internal/cost/gate.go's doc comment on Gate for why the two aren't one
+// shared transaction): internal/cost never appends to the event log
+// itself — store.Append is the log's one sanctioned writer.
+func (k *Kernel) appendBudgetDecision(ctx context.Context, st *RunState, res cost.Reservation) (store.Event, error) {
+	payload := budgetDecisionPayload{
+		Decision: string(res.Decision.Kind),
+		Reason:   res.Decision.Reason,
+		Reserved: res.Decision.Reserved.String(),
+	}
+	if res.Decision.BudgetID != nil {
+		payload.BudgetID = res.Decision.BudgetID.String()
+	}
+	return k.appendEvent(ctx, st, store.EventBudgetDecision, store.ActorSystem, nil, nil, nil, payload)
 }
 
 func (k *Kernel) appendTerminal(ctx context.Context, st *RunState, payload terminalEventPayload) (store.Event, error) {
