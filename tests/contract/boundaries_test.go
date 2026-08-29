@@ -36,8 +36,15 @@ var rules = []boundaryRule{
 		},
 	},
 	{
+		// A "/..." pattern, not the bare package path: internal/surfaces
+		// itself has no .go files of its own — every surface lives one
+		// level down (internal/surfaces/rest landed in Phase 2;
+		// internal/surfaces/cli is Phase 7), and go/packages only loads a
+		// directory that actually contains a package. The bare path would
+		// silently report "doesn't exist yet" forever and never check
+		// anything; the wildcard follows the tree as surfaces are added.
 		name: "surfaces must not import the kernel directly",
-		pkg:  modulePrefix + "internal/surfaces",
+		pkg:  modulePrefix + "internal/surfaces/...",
 		forbidden: []string{
 			modulePrefix + "kernel",
 		},
