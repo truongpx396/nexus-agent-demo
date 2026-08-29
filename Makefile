@@ -32,7 +32,7 @@ lint: ## static analysis (golangci-lint 2.5.0, matches the source repo's pin)
 migrate: build ## apply SQL migrations incl. RLS policies, direct to postgres (bypasses pgbouncer on purpose)
 	./bin/nexusd migrate
 
-seed: build ## seed one tenant (TENANT=name, default acme); agent + skill seeding lands Phase 1/7
+seed: build ## seed one tenant (TENANT=name, default acme) + its default price book; agent + skill seeding lands Phase 1/7
 	./bin/nexusd seed --tenant=$(TENANT)
 
 eval: ## run the eval corpus as the CI release gate (Phase 1 skeleton; hardens in Phase 9)

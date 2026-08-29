@@ -28,6 +28,17 @@ type ChunkSpec struct {
 	ToolName  string `yaml:"tool_name,omitempty" json:"tool_name,omitempty"`
 	Input     string `yaml:"input,omitempty" json:"input,omitempty"`
 	Done      string `yaml:"done,omitempty" json:"done,omitempty"`
+
+	// Usage fields, meaningful only when Kind == "usage": a scripted turn's
+	// token counts, split by class exactly the way a real provider's usage
+	// chunk is (provider.Usage's own doc comment) — internal/cost, Phase 4,
+	// is what actually consumes these; earlier phases left them unset and
+	// got a zero-value Usage, which stays true for any script that still
+	// omits them.
+	InputUncached   int `yaml:"input_uncached,omitempty" json:"input_uncached,omitempty"`
+	InputCacheRead  int `yaml:"input_cache_read,omitempty" json:"input_cache_read,omitempty"`
+	InputCacheWrite int `yaml:"input_cache_write,omitempty" json:"input_cache_write,omitempty"`
+	OutputTokens    int `yaml:"output_tokens,omitempty" json:"output_tokens,omitempty"`
 }
 
 // Script describes one deterministic simulated provider turn: the chunks it
@@ -66,7 +77,12 @@ func toChunk(spec ChunkSpec) (provider.Chunk, error) {
 			Input:     input,
 		}, nil
 	case provider.ChunkUsage:
-		return provider.Chunk{Kind: provider.ChunkUsage}, nil
+		return provider.Chunk{Kind: provider.ChunkUsage, Usage: provider.Usage{
+			InputUncached:   spec.InputUncached,
+			InputCacheRead:  spec.InputCacheRead,
+			InputCacheWrite: spec.InputCacheWrite,
+			OutputTokens:    spec.OutputTokens,
+		}}, nil
 	case provider.ChunkDone:
 		return provider.Chunk{Kind: provider.ChunkDone, Done: provider.DoneReason(spec.Done)}, nil
 	default:

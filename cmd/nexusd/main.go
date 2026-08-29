@@ -15,11 +15,14 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 
+	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/hooks"
 	"github.com/truongpx396/nexus-agent-demo/internal/permissions"
@@ -47,6 +50,11 @@ const (
 	// 0000_app_role.sql). nexus, the migration role, is a superuser and
 	// would silently see every tenant's rows regardless of RLS.
 	defaultAppDSN = "postgres://nexus_app:nexus_app@localhost:6432/nexus"
+	// defaultRedisAddr matches deploy/docker-compose.yml's host mapping
+	// (6380, not Redis's usual 6379 — see that file's own comment on why).
+	// internal/cost.Gate uses it for the tenant-ceiling epoch-marked
+	// counter (README task 4.4); nothing else in this binary touches Redis.
+	defaultRedisAddr = "localhost:6380"
 )
 
 func main() {
@@ -124,11 +132,14 @@ func serve(ctx context.Context) error {
 		loadedTools[i] = c.Name
 	}
 
+	redisClient := redis.NewClient(&redis.Options{Addr: envOr("NEXUS_REDIS_ADDR", defaultRedisAddr)})
+	gate := cost.NewGate(st, redisClient, cost.DefaultMeters(), cost.GateConfig{})
+
 	starter := &kernelRunStarter{
 		kernel: &kernel.Kernel{
 			Provider: provider.Wrap([]provider.Provider{prov}),
 			Tools:    kernel.PipelineExecutor{Pipeline: pipeline}, // real tool pipeline, Phase 3
-			Budget:   kernel.NoopBudgetGate{},                     // real cost gate lands Phase 4
+			Budget:   gate,                                        // real reserve-then-reconcile cost gate, Phase 4
 			Store:    st,
 		},
 		system:      "You are a helpful agent. Tools may be denied or require approval depending on the session's autonomy level.",
@@ -164,6 +175,7 @@ func newProvider() (provider.Provider, error) {
 		// just what an unscripted `nexusd run` demo has to say.
 		return fake.New(fake.Script{Chunks: []fake.ChunkSpec{
 			{Kind: "content", Text: "Hello from the Phase 2 kernel loop demo."},
+			{Kind: "usage", InputUncached: 120, OutputTokens: 18},
 			{Kind: "done", Done: "stop"},
 		}}), nil
 	default:
@@ -359,6 +371,52 @@ func runSeed(ctx context.Context, args []string) error {
 		return fmt.Errorf("seed tenant: %w", err)
 	}
 
+	if err := s.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+		return seedPriceBook(ctx, tx, tenantID)
+	}); err != nil {
+		return fmt.Errorf("seed price book: %w", err)
+	}
+
 	fmt.Printf("seeded tenant %q (tenant_id=%s)\n", *tenantName, tenantID)
+	return nil
+}
+
+// seedPriceBook inserts one price book entry per token meter (README task
+// 4.3) the first time a tenant is seeded — cost governance is otherwise
+// inert (internal/cost.Gate fails closed with "no price book entry" on
+// every Reserve, on purpose: an unpriced meter must never look free).
+// Idempotent like the tenant insert above it: a second `make seed` for the
+// same tenant is a no-op once MeterOutput's wildcard entry already exists.
+// Prices are illustrative, Claude-Sonnet-class figures per million tokens;
+// every entry uses cost.WildcardSubject, so one price covers every model
+// this demo routes to — a real per-model override is a feature the price
+// book schema supports (internal/cost/pricebook.go) but this seed step
+// doesn't exercise.
+func seedPriceBook(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) error {
+	existing, err := cost.LoadPriceBook(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if _, ok := existing.Lookup(cost.MeterOutput, cost.WildcardSubject, time.Now()); ok {
+		return nil
+	}
+
+	now := time.Now()
+	for _, p := range []struct {
+		meter                 cost.MeterID
+		pricePerMillionMicros int64
+	}{
+		{cost.MeterInputUncached, 3_000_000},   // $3 / million input tokens
+		{cost.MeterInputCacheRead, 300_000},    // $0.30 / million cache-read tokens
+		{cost.MeterInputCacheWrite, 3_750_000}, // $3.75 / million cache-write tokens
+		{cost.MeterOutput, 15_000_000},         // $15 / million output tokens
+	} {
+		if err := cost.InsertPriceBookEntry(ctx, tx, tenantID, cost.PriceBookEntry{
+			Meter: p.meter, Subject: cost.WildcardSubject, Version: 1,
+			Currency: cost.DefaultCurrency, PricePerMillionMicros: p.pricePerMillionMicros, EffectiveFrom: now,
+		}); err != nil {
+			return err
+		}
+	}
 	return nil
 }
