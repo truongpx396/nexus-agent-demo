@@ -78,6 +78,15 @@ func (s Shell) Call(ctx context.Context, in json.RawMessage, rc tools.RunContext
 	if rc.WorkspaceDir != "" {
 		cmd.Dir = rc.WorkspaceDir
 	}
+	// WaitDelay bounds how long Wait (inside CombinedOutput) will wait, once
+	// the context is done, for the killed process's own I/O to actually
+	// finish — without it, a command that backgrounds or forks a
+	// grandchild sharing the same stdout/stderr pipe (e.g. "sleep 5 &", or
+	// a shell that doesn't tail-call-optimize "sleep 5" into an exec) can
+	// keep that pipe open long after the direct child was killed, and
+	// CombinedOutput blocks until the grandchild exits on its own — the
+	// exact hang github.com/golang/go/issues/23019 added WaitDelay to fix.
+	cmd.WaitDelay = 500 * time.Millisecond
 	output, runErr := cmd.CombinedOutput()
 
 	out, err := json.Marshal(map[string]string{"output": string(output)})
