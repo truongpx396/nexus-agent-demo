@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"strings"
@@ -12,7 +13,7 @@ import (
 func TestBudgetResult_UnderCapPassesThrough(t *testing.T) {
 	blobs := BlobStore{Dir: t.TempDir()}
 	small := json.RawMessage(`{"ok":true}`)
-	out, err := BudgetResult(blobs, uuid.New(), "x/y@v1", small)
+	out, err := BudgetResult(context.Background(), blobs, uuid.New(), uuid.New(), "x/y@v1", small, nil)
 	if err != nil {
 		t.Fatalf("BudgetResult: %v", err)
 	}
@@ -25,11 +26,27 @@ func TestBudgetResult_OverCapSpillsAndPreviewsWithBanner(t *testing.T) {
 	dir := t.TempDir()
 	blobs := BlobStore{Dir: dir}
 	big := json.RawMessage(`"` + strings.Repeat("y", maxResultBytes+500) + `"`)
+	tenantID := uuid.New()
 	sessionID := uuid.New()
 
-	out, err := BudgetResult(blobs, sessionID, "platform/shell@v1", big)
+	var recorded []string
+	recorder := func(_ context.Context, gotTenant, gotSession uuid.UUID, kind, path string) error {
+		if gotTenant != tenantID || gotSession != sessionID {
+			t.Fatalf("recorder called with tenant=%s session=%s, want tenant=%s session=%s", gotTenant, gotSession, tenantID, sessionID)
+		}
+		if kind != "blob" {
+			t.Fatalf("recorder kind = %q, want %q", kind, "blob")
+		}
+		recorded = append(recorded, path)
+		return nil
+	}
+
+	out, err := BudgetResult(context.Background(), blobs, tenantID, sessionID, "platform/shell@v1", big, recorder)
 	if err != nil {
 		t.Fatalf("BudgetResult: %v", err)
+	}
+	if len(recorded) != 1 {
+		t.Fatalf("recorder called %d times, want 1", len(recorded))
 	}
 	var decoded budgetedResult
 	if err := json.Unmarshal(out, &decoded); err != nil {

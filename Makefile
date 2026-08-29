@@ -1,4 +1,4 @@
-.PHONY: up down build run test lint migrate seed eval verify-chain
+.PHONY: up down build run signerd test lint migrate seed eval verify-chain erase
 
 TENANT ?= acme
 
@@ -18,8 +18,13 @@ build: ## build all three binaries into ./bin
 	go build -o bin/nexusctl ./cmd/nexusctl
 	go build -o bin/signerd ./cmd/signerd
 
-run: build ## run nexusd in the foreground
+run: build ## run signerd in the background + nexusd in the foreground (Ctrl-C stops both)
+	./bin/signerd & echo $$! > .dev/signerd.pid
+	@trap 'kill `cat .dev/signerd.pid` 2>/dev/null; rm -f .dev/signerd.pid' EXIT INT TERM; \
 	./bin/nexusd
+
+signerd: build ## run signerd alone in the foreground — nexusd's Kernel.Receipts (README task 5.2) needs it reachable at NEXUS_SIGNERD_SOCKET (default .dev/signerd.sock) before any event can append
+	./bin/signerd
 
 test: ## unit + property tests (no external services required)
 	go test ./...
@@ -38,5 +43,5 @@ seed: build ## seed one tenant (TENANT=name, default acme) + its default price b
 eval: ## run the eval corpus as the CI release gate (Phase 1 skeleton; hardens in Phase 9)
 	go run ./evals/cmd/runner
 
-verify-chain: ## verify the hash-chained audit log has no break or gap — lands Phase 5
-	@echo "not yet implemented: internal/audit/verify.go lands Phase 5"
+verify-chain: build ## verify the hash-chained audit log has no break or gap (README task 5.3)
+	./bin/nexusd verify-chain

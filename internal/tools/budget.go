@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,6 +10,16 @@ import (
 
 	"github.com/google/uuid"
 )
+
+// DerivedArtifactRecorder tracks a plaintext-derived file living outside
+// the encrypted event log — today, only a BudgetResult spill — so
+// internal/crypto/shred.go's erasure and reconciliation (README task 5.4)
+// have something to find and hard-delete. Declared as a function type here,
+// not imported from a store/DB package, so internal/tools stays free of a
+// direct DB dependency (its existing, zero-DB design); cmd/nexusd wires the
+// real store-backed recorder in. Nil is valid and simply means spills go
+// untracked (every pre-Phase-5 caller, including every test in this file).
+type DerivedArtifactRecorder func(ctx context.Context, tenantID, sessionID uuid.UUID, kind, path string) error
 
 // approxCharsPerToken is a rough, documented estimate — this demo has no
 // tokenizer of its own in internal/tools, and an approximation is the
@@ -57,14 +68,22 @@ type budgetedResult struct {
 // BudgetResult is pipeline step 15 (README task 3.13): output at or under
 // the cap passes through unchanged; anything larger is spilled to blobs and
 // replaced with a preview plus the "do not infer success from the preview"
-// banner the task names verbatim.
-func BudgetResult(blobs BlobStore, sessionID uuid.UUID, toolID string, output json.RawMessage) (json.RawMessage, error) {
+// banner the task names verbatim. recorder, if non-nil, tracks the spilled
+// file as a derived artifact (task 5.4) — a recorder failure is logged into
+// the returned error only when nothing else already fires (it never
+// unwinds a spill that already succeeded and is already on disk).
+func BudgetResult(ctx context.Context, blobs BlobStore, tenantID, sessionID uuid.UUID, toolID string, output json.RawMessage, recorder DerivedArtifactRecorder) (json.RawMessage, error) {
 	if len(output) <= maxResultBytes {
 		return output, nil
 	}
 	path, err := blobs.Spill(sessionID, toolID, output)
 	if err != nil {
 		return nil, fmt.Errorf("tools: spill oversized result: %w", err)
+	}
+	if recorder != nil {
+		if err := recorder(ctx, tenantID, sessionID, "blob", path); err != nil {
+			return nil, fmt.Errorf("tools: record derived artifact %s: %w", path, err)
+		}
 	}
 	preview := string(output[:maxResultBytes])
 	preview += fmt.Sprintf("\n\n[preview truncated at ~%d tokens; full result spilled to %s — do not infer success from the preview]", maxResultTokens, path)

@@ -10,12 +10,15 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/tools"
 )
 
-// Shell runs a command in the session workspace. It is deliberately
-// UNSANDBOXED — Phase 5's internal/sandbox is what will run this inside
-// Docker with --network none and hard resource limits. Until then, what
-// this tool may do is bounded entirely by the permission chain
-// (internal/permissions) and hooks (internal/hooks) upstream of it — the
-// Phase 3 demo's "delete the build dir" refusal happens there, never here.
+// Shell runs a command in the session workspace — inside Docker, with
+// --network none and hard resource limits, whenever rc.Sandbox is set
+// (internal/sandbox, README task 5.12); falling back to a local,
+// UNSANDBOXED os/exec otherwise, for tests and any caller that hasn't wired
+// one. Either way, what this tool may do is FIRST bounded by the permission
+// chain (internal/permissions) and hooks (internal/hooks) upstream of it —
+// the Phase 3 demo's "delete the build dir" refusal happens there, never
+// here — the sandbox is a second, independent boundary, not a replacement
+// for the first.
 type Shell struct {
 	// Timeout bounds wall-clock execution; defaults to 30s.
 	Timeout time.Duration
@@ -67,6 +70,11 @@ func (s Shell) Call(ctx context.Context, in json.RawMessage, rc tools.RunContext
 	if err := json.Unmarshal(in, &req); err != nil {
 		return tools.Result{}, err
 	}
+
+	if rc.Sandbox != nil {
+		return s.callSandboxed(ctx, rc, req)
+	}
+
 	timeout := s.Timeout
 	if timeout <= 0 {
 		timeout = 30 * time.Second
@@ -95,6 +103,30 @@ func (s Shell) Call(ctx context.Context, in json.RawMessage, rc tools.RunContext
 	}
 	if runErr != nil {
 		return tools.Result{Output: out, IsError: true, Reason: runErr.Error()}, nil
+	}
+	return tools.Result{Output: out}, nil
+}
+
+// callSandboxed runs req.Cmd through rc.Sandbox (internal/sandbox, README
+// task 5.12) instead of a local process — a breach (timeout/OOM/PID-limit)
+// comes back as an ordinary error result, not a Go error: the sandbox
+// itself already terminated and reclaimed the container (internal/sandbox.
+// Docker.Exec's own doc comment), so there's nothing left for this call to
+// clean up, only a typed reason to report.
+func (Shell) callSandboxed(ctx context.Context, rc tools.RunContext, req shellInput) (tools.Result, error) {
+	output, exitCode, breach, err := rc.Sandbox.Exec(ctx, req.Cmd)
+	if err != nil {
+		return tools.Result{IsError: true, Reason: err.Error()}, nil
+	}
+	out, merr := json.Marshal(map[string]string{"output": output})
+	if merr != nil {
+		return tools.Result{}, merr
+	}
+	if breach != "" {
+		return tools.Result{Output: out, IsError: true, Reason: "sandbox_breach: " + breach}, nil
+	}
+	if exitCode != 0 {
+		return tools.Result{Output: out, IsError: true, Reason: fmt.Sprintf("exit status %d", exitCode)}, nil
 	}
 	return tools.Result{Output: out}, nil
 }
