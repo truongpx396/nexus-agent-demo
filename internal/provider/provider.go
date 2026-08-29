@@ -110,3 +110,15 @@ type ThrottleError struct {
 }
 
 func (e *ThrottleError) Error() string { return "provider throttled: " + e.Reason }
+
+// ContextOverflowError is returned by Stream itself, or by a Stream's Next,
+// when the provider refuses a call because the prompt exceeds the model's
+// context window. internal/provider/failover.go classifies this as the one
+// trigger that is never retried and never failed over to another provider —
+// a smaller context window elsewhere doesn't fix an oversized prompt, and
+// retrying the same provider with the same prompt can't either.
+type ContextOverflowError struct {
+	Reason string
+}
+
+func (e *ContextOverflowError) Error() string { return "provider context overflow: " + e.Reason }
