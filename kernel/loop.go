@@ -66,6 +66,22 @@ func (k *Kernel) Run(ctx context.Context, st *RunState, cfg RunConfig) iter.Seq2
 			return
 		}
 
+		for _, toolID := range cfg.LoadedTools {
+			ev, err := k.appendEvent(ctx, st, store.EventToolLoaded, store.ActorSystem, &toolID, nil, nil, toolLoadedPayload{ToolID: toolID})
+			if err != nil {
+				yield(store.Event{}, err)
+				return
+			}
+			// Deliberately NOT added to st.Transcript: the model already
+			// sees the resident catalog via cfg.Catalog on every
+			// Provider.Stream call (promptctx's two-zone builder), so this
+			// is an audit record of what was pinned, not something the
+			// model needs to read as a message.
+			if !yield(ev, nil) {
+				return
+			}
+		}
+
 		if cfg.Input != "" {
 			ev, err := k.appendEvent(ctx, st, store.EventUserMessage, store.ActorUser, nil, nil, nil, userMessagePayload{Body: cfg.Input})
 			if err != nil {
@@ -82,6 +98,17 @@ func (k *Kernel) Run(ctx context.Context, st *RunState, cfg RunConfig) iter.Seq2
 			if turn > maxTurns {
 				k.terminate(ctx, st, yield, TerminalMaxTurnsExceeded(maxTurns))
 				return
+			}
+
+			// A ToolExecutor that also bounds hook cost per turn
+			// (internal/hooks task 3.11's per-turn cap, via
+			// PipelineExecutor -> tools.Pipeline) gets told a new turn has
+			// started. This is an optional interface, not part of
+			// ToolExecutor itself, so kernel.NotImplementedToolExecutor
+			// and any future executor with nothing to reset need no
+			// no-op method just to satisfy it.
+			if r, ok := k.Tools.(interface{ ResetTurn() }); ok {
+				r.ResetTurn()
 			}
 
 			kept, synth := Hygiene(st.History)
@@ -195,8 +222,9 @@ func (k *Kernel) Run(ctx context.Context, st *RunState, cfg RunConfig) iter.Seq2
 
 			switch Classify(toolUses, contentText.String()) {
 			case ClassificationToolCalls:
+				execCtx := ExecContext{TenantID: st.TenantID, SessionID: st.SessionID, AutonomyLevel: cfg.AutonomyLevel}
 				for i, tu := range toolUses {
-					result := k.Tools.Execute(ctx, tu)
+					result := k.Tools.Execute(ctx, tu, execCtx)
 					ev, err := k.appendToolResult(ctx, st, toolUseEvents[i].EventID, toolUseEvents[i].ToolID, result)
 					if err != nil {
 						yield(store.Event{}, err)
@@ -204,6 +232,19 @@ func (k *Kernel) Run(ctx context.Context, st *RunState, cfg RunConfig) iter.Seq2
 					}
 					st.Transcript = append(st.Transcript, provider.Message{Role: "tool", Text: resultText(result)})
 					if !yield(ev, nil) {
+						return
+					}
+
+					if result.PermissionDenied {
+						toolID := "unknown"
+						if toolUseEvents[i].ToolID != nil {
+							toolID = *toolUseEvents[i].ToolID
+						}
+						k.terminate(ctx, st, yield, TerminalPermissionDenied(toolID))
+						return
+					}
+					if result.AwaitingApproval {
+						k.suspendForApproval(ctx, st, yield, toolUseEvents[i].ToolID, result)
 						return
 					}
 				}
@@ -250,6 +291,28 @@ func (k *Kernel) terminate(ctx context.Context, st *RunState, yield func(store.E
 	yield(ev, nil)
 }
 
+// suspendForApproval is the loop's reaction to an AwaitingApproval result
+// (Phase 3's permission chain resolving ASK with no standing scope to
+// satisfy it): append an EventApprovalRequested and mark the session
+// suspended, then stop the generator WITHOUT a terminal event — a suspended
+// run is paused, not done. Turning the appended event into an actual
+// grant/deny decision is Phase 5's internal/oversight; resuming the run
+// from here is Phase 6's internal/runctl + checkpoint. Both are seams this
+// phase deliberately stops short of, mirroring how kernel.NotImplementedToolExecutor
+// stopped short of Phase 3 in the same file two phases ago.
+func (k *Kernel) suspendForApproval(ctx context.Context, st *RunState, yield func(store.Event, error) bool, toolID *string, result ToolResult) {
+	ev, err := k.appendApprovalRequested(ctx, st, toolID, result.Reason, result.AskKind)
+	if err != nil {
+		yield(store.Event{}, err)
+		return
+	}
+	if err := k.updateStatus(ctx, st, store.SessionStatusSuspended, nil); err != nil {
+		yield(ev, fmt.Errorf("approval_requested event %s appended but session status update failed: %w", ev.EventID, err))
+		return
+	}
+	yield(ev, nil)
+}
+
 // terminateFromStreamError maps a Provider.Stream/Stream.Next failure onto a
 // terminal reason via internal/provider/failover's typed trigger taxonomy —
 // by the time an error reaches here, any failover across providers/retries
@@ -282,16 +345,29 @@ type thoughtPayload struct {
 	Opaque []byte `json:"opaque"`
 }
 
+type toolLoadedPayload struct {
+	ToolID string `json:"tool_id"`
+}
+
 type toolUsePayload struct {
 	ToolName string          `json:"tool_name"`
 	Input    json.RawMessage `json:"input"`
 }
 
 type toolResultPayload struct {
-	Output    json.RawMessage `json:"output,omitempty"`
-	IsError   bool            `json:"is_error"`
-	Reason    string          `json:"reason,omitempty"`
-	Synthetic bool            `json:"synthetic,omitempty"`
+	Output           json.RawMessage `json:"output,omitempty"`
+	IsError          bool            `json:"is_error"`
+	Reason           string          `json:"reason,omitempty"`
+	Synthetic        bool            `json:"synthetic,omitempty"`
+	PermissionDenied bool            `json:"permission_denied,omitempty"`
+	AwaitingApproval bool            `json:"awaiting_approval,omitempty"`
+	AskKind          string          `json:"ask_kind,omitempty"`
+}
+
+type approvalRequestedPayload struct {
+	ToolID  string `json:"tool_id,omitempty"`
+	Reason  string `json:"reason,omitempty"`
+	AskKind string `json:"ask_kind,omitempty"`
 }
 
 func (k *Kernel) appendEvent(ctx context.Context, st *RunState, typ store.EventType, actor store.Actor, toolID *string, pairRef *uuid.UUID, modelID *string, payload any) (store.Event, error) {
@@ -345,11 +421,22 @@ func (k *Kernel) appendToolUseEvent(ctx context.Context, st *RunState, modelID s
 
 func (k *Kernel) appendToolResult(ctx context.Context, st *RunState, pairRef uuid.UUID, toolID *string, result ToolResult) (store.Event, error) {
 	actor := store.ActorTool
-	if result.Synthetic {
-		actor = store.ActorSystem
+	if result.Synthetic || result.PermissionDenied || result.AwaitingApproval {
+		actor = store.ActorSystem // the platform produced this outcome, not the tool itself
 	}
 	ref := pairRef
+	// toolResultPayload's fields are declared in the same names/types/order
+	// as ToolResult specifically so this conversion stays valid — extend
+	// both structs together.
 	return k.appendEvent(ctx, st, store.EventToolResult, actor, toolID, &ref, nil, toolResultPayload(result))
+}
+
+func (k *Kernel) appendApprovalRequested(ctx context.Context, st *RunState, toolID *string, reason, askKind string) (store.Event, error) {
+	tid := ""
+	if toolID != nil {
+		tid = *toolID
+	}
+	return k.appendEvent(ctx, st, store.EventApprovalRequested, store.ActorSystem, toolID, nil, nil, approvalRequestedPayload{ToolID: tid, Reason: reason, AskKind: askKind})
 }
 
 func (k *Kernel) appendTerminal(ctx context.Context, st *RunState, payload terminalEventPayload) (store.Event, error) {

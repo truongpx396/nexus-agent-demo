@@ -34,11 +34,18 @@ type Server struct {
 	Store    *store.Store
 	KeyStore *crypto.KeyStore
 
+	// CatalogManifestDigest is folded into every new session's
+	// harness_digest (internal/harness.Config.CatalogManifestDigest) — the
+	// resolvable tool universe is behavior-bearing config like any other
+	// (README task 3.2, pattern 14), so a session's digest must move if the
+	// resident catalog does.
+	CatalogManifestDigest []byte
+
 	broker *broker
 }
 
-func NewServer(starter RunStarter, st *store.Store, ks *crypto.KeyStore) *Server {
-	return &Server{Starter: starter, Store: st, KeyStore: ks, broker: newBroker()}
+func NewServer(starter RunStarter, st *store.Store, ks *crypto.KeyStore, catalogManifestDigest []byte) *Server {
+	return &Server{Starter: starter, Store: st, KeyStore: ks, CatalogManifestDigest: catalogManifestDigest, broker: newBroker()}
 }
 
 // Handler returns the http.Handler cmd/nexusd mounts.
@@ -71,6 +78,11 @@ type createRunRequest struct {
 	Input      string `json:"input"`
 	DataLabel  string `json:"data_label,omitempty"`
 	Difficulty string `json:"difficulty,omitempty"`
+	// Autonomy pins the session's permission-chain autonomy level (Phase 3,
+	// internal/permissions/autonomy.go): "read_only" | "supervised" |
+	// "autonomous". Empty defaults to "supervised", matching
+	// store.CreateSession's own default.
+	Autonomy string `json:"autonomy,omitempty"`
 }
 
 type createRunResponse struct {
@@ -102,10 +114,22 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 	}
 	route := provider.Route(dataLabel, difficulty)
 
+	autonomy := req.Autonomy
+	switch autonomy {
+	case "":
+		autonomy = "supervised"
+	case "read_only", "supervised", "autonomous":
+		// valid
+	default:
+		http.Error(w, `"autonomy" must be one of "read_only", "supervised", "autonomous"`, http.StatusBadRequest)
+		return
+	}
+
 	sessionID := uuid.New()
 	digest := harness.Digest(harness.Config{
-		SystemPromptVersion: "phase2-v1",
-		PromptMode:          "phase2-single-shot",
+		SystemPromptVersion:   "phase2-v1",
+		CatalogManifestDigest: s.CatalogManifestDigest,
+		PromptMode:            "phase2-single-shot",
 	})
 
 	var dek crypto.DEK
@@ -127,6 +151,7 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 			DataLabel:     string(dataLabel),
 			RouteModelID:  route.ModelID,
 			RouteReason:   route.Reason,
+			AutonomyLevel: autonomy,
 		})
 	})
 	if err != nil {
@@ -135,11 +160,12 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req2 := RunRequest{
-		SessionID: sessionID,
-		TenantID:  tenantID,
-		Seal:      sealFuncFor(dek, tenantID, sessionID),
-		Input:     req.Input,
-		ModelID:   route.ModelID,
+		SessionID:     sessionID,
+		TenantID:      tenantID,
+		Seal:          sealFuncFor(dek, tenantID, sessionID),
+		Input:         req.Input,
+		ModelID:       route.ModelID,
+		AutonomyLevel: autonomy,
 	}
 	events, err := s.Starter.StartRun(context.Background(), req2) // a run outlives the HTTP request that started it
 	if err != nil {

@@ -1,0 +1,358 @@
+package tools
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"path/filepath"
+	"sync"
+
+	"github.com/google/uuid"
+
+	"github.com/truongpx396/nexus-agent-demo/internal/hooks"
+	"github.com/truongpx396/nexus-agent-demo/internal/permissions"
+)
+
+// Invocation is what the pipeline receives for one tool_use. It is kept
+// independent of any specific caller's own request shape (a kernel
+// ToolUseRequest, a future eval harness's own shape, ...) so this package
+// has no reason to import a caller's package — kernel/tools_adapter.go is
+// where kernel.ToolUseRequest gets translated into this.
+type Invocation struct {
+	TenantID      uuid.UUID
+	SessionID     uuid.UUID
+	ToolName      string // the qualified {ns}/{name}@{ver} string form
+	Input         json.RawMessage
+	AutonomyLevel string // "read_only" | "supervised" | "autonomous"; only consulted the first time a session is seen — see stateFor's doc comment
+}
+
+// ExecuteResult is the pipeline's answer for one Invocation.
+type ExecuteResult struct {
+	Output           json.RawMessage
+	IsError          bool
+	Reason           string
+	PermissionDenied bool
+	AwaitingApproval bool
+	AskKind          string
+}
+
+func errorResult(reason string) ExecuteResult { return ExecuteResult{IsError: true, Reason: reason} }
+
+// PipelineConfig is everything one Pipeline needs at construction time —
+// the resident catalog, the permission chain's tenant/session-independent
+// config, the hook chain's static configuration, and where oversized
+// results spill to. Per-session state (autonomy, Rule-of-Two taint) is
+// tracked internally, keyed by SessionID, not part of this config.
+type PipelineConfig struct {
+	Registry    *Registry
+	Manifest    Manifest
+	Chain       *permissions.Chain
+	Hooks       *hooks.Dispatcher
+	HookConfigs []hooks.Config
+	Blobs       BlobStore
+
+	// WorkspaceRoot, if set, is the local directory each session's
+	// filesystem-touching builtin tools (file_read/file_write/file_search)
+	// are scoped under, one subdirectory per SessionID. There is no
+	// sandbox yet (Phase 5's internal/sandbox, task 5.12, owns a real
+	// per-session workspace); this is the honest, unsandboxed interim —
+	// the same "local dir stands in for the eventual isolated one" pattern
+	// BlobStore already uses in place of Phase-5+ infrastructure.
+	WorkspaceRoot string
+}
+
+// sessionState is the per-session facilities the pipeline can't share
+// across sessions: the pinned autonomy ratchet and the accumulated
+// Rule-of-Two taint projection.
+type sessionState struct {
+	autonomy *permissions.Autonomy
+
+	// taintMu guards taintState across the whole read-resolve-write
+	// sequence in Execute's step 9 — NOT just the final write. Two
+	// concurrent calls in the same session (even against a
+	// concurrency-safe tool, which never takes serialLock at all) must
+	// never both read the same taintState, resolve independently, and race
+	// to write back: that would silently let one call's Rule-of-Two
+	// engagement clobber the other's instead of accumulating.
+	taintMu    sync.Mutex
+	taintState permissions.TaintState
+
+	serialLock sync.Mutex // step 12's in-process serial slot for a non-concurrency-safe tool
+}
+
+// Pipeline is the single execution path (README task 3.4, pattern 16):
+// construct once, share across every run this process serves, and call
+// Execute per tool_use. It implements the shape kernel/tools_adapter.go
+// wraps into a kernel.ToolExecutor — this package itself never imports
+// kernel (kernel is the one allowed to depend on tools, never the reverse;
+// kernel/types.go's own doc comment names the allowed direction).
+type Pipeline struct {
+	cfg PipelineConfig
+
+	mu       sync.Mutex
+	sessions map[uuid.UUID]*sessionState
+}
+
+func NewPipeline(cfg PipelineConfig) *Pipeline {
+	return &Pipeline{cfg: cfg, sessions: map[uuid.UUID]*sessionState{}}
+}
+
+// stateFor returns (creating on first use) the per-session state for
+// sessionID, pinning autonomy from autonomyLevel the first time this
+// session is seen. Every subsequent call ignores autonomyLevel — Pin is a
+// one-time thing (internal/permissions.Autonomy's own doc comment); a
+// session's autonomy only ever moves via Tighten from here on.
+func (p *Pipeline) stateFor(sessionID uuid.UUID, autonomyLevel string) *sessionState {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	s, ok := p.sessions[sessionID]
+	if !ok {
+		level, err := permissions.ParseAutonomyLevel(autonomyLevel)
+		if err != nil {
+			level = permissions.AutonomyReadOnly // fail closed on an unrecognized level
+		}
+		s = &sessionState{autonomy: permissions.Pin(level)}
+		p.sessions[sessionID] = s
+	}
+	return s
+}
+
+// ResetTurn forwards to the hook dispatcher's per-turn cap reset
+// (internal/hooks task 3.11) — the kernel loop calls this once per turn,
+// before dispatching any tool_use in that turn.
+func (p *Pipeline) ResetTurn() {
+	if p.cfg.Hooks != nil {
+		p.cfg.Hooks.ResetTurn()
+	}
+}
+
+// Execute runs the 16-step pipeline (README task 3.4) for one invocation:
+//
+//  1. Resolve      — qualified ref lookup against the session's pinned catalog manifest
+//  2. Digest re-verify — the resolved descriptor must still match what the manifest pinned
+//  3. Admission gate   — refuse dispatch unless the descriptor's cached verdict is clean
+//  4. Input validation — Tool.ValidateInput against the tool's declared schema
+//  5. Canonical digest (bind) — RFC 8785 JCS over {tool_id, input}
+//  6. Gate 2   — the tool's own CheckPermissions (capability metadata)
+//  7. PreToolUse hooks — may DENY/ASK/DEFER, or rewrite input through a path allowlist
+//  8. Digest re-bind   — recompute the digest if step 7 rewrote input ("step 9a" re-verification)
+//  9. Permission chain — the 10-layer total order, folding in steps 6 and 7 at their layers
+//  10. Decision gate: DENY  — short-circuit with a typed, audited denial
+//  11. Decision gate: ASK   — short-circuit with a typed, audited suspend request
+//  12. Concurrency-safety gate — Tool.IsConcurrencySafe (seam only until Phase 6's cross-worker lock)
+//  13. Call            — Tool.Call, a panic recovered into a typed error result
+//  14. PostToolUse hooks — observe-only, tighten-only
+//  15. Result budgeting — cap/paginate to ~25k tokens, spill overflow to the blob dir
+//  16. Emit            — the final ExecuteResult the caller pairs to the tool_use
+func (p *Pipeline) Execute(ctx context.Context, inv Invocation) ExecuteResult {
+	// Step 1: resolve.
+	ref, err := ParseToolRef(inv.ToolName)
+	if err != nil {
+		return errorResult("unknown_tool: " + err.Error())
+	}
+	entry, ok := p.cfg.Manifest.Resolve(ref)
+	if !ok {
+		return errorResult(fmt.Sprintf("unknown_tool: %q is not in this session's pinned catalog manifest", ref))
+	}
+	tool, ok := p.cfg.Registry.Lookup(ref)
+	if !ok {
+		return errorResult(fmt.Sprintf("unknown_tool: %q is pinned in the manifest but not registered in this process", ref))
+	}
+
+	// Step 2: digest re-verify — the live descriptor must match what was pinned.
+	descriptor := tool.Descriptor()
+	if liveDigest := descriptorDigest(descriptor); !bytes.Equal(liveDigest, entry.DescriptorDigest) {
+		return errorResult(fmt.Sprintf("descriptor_drift: %q no longer matches the digest pinned at session start", ref))
+	}
+
+	// Step 3: admission gate.
+	status, _ := p.cfg.Registry.AdmissionStatus(ref)
+	if status != AdmissionClean {
+		return errorResult(fmt.Sprintf("admission_%s: %q is not admitted clean", status, ref))
+	}
+
+	// Step 4: input validation.
+	input := inv.Input
+	if len(input) == 0 {
+		input = json.RawMessage("{}")
+	}
+	rc := RunContext{TenantID: inv.TenantID, SessionID: inv.SessionID}
+	if p.cfg.WorkspaceRoot != "" {
+		rc.WorkspaceDir = filepath.Join(p.cfg.WorkspaceRoot, inv.SessionID.String())
+	}
+	if err := tool.ValidateInput(ctx, input, rc); err != nil {
+		return errorResult("invalid_input: " + err.Error())
+	}
+
+	// Step 5: canonical digest (bind).
+	digest, err := CanonicalDigest(ref.String(), input)
+	if err != nil {
+		return errorResult("digest_error: " + err.Error())
+	}
+	_ = digest // bound here; re-bound at step 8 if a hook rewrites input, and available to a later phase's approval/idempotency wiring
+
+	// Step 6: Gate 2, the tool's own CheckPermissions.
+	gate2Raw := tool.CheckPermissions(ctx, input, rc)
+	gate2, err := toLayerOutcome(gate2Raw.Decision, gate2Raw.Reason)
+	if err != nil {
+		return errorResult("gate2_error: " + err.Error())
+	}
+
+	// Step 7: PreToolUse hooks.
+	hctx := hooks.Context{
+		ToolID:      ref.String(),
+		Namespace:   ref.Namespace,
+		EffectClass: string(descriptor.EffectClass),
+		Input:       input,
+	}
+	hookOut := hooks.Outcome{Decision: hooks.Defer}
+	if p.cfg.Hooks != nil {
+		hookOut = p.cfg.Hooks.Dispatch(ctx, hooks.PreToolUse, hctx, p.cfg.HookConfigs)
+	}
+	hookOutcome, err := toLayerOutcome(string(hookOut.Decision), hookOut.Reason)
+	if err != nil {
+		return errorResult("hook_error: " + err.Error())
+	}
+
+	// Step 8: digest re-bind — a hook may have rewritten input.
+	if hookOut.UpdatedInput != nil {
+		input = hookOut.UpdatedInput
+		digest, err = CanonicalDigest(ref.String(), input)
+		if err != nil {
+			return errorResult("digest_error: " + err.Error())
+		}
+	}
+	_ = digest
+
+	// Step 9: the 10-layer permission chain. taintMu is held across the
+	// whole read-resolve-write sequence (sessionState's doc comment) —
+	// this serializes permission resolution per session, which never blocks
+	// a different session's calls and is a reasonable stand-in for the
+	// session-key serial lock Phase 6 (README task 6.2) ships for real.
+	state := p.stateFor(inv.SessionID, inv.AutonomyLevel)
+	state.taintMu.Lock()
+	req := permissions.Request{
+		ToolID:      ref.String(),
+		Namespace:   ref.Namespace,
+		EffectClass: permissions.EffectClass(descriptor.EffectClass),
+		Taint:       toPermissionsTaint(tool.Taint()),
+		Input:       string(input),
+		Autonomy:    state.autonomy,
+		HookOutcome: hookOutcome,
+		Gate2:       gate2,
+		TaintState:  state.taintState,
+	}
+	result, err := p.cfg.Chain.Resolve(ctx, req)
+	if err != nil {
+		state.taintMu.Unlock()
+		return errorResult("permission_chain_error: " + err.Error())
+	}
+	state.taintState = result.TaintState
+	state.taintMu.Unlock()
+
+	// Steps 10-11: decision gates.
+	switch result.Resolution.Decision {
+	case permissions.Deny:
+		return ExecuteResult{
+			IsError:          true,
+			Reason:           fmt.Sprintf("denied at layer %s: %s", result.Resolution.Layer, result.Resolution.Reason),
+			PermissionDenied: true,
+		}
+	case permissions.Ask:
+		return ExecuteResult{
+			IsError:          true,
+			Reason:           fmt.Sprintf("approval required at layer %s: %s", result.Resolution.Layer, result.Resolution.Reason),
+			AwaitingApproval: true,
+			AskKind:          string(result.Resolution.AskKind),
+		}
+	case permissions.Allow:
+		// continue below
+	case permissions.Defer:
+		return errorResult(fmt.Sprintf("permission_chain_bug: Resolve returned a non-final Defer at layer %s", result.Resolution.Layer))
+	}
+
+	// Step 12: concurrency-safety gate. There is no cross-worker lock yet
+	// (Phase 6 task 6.2's Redis session-key lock) — a single-process
+	// in-memory serial slot is the honest interim: it prevents this
+	// process's own goroutines from racing a non-concurrency-safe tool
+	// against itself within one session, which is the only concurrency this
+	// phase's single-process demo can produce in the first place.
+	if !tool.IsConcurrencySafe(input) {
+		state.serialLock.Lock()
+		defer state.serialLock.Unlock()
+	}
+
+	// Step 13: call.
+	out, callErr := safeCall(ctx, tool, input, rc)
+	if callErr != nil {
+		return errorResult("tool_error: " + callErr.Error())
+	}
+
+	// Step 14: PostToolUse hooks — observe/tighten only.
+	if p.cfg.Hooks != nil {
+		postOut := p.cfg.Hooks.Dispatch(ctx, hooks.PostToolUse, hooks.Context{
+			ToolID: ref.String(), Namespace: ref.Namespace, EffectClass: string(descriptor.EffectClass), Input: input,
+		}, p.cfg.HookConfigs)
+		switch postOut.Decision {
+		case hooks.Deny:
+			return ExecuteResult{IsError: true, Reason: "result withheld by a post_tool_use hook: " + postOut.Reason}
+		case hooks.Ask:
+			out.Reason = joinReason(out.Reason, "flagged for review by a post_tool_use hook: "+postOut.Reason)
+		case hooks.Defer, hooks.Allow:
+			// no change — an Allow here is exactly as inert as everywhere else (dispatcher.go's normalize already coerced it to Defer)
+		}
+	}
+
+	// Step 15: result budgeting.
+	budgeted, err := BudgetResult(p.cfg.Blobs, inv.SessionID, ref.String(), out.Output)
+	if err != nil {
+		return errorResult("result_budget_error: " + err.Error())
+	}
+
+	// Step 16: emit.
+	return ExecuteResult{Output: budgeted, IsError: out.IsError, Reason: out.Reason}
+}
+
+func joinReason(existing, addition string) string {
+	if existing == "" {
+		return addition
+	}
+	return existing + "; " + addition
+}
+
+func toPermissionsTaint(t Taint) permissions.Taint {
+	return permissions.Taint{
+		ReturnsUntrusted: t.ReturnsUntrusted,
+		ReadsPrivateData: t.ReadsPrivateData,
+		MutatesExternal:  t.MutatesExternal,
+	}
+}
+
+// toLayerOutcome translates a wire-level decision string (from a Tool's own
+// PermissionResult or a hooks.Outcome) into a permissions.LayerOutcome.
+// Allow is refused here, at the translation boundary, with a descriptive
+// error — internal/permissions.Chain.Resolve also guards against it, but
+// failing at the point of translation names which precomputed layer
+// produced the violation.
+func toLayerOutcome(decision, reason string) (permissions.LayerOutcome, error) {
+	switch permissions.Decision(decision) {
+	case permissions.Deny, permissions.Ask, permissions.Defer:
+		return permissions.LayerOutcome{Decision: permissions.Decision(decision), Reason: reason}, nil
+	case permissions.Allow:
+		return permissions.LayerOutcome{}, fmt.Errorf("a precomputed layer resolved Allow (%q), which is never valid", reason)
+	default:
+		return permissions.LayerOutcome{}, fmt.Errorf("unrecognized decision %q", decision)
+	}
+}
+
+// safeCall recovers a panicking Tool.Call into a typed error — "a tool must
+// never crash the kernel loop" (pipeline.go's step 13 doc comment above).
+func safeCall(ctx context.Context, tool Tool, input json.RawMessage, rc RunContext) (result Result, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("tool panicked: %v", r)
+		}
+	}()
+	return tool.Call(ctx, input, rc)
+}
