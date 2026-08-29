@@ -4,7 +4,7 @@ A **simplified, single-binary Go reimplementation** of
 [`truongpx396/nexus-agent`](https://github.com/truongpx396/nexus-agent) that still exercises **every core pattern** of the original design.
 
 **Target**: Go, one binary (`nexusd`) + one CLI (`nexusctl`), Postgres + PgBouncer + Redis,
-Docker-based sandbox. ~10 phases, ~6–8 weeks solo at a steady pace, every phase shippable.
+Docker-based sandbox. ~11 phases, ~7–9 weeks solo at a steady pace, every phase shippable.
 
 ---
 
@@ -141,6 +141,12 @@ Legend: **F** = full fidelity · **S** = simplified but structurally identical �
 
 **Score: 55 of 67 patterns at full or simplified fidelity, 4 as seams, 8 deliberately out.**
 Every omission is a deployment, commercial, or connector concern — no architectural idea is dropped.
+
+One addition sits outside this count: peer agent teams (Phase 9) — shared task boards with
+Kanban-style claiming. It is not a simplification of anything in the original's 67; it is new
+scope, added after the fact and scoped tightly (fixed roster, shared budget envelope, read-time
+taint propagation) so it reuses this plan's existing primitives instead of adding a second set of
+rules alongside them.
 
 ---
 
@@ -410,7 +416,7 @@ type Port interface { // v1
 
 ## 5. Build phases
 
-Ten phases. Each is independently shippable and ends with a **demo command** you can run and
+Eleven phases. Each is independently shippable and ends with a **demo command** you can run and
 an **acceptance test** that must be green. Sizing assumes one developer; parallelisable work
 is marked `[P]`.
 
@@ -584,16 +590,25 @@ Then `nexusctl fork <session> --at 42 --model haiku` reproduces a failure agains
 | 7.3 | `skills/` — signed content-addressed bundle: `bundle_digest` over every file, per-file injection scan, three disclosure tiers (resident metadata → body on activate → per-file reference) | FR-020, FR-151 |
 | 7.4 | `declared_tool_ids` **intersects** the resolved catalog, never unions; a non-held entry is ignored and recorded as `skill_capability_ignored` | FR-153 |
 | 7.5 | A bundled script registers as a real tool through the ordinary gates **or the bundle is refused** | FR-151 |
-| 7.6 | `promptctx/prune.go` — non-destructive live pruning (outlier guard → soft trim → hard clear to a refetchable reference); **never mutates a logged event** | FR-164 |
-| 7.7 | `promptctx/condense.go` — structured compaction at ~80% budget on a cheaper model through the same Provider port; metered; blocking-or-not is a **declared, measured** property | FR-015, FR-130 |
-| 7.8 | `surfaces/` — capability descriptors (`principal_kind`, can-render-approval-context, step-up, structured input, streaming), conformance test per surface, approval routing **filters on capability** | FR-155 |
-| 7.9 | Per-turn principal resolution — authority is the **turn-submitting** principal, never inherited from whoever opened the thread | FR-156 |
-| 7.10 | `surfaces/outbox.go` — event appended **before** the send; at-least-once, idempotent on `(session, seq, surface, recipient)`; `failed_permanent` stays distinguishable from unanswered | FR-157 |
-| 7.11 | `nexusctl` as a second real surface over the same kernel — zero kernel changes | FR-001 |
+| 7.6 | `internal/skills/manifest.go` — tier-1 resident metadata (`skill_id`, description, trigger hint, `declared_tool_ids`) for the tenant's admitted set, folded into `SkillSetDigest` at run start; **no `skill_search` tool** — the catalog is vetted and per-tenant-bounded, not a corpus (seam left for one if that stops being true) | FR-020, build-for-the-stage constraint |
+| 7.7 | `internal/tools/builtin/skill.go` — `activate_skill(skill_id)` implements the ordinary `Tool` interface, **no new ABI**: dispatched through the same 16-step pipeline as any tool; its `tool_result` **is** the skill body, extending the byte-stable prefix the way every tool result already does — never a mid-session system-prompt splice, and `kernel/classify.go` needs zero changes (it is just another `TOOL_CALLS` turn) | FR-151 |
+| 7.8 | Activation re-checks `declared_tool_ids` against the **currently resolved** catalog, not just what admission saw — tenant config can move between admission and activation; emits `skill_activated` (the live subset) and `skill_capability_ignored` per absent entry, fail closed | FR-153 |
+| 7.9 | `read_skill_file(skill_id, path)` — lazy tier-3, reference/template content only, path-allowlisted like any sandboxed file read; a bundled **script** is never fetched this way — it is admitted as its own tool (7.5) and invoked as its own `tool_use` | FR-151 |
+| 7.10 | `promptctx/prune.go` — non-destructive live pruning (outlier guard → soft trim → hard clear to a refetchable reference); **never mutates a logged event** | FR-164 |
+| 7.11 | `promptctx/condense.go` — structured compaction at ~80% budget on a cheaper model through the same Provider port; metered; blocking-or-not is a **declared, measured** property | FR-015, FR-130 |
+| 7.12 | `surfaces/` — capability descriptors (`principal_kind`, can-render-approval-context, step-up, structured input, streaming), conformance test per surface, approval routing **filters on capability** | FR-155 |
+| 7.13 | Per-turn principal resolution — authority is the **turn-submitting** principal, never inherited from whoever opened the thread | FR-156 |
+| 7.14 | `surfaces/outbox.go` — event appended **before** the send; at-least-once, idempotent on `(session, seq, surface, recipient)`; `failed_permanent` stays distinguishable from unanswered | FR-157 |
+| 7.15 | `nexusctl` as a second real surface over the same kernel — zero kernel changes | FR-001 |
 
 **Demo**: submit the same task through REST and through `nexusctl`; both produce identical event
 sequences and identical terminal reasons. `git diff kernel/` after adding the CLI is empty.
-**Acceptance**: 7.4 (a skill cannot widen capability) and 7.11 (the empty diff).
+Separately: activate a skill, then revoke one of its `declared_tool_ids` from the tenant catalog
+mid-session and activate again — `skill_capability_ignored` fires, the run continues on the tools
+it still holds, and `git diff kernel/` for the whole skills feature is likewise empty.
+**Acceptance**: 7.4 (a skill cannot widen capability), 7.7 (skill activation adds no kernel control
+flow — it is dispatched, paired, and appended exactly like any other tool call), and 7.15 (the
+empty diff).
 
 ---
 
@@ -609,39 +624,76 @@ sequences and identical terminal reasons. `git diff kernel/` after adding the CL
 | 8.6 | **Zero-token routing test** against the fake provider: assert *no* `Provider.Stream` call occurs while evaluating a transition | SC-023 |
 | 8.7 | `preauth` step — enumerated, digest-bound set for one human decision; a preauth admitting anything outside its enumeration fails validation | FR-109 |
 | 8.8 | `delegate/` — delegation is a **tool invocation through the same pipeline**: paired result, permission chain, audit receipt, all inherited | FR-100 |
-| 8.9 | Scope descends (provable subset, no widening parameter), taint ascends (a summary never clears the untrusted leg), bounds fail closed (`depth ≤ 1`, `concurrent ≤ 3`, `per_run ≤ 16`) | FR-098, FR-099 |
-| 8.10 | Fan-out cost reserved **as an envelope before the first child starts**; children draw from it (per-child reservation against the tenant counter is prohibited) | FR-099 |
-| 8.11 | Reaping on parent terminal/cancel/ceiling; return-schema validation + acceptance criterion before folding in; `bound_exceeded` is **non-retryable** | FR-100 |
-| 8.12 | `[P] stretch` — `sandbox/broker.go`: the only route from sandbox code into the pipeline; re-enters at step 1; the calling program **blocks** on the same durable suspension | FR-149 |
+| 8.9 | `internal/tools/builtin/delegate.go` — `delegate` implements the ordinary `Tool` interface, **no new ABI**: input `{agent_id, task, scope_grant, return_schema}`; `CheckPermissions` re-derives `scope_grant` as a provable subset of the **parent's own resolved scope** — it is never trusted from the input; `Taint()` defaults all three legs to `TRUE` like every tool, so autonomy level and the Rule of Two gate a delegation call **in addition to**, not instead of, the depth/concurrency/per_run bounds below | FR-100 |
+| 8.10 | Delegation suspends on the **same durable-suspend primitive** approvals already use (5.8) — checkpoint + evict, resume on `delegation_returned` / `delegation_reaped` — at zero token cost; no second suspension mechanism is built | FR-100, FR-120 |
+| 8.11 | Taint-ascend, made mechanical: a child's `taint_state` **starts as a copy of the parent's** at spawn (it inherits the trust context it was spawned from); on return, the parent's `taint_state` projection folds in the child's **own event-derived** `taint_state` — read from the child's history, never from a claim in its return payload, so a child cannot self-report "clean" | FR-098 |
+| 8.12 | Scope descends (provable subset, no widening parameter), taint ascends (a summary never clears the untrusted leg), bounds fail closed (`depth ≤ 1`, `concurrent ≤ 3`, `per_run ≤ 16`) | FR-098, FR-099 |
+| 8.13 | Fan-out cost reserved **as an envelope before the first child starts**; children draw from it (per-child reservation against the tenant counter is prohibited). A single ad hoc `delegate` call is not a fan-out — it reserves normally through `BudgetGate.Reserve`; the envelope applies specifically to a `delegate_fanout` plan step, sized for its worst-case child count up front | FR-099 |
+| 8.14 | Reaping on parent terminal/cancel/ceiling; return-schema validation + acceptance criterion before folding in; `bound_exceeded` is **non-retryable** | FR-100 |
+| 8.15 | `[P] stretch` — `sandbox/broker.go`: the only route from sandbox code into the pipeline; re-enters at step 1; the calling program **blocks** on the same durable suspension | FR-149 |
 
 **Demo**: a 5-step "triage → draft → approve → send → record" plan runs twice and takes the same
 branch both times; the transition log names the predicate that fired; total routing tokens = 0.
-**Acceptance**: 8.6 and 8.9. Without them this is a workflow engine, not the pattern.
+**Acceptance**: 8.6 and 8.12. Without them this is a workflow engine, not the pattern. 8.11 is the
+one that keeps it from being a laundering vector: a child that quietly touched untrusted input
+cannot return a clean-looking summary and erase that fact from the parent.
 
 ---
 
-### Phase 9 — Eval gate hardening + go-live (4–5 days)
+### Phase 9 — Peer agent teams: shared task boards (6–7 days)
+
+Not derived from the original's 67 patterns — this is new scope, added deliberately outside that
+fidelity map (Section 3's score stays 55/67; see the note there). It borrows every primitive it
+can from what already exists — queue claim semantics, the session model, envelope reservation,
+taint-fold — rather than inventing new mechanism, and is bound by the same fail-closed,
+no-widening discipline as delegation (Phase 8).
 
 | # | Task | Proves |
 |---|---|---|
-| 9.1 | Corpus of ~20 cases split into **regression / capability / safety / negative** classes with distinct thresholds; **safety admits no threshold below 100%** | FR-137 |
-| 9.2 | **k trials per case**, per-case Wilson intervals, regression defined as **interval separation** (not a flipped trial), three-valued verdict where `inconclusive` **never** resolves to `pass` | FR-138 |
-| 9.3 | `eval_environment_digest` (image, resource bands, concurrency, region); **refuses to compare across digests**; trials run on **cold** sandboxes, never the warm path | FR-139 |
-| 9.4 | Grader selection rule: **deterministic code graders wherever the criterion is objectively checkable**; the judge reserved for genuinely subjective criteria | FR-141 |
-| 9.5 | Judge is a **pinned, cross-family** snapshot, calibrated against human labels to a published agreement floor **before** it may block a change | FR-141 |
-| 9.6 | Held-out graders outside the agent's reach; the **visible-vs-held-out pass-rate gap is measured** — a widening gap is how spec-gaming announces itself | FR-141 |
-| 9.7 | **Trajectory grading**: tool-selection accuracy, whether an input request was raised instead of a guess, turns and calls consumed | FR-142 |
-| 9.8 | **Efficiency gated, not just reported**: a change holding its quality verdict while regressing tokens/turns/tool-calls past the declared band is **blocked** | FR-144 |
-| 9.9 | Mandatory HITL adversarial cases: suppress or simulate consent, widen autonomy mid-run, reach a gated effect via a standing scope — all refused and audited | FR-112 |
-| 9.10 | Per-artifact case sets: each skill, tool, and plan ships its own versioned cases, run at its promotion/enable gate | FR-143 |
-| 9.11 | CI: `≥90% pass AND zero regressions` blocks merge on any prompt/tool/model/skill/plan change | FR-042, FR-043 |
-| 9.12 | Golden-signal dashboard: completion rate by terminal reason, cost-ceiling breach rate, stuck rate, **cache-read rate**, approval time-to-decision, `approval_mismatch` rate, unresolved in-flight claims, telemetry attribute-drop rate, held-out gap | FR-095 |
-| 9.13 | `docs/go-live.md` — the checklist, with a script that verifies each item against a live deployment | FR-045 |
+| 9.1 | `internal/teams/` — `Team{team_id, tenant_id, roster []AgentID, budget_envelope_id, status}`; **roster is fixed at creation**, no mid-run recruitment — the same no-widening discipline as the autonomy ratchet (3.7) and skill intersection (7.4) | New scope, bounded like delegation |
+| 9.2 | `sessions.team_id` (nullable) + `delegation_role = 'team_member'`; each member is an **ordinary session** — reuses the session-key serial lock (6.2) for per-member concurrency, no new locking primitive for the loop | Schema-additive over Phase 1 |
+| 9.3 | `board_cards` — RLS-scoped: `status ∈ {open, claimed, in_progress, done, blocked}`, `taint_state` copied from the writer at creation (8.11's copy-at-spawn pattern), `injection_scan_status ∈ {pending, clean, flagged}` | Same admission discipline as skills (7.3), applied to a new artifact |
+| 9.4 | `claim_card` — the **same Postgres `SKIP LOCKED`** claim query `internal/queue/` already runs for job dispatch (6.1); no new concurrency primitive invented | Reuses 6.1 |
+| 9.5 | `read_board` / `claim_card` / `write_card` / `update_card_status` — four ordinary `Tool`s through the same 16-step pipeline; `Taint()` defaults all-`TRUE` like every tool, so autonomy level and the Rule of Two gate board actions exactly as they gate `delegate` (8.9) | No new ABI |
+| 9.6 | **Read-time taint fold** — the one genuinely new mechanism this phase needs: reading a card folds its `taint_state` into the reader's own `taint_state` projection, same shape as delegation's return-time fold (8.11) but triggered by a read instead of a return | Closes the laundering path a shared board would otherwise reopen |
+| 9.7 | `write_card` scans the body through the **same injection/exfiltration scanner memory already uses** (7.1) before flipping `injection_scan_status` to `clean`; a `flagged` card is never surfaced to another peer's context — fail closed | Reuses 7.1 |
+| 9.8 | Shared budget envelope reserved **once at team creation**, sized to the roster's worst case — 8.13's fan-out-envelope pattern, scoped to the team's lifetime instead of one plan step; no member draws an independent per-tenant reservation | Reuses 8.13 |
+| 9.9 | Team lifecycle: `active → completed / aborted / ceiling_exhausted`; completes when the board has no `open`/`claimed` cards **and** every member is terminal, or the envelope exhausts (`cost_exhausted`), or a wall-clock backstop trips; termination **reaps every still-active member**, same as a delegation parent reaps children (8.14) | Reuses 8.14's reaping discipline |
+| 9.10 | A team member is a **leaf**: it cannot itself spawn a delegation child or create a nested team — no recursive teams, no depth workaround through a side door | Preserves depth ≤ 1 (8.12) |
+
+**Demo**: spin up a 3-member team against a 6-card board; two members race to claim the same card
+under a concurrency test — exactly one wins, proven by the `SKIP LOCKED` claim, never a double
+claim. A card written under a tainted session is read by a clean member, whose own `taint_state`
+picks up the untrusted leg. The team completes when the board empties; total spend across all
+three members never exceeds the envelope reserved at creation.
+**Acceptance**: 9.4 under a contention test (no card is ever double-claimed) and 9.6 (a clean
+reader is provably tainted by reading a tainted card — the same class of test 8.11 runs for
+delegation, aimed at the new read-time path instead of the return path).
+
+---
+
+### Phase 10 — Eval gate hardening + go-live (4–5 days)
+
+| # | Task | Proves |
+|---|---|---|
+| 10.1 | Corpus of ~20 cases split into **regression / capability / safety / negative** classes with distinct thresholds; **safety admits no threshold below 100%** | FR-137 |
+| 10.2 | **k trials per case**, per-case Wilson intervals, regression defined as **interval separation** (not a flipped trial), three-valued verdict where `inconclusive` **never** resolves to `pass` | FR-138 |
+| 10.3 | `eval_environment_digest` (image, resource bands, concurrency, region); **refuses to compare across digests**; trials run on **cold** sandboxes, never the warm path | FR-139 |
+| 10.4 | Grader selection rule: **deterministic code graders wherever the criterion is objectively checkable**; the judge reserved for genuinely subjective criteria | FR-141 |
+| 10.5 | Judge is a **pinned, cross-family** snapshot, calibrated against human labels to a published agreement floor **before** it may block a change | FR-141 |
+| 10.6 | Held-out graders outside the agent's reach; the **visible-vs-held-out pass-rate gap is measured** — a widening gap is how spec-gaming announces itself | FR-141 |
+| 10.7 | **Trajectory grading**: tool-selection accuracy, whether an input request was raised instead of a guess, turns and calls consumed | FR-142 |
+| 10.8 | **Efficiency gated, not just reported**: a change holding its quality verdict while regressing tokens/turns/tool-calls past the declared band is **blocked** | FR-144 |
+| 10.9 | Mandatory HITL adversarial cases: suppress or simulate consent, widen autonomy mid-run, reach a gated effect via a standing scope — all refused and audited | FR-112 |
+| 10.10 | Per-artifact case sets: each skill, tool, plan, **and team roster** ships its own versioned cases, run at its promotion/enable gate | FR-143 |
+| 10.11 | CI: `≥90% pass AND zero regressions` blocks merge on any prompt/tool/model/skill/plan/team change | FR-042, FR-043 |
+| 10.12 | Golden-signal dashboard: completion rate by terminal reason, cost-ceiling breach rate, stuck rate, **cache-read rate**, approval time-to-decision, `approval_mismatch` rate, unresolved in-flight claims, telemetry attribute-drop rate, held-out gap | FR-095 |
+| 10.13 | `docs/go-live.md` — the checklist, with a script that verifies each item against a live deployment | FR-045 |
 
 **Demo**: `make eval` prints a per-case table with intervals and a three-valued verdict, then
 `PASS (18/20, 0 regressions, efficiency within band)` or a red gate naming the case.
 **Acceptance**: change a prompt so quality holds but tokens rise 40% → the gate **blocks**. That
-is the whole point of 9.8, and the failure mode the original calls "an incident that ships with
+is the whole point of 10.8, and the failure mode the original calls "an incident that ships with
 a green check."
 
 ---
@@ -659,9 +711,10 @@ a green check."
 | 6 · Reliability | 6 | 40 | An agent that survives `kill -9` |
 | 7 · Memory, skills, surfaces | 6 | 46 | An agent that grows and multiplies surfaces |
 | 8 · Orchestration + delegation | 7 | 53 | Processes, not just conversations |
-| 9 · Eval gate + go-live | 5 | 58 | An agent you can safely **change** |
+| 9 · Peer agent teams | 7 | 60 | Peers, not just a tree |
+| 10 · Eval gate + go-live | 5 | 65 | An agent you can safely **change** |
 
-≈ **58 working days** solo. Phases 2 and 3 alone (12 days after setup + seams, i.e. day 20) give
+≈ **65 working days** solo. Phases 2 and 3 alone (12 days after setup + seams, i.e. day 20) give
 you a demonstrable, governed, single-surface agent — that is the natural first public milestone.
 
 ## 7. Testing strategy
@@ -707,7 +760,8 @@ none requires migrating the event log, the audit chain, or the encryption model.
 | **Phase 3 is huge and blocks everything downstream** | Split at the natural seam: 3.1–3.5 (pipeline) can ship and be tested before 3.6–3.11 (chain + hooks). The pipeline with a stub chain is still a shippable increment. |
 | **The permission chain becomes untestable combinatorics** | It is a *total order* of 10 layers with ≤4 outcomes each — a table-driven test enumerating layer × outcome is ~200 rows, and that exhaustiveness is what makes an undefined interaction impossible. |
 | **RLS + PgBouncer setup eats days** | Do it on day 1 of Phase 1 and let 1.4 be the phase's gate. Discovering the transaction-local rule in Phase 6 is the expensive version. |
-| **The eval gate feels premature in Phase 1** | Ship it with 5 cases and code graders only; grow to 20 with the judge in Phase 9. The point is that the harness and the CI wiring exist before behavior does. |
+| **The eval gate feels premature in Phase 1** | Ship it with 5 cases and code graders only; grow to 20 with the judge in Phase 10. The point is that the harness and the CI wiring exist before behavior does. |
+| **A shared task board reopens the taint-laundering hole delegation just closed** | It doesn't get its own rules: 9.6 is the same fold-on-boundary-crossing idea as 8.11, just triggered by a read instead of a return, and 9.7 requires the same injection scan (7.1) before a card is ever surfaced. No board content reaches another peer's context unscanned or untainted. |
 | **Cost metering gets bolted onto foreground turns only** | 4.8 is a task, and a test asserts every `Provider.Stream` caller in the codebase passes through `BudgetGate.Reserve` — enforced by an AST check, not by review. |
 | **Scope creep back toward all 191 FRs** | Section 8 has a named trigger per deferral. If the trigger has not fired, the answer is no. |
 | **"Simplified" quietly becomes "weakened"** | Section 3's fidelity column is the contract. Anything marked **F** that ships as **S** is a plan change requiring a note here — the same discipline the source constitution applies to itself. |
