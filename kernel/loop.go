@@ -55,6 +55,21 @@ type Kernel struct {
 	// means stuck detection never runs, exactly like a nil Receipts/
 	// OnSuspend already means "that phase's control isn't wired."
 	Stuck *reliability.Registry
+
+	// PrunePolicy is README task 7.10's live pruning, applied to a per-turn
+	// VIEW of st.Transcript only — st.Transcript itself, and every durably
+	// logged event, are never mutated by it. The zero value
+	// (promptctx.PrunePolicy{}) prunes nothing, the pre-Phase-7 behavior
+	// every earlier test still gets.
+	PrunePolicy promptctx.PrunePolicy
+
+	// CondenseThresholdBytes is task 7.11's structured-compaction trigger:
+	// once the (post-prune) transcript's total byte length exceeds this,
+	// runTurns replaces its covered prefix with one metered-model summary
+	// (or, if internal/cost.BudgetGate.Reserve refuses, a local
+	// promptctx.ExtractivePass — "degrade-capable," never skipped). <=0
+	// disables condensation entirely, the pre-Phase-7 default.
+	CondenseThresholdBytes int
 }
 
 // RunState is the mutable state one Run call owns: TenantID/SessionID
@@ -96,6 +111,23 @@ func (k *Kernel) Run(ctx context.Context, st *RunState, cfg RunConfig) iter.Seq2
 			// Provider.Stream call (promptctx's two-zone builder), so this
 			// is an audit record of what was pinned, not something the
 			// model needs to read as a message.
+			if !yield(ev, nil) {
+				return
+			}
+		}
+
+		if len(cfg.MemorySources) > 0 {
+			ev, err := k.appendEvent(ctx, st, store.EventMemoryLoaded, store.ActorSystem, nil, nil, nil, memoryLoadedPayload{Sources: cfg.MemorySources})
+			if err != nil {
+				yield(store.Event{}, err)
+				return
+			}
+			// Deliberately NOT added to st.Transcript, same reasoning as
+			// EventToolLoaded above: the memory text is already folded into
+			// cfg.System (memory.Snapshot's caller does this before Run is
+			// ever called — README task 7.1's "injected at session start"),
+			// so this is the audit record of what was pinned, not something
+			// the model needs to read as a message.
 			if !yield(ev, nil) {
 				return
 			}
@@ -274,7 +306,84 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 			return
 		}
 
-		prompt, _ := promptctx.Build(cfg.System, cfg.Catalog, st.Transcript)
+		// Live pruning (task 7.10): a per-turn VIEW only — st.Transcript
+		// itself is never reassigned here, so every other stage that still
+		// reads it (a future turn's own fresh Prune call, Resume/Continue's
+		// rehydration) sees the original, un-pruned content. view and
+		// st.Transcript always stay the same LENGTH (Prune only rewrites a
+		// candidate message's Text, never adds or removes one), which is
+		// what lets the condensation step below slice st.Transcript at the
+		// same index Prune's caller computed against view.
+		view, prunedCount := promptctx.Prune(st.Transcript, k.PrunePolicy)
+		if prunedCount > 0 {
+			ev, err := k.appendEvent(ctx, st, store.EventContextPruned, store.ActorSystem, nil, nil, nil, contextPrunedPayload{PrunedCount: prunedCount})
+			if err != nil {
+				yield(store.Event{}, err)
+				return
+			}
+			if !yield(ev, nil) {
+				return
+			}
+		}
+
+		if ok, covered := promptctx.ShouldCondense(view, k.CondenseThresholdBytes); ok {
+			summary, degraded, condenseReservation, err := k.condense(ctx, st, cfg, view[:covered])
+			if err != nil {
+				yield(store.Event{}, err)
+				return
+			}
+			cbev, err := k.appendBudgetDecision(ctx, st, condenseReservation)
+			if err != nil {
+				yield(store.Event{}, err)
+				return
+			}
+			if !yield(cbev, nil) {
+				return
+			}
+			if degraded {
+				summary = promptctx.ExtractivePass(view[:covered])
+			}
+
+			// CoveredThroughSeq: the log's own last seq at this point —
+			// deliberately the whole history so far, not a precise mapping
+			// from view's index back to the exact event it came from
+			// (Transcript carries no parallel seq slice). A real resumable-
+			// summary boundary is future work, the same kind of honest
+			// scope note kernel/rehydrate.go's own doc comment already
+			// makes for general resume.
+			var coveredSeq int64
+			if n := len(st.History); n > 0 {
+				coveredSeq = st.History[n-1].Seq
+			}
+			cond := store.Condense(coveredSeq, summary)
+			condEv, err := k.appendEvent(ctx, st, store.EventCondensation, store.ActorSystem, nil, nil, nil, condensationPayload{
+				CondensationID:    cond.CondensationID.String(),
+				CoveredThroughSeq: cond.CoveredThroughSeq,
+				Summary:           cond.Summary,
+				Degraded:          degraded,
+			})
+			if err != nil {
+				yield(store.Event{}, err)
+				return
+			}
+			if !yield(condEv, nil) {
+				return
+			}
+
+			// Condensation, unlike pruning, DOES rewrite the working
+			// transcript going forward — that's the whole point of
+			// structured compaction (distinct from the non-destructive
+			// view pruning stays scoped to). st.Transcript[covered:] (not
+			// view[covered:]) so the retained tail keeps its ORIGINAL text,
+			// never a pruned preview/marker baked in permanently.
+			newTranscript := make([]provider.Message, 0, 1+len(st.Transcript)-covered)
+			newTranscript = append(newTranscript, provider.Message{Role: "assistant", Text: "[condensed summary] " + summary})
+			newTranscript = append(newTranscript, st.Transcript[covered:]...)
+			st.Transcript = newTranscript
+			view = newTranscript
+		}
+
+		prompt, _ := promptctx.Build(cfg.System, cfg.Catalog, view)
 
 		stream, err := k.Provider.Stream(ctx, prompt, cfg.Catalog, provider.RunContext{TenantID: st.TenantID, SessionID: st.SessionID})
 		if err != nil {
@@ -445,6 +554,62 @@ func (k *Kernel) reconcile(ctx context.Context, st *RunState, res cost.Reservati
 	}
 }
 
+// condense runs task 7.11's metered structured-compaction call: reserve
+// (cost.PurposeCompaction, the SAME Provider port every other model call
+// goes through, under cfg.CondenserModelID — a cheaper model, "off the
+// paying loop" per task 4.8's own wording, meaning cheaper, never
+// unmetered), then stream, then reconcile — all in this one function, the
+// same reserve-then-stream shape tests/contract's metering AST check
+// requires of every Provider.Stream call site. Returns the reservation too,
+// so the caller can still append its own EventBudgetDecision the same way
+// runTurns' turn-level reserve does. degraded=true (on a reserve refusal, a
+// stream/transport failure, or empty output) means the caller must apply
+// promptctx.ExtractivePass instead — a condenser that can't run must never
+// block or fail the turn, only degrade it.
+func (k *Kernel) condense(ctx context.Context, st *RunState, cfg RunConfig, covered []provider.Message) (summary string, degraded bool, reservation cost.Reservation, err error) {
+	reservation, reserveErr := k.Budget.Reserve(ctx, cost.ReserveRequest{
+		TenantID: st.TenantID, SessionID: st.SessionID, ModelID: cfg.CondenserModelID, Purpose: cost.PurposeCompaction,
+	})
+	if reserveErr != nil {
+		return "", true, reservation, nil
+	}
+
+	prompt := promptctx.CondensePrompt(covered)
+	stream, serr := k.Provider.Stream(ctx, prompt, nil, provider.RunContext{TenantID: st.TenantID, SessionID: st.SessionID})
+	if serr != nil {
+		k.reconcile(ctx, st, reservation, provider.Usage{}, false)
+		return "", true, reservation, nil
+	}
+
+	var text strings.Builder
+	var usage provider.Usage
+	var usageReported bool
+	var streamErr error
+	for {
+		chunk, ok, nerr := stream.Next(ctx)
+		if nerr != nil {
+			streamErr = nerr
+			break
+		}
+		if !ok {
+			break
+		}
+		switch chunk.Kind { //nolint:exhaustive // deliberately narrow: the condenser prompt asks for plain text only — reasoning/tool_use chunks are not meaningful for a summarization call, and ChunkDone carries nothing this loop needs beyond stream.Next reporting ok=false
+		case provider.ChunkContent:
+			text.WriteString(chunk.Text)
+		case provider.ChunkUsage:
+			usage = chunk.Usage
+			usageReported = true
+		}
+	}
+	k.reconcile(ctx, st, reservation, usage, usageReported && streamErr == nil)
+
+	if streamErr != nil || text.Len() == 0 {
+		return "", true, reservation, nil
+	}
+	return text.String(), false, reservation, nil
+}
+
 func resultText(r ToolResult) string {
 	if r.IsError {
 		return "error: " + r.Reason
@@ -554,6 +719,28 @@ type thoughtPayload struct {
 
 type toolLoadedPayload struct {
 	ToolID string `json:"tool_id"`
+}
+
+type memoryLoadedPayload struct {
+	Sources []string `json:"sources"`
+}
+
+type contextPrunedPayload struct {
+	PrunedCount int `json:"pruned_count"`
+}
+
+// condensationPayload is what EventCondensation carries — Degraded records
+// whether the no-model extractive fallback ran (task 7.2/7.11's
+// degrade-capable requirement) instead of the metered condenser model.
+// Mirrors internal/store.Condensation's own three fields plus this one;
+// condensation_test.go's forbidden-substring scan (is_error, completed,
+// succeeded, effect_class, tool_result, outcome) doesn't match "degraded",
+// so this stays consistent with that invariant.
+type condensationPayload struct {
+	CondensationID    string `json:"condensation_id"`
+	CoveredThroughSeq int64  `json:"covered_through_seq"`
+	Summary           string `json:"summary"`
+	Degraded          bool   `json:"degraded"`
 }
 
 type toolUsePayload struct {
