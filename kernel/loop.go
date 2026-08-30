@@ -33,6 +33,18 @@ type Kernel struct {
 	Tools    ToolExecutor
 	Budget   BudgetGate
 	Store    *store.Store
+
+	// Receipts extends the hash-chained audit receipt for every event this
+	// Kernel appends (internal/audit, Phase 5, README task 5.2). Nil is
+	// valid — every pre-Phase-5 test constructs a Kernel without one — and
+	// simply means no receipt is written for that call.
+	Receipts ReceiptFunc
+
+	// OnSuspend durably records an approval for the tool_use a run just
+	// suspended on (internal/oversight.Approvals.Create, Phase 5, README
+	// task 5.6). Nil is valid — every pre-Phase-5 test — and simply means
+	// nothing beyond EventApprovalRequested itself is recorded.
+	OnSuspend OnSuspend
 }
 
 // RunState is the mutable state one Run call owns: TenantID/SessionID
@@ -58,11 +70,6 @@ type RunState struct {
 // never shows a client something that isn't already in the log.
 func (k *Kernel) Run(ctx context.Context, st *RunState, cfg RunConfig) iter.Seq2[store.Event, error] {
 	return func(yield func(store.Event, error) bool) {
-		maxTurns := cfg.MaxTurns
-		if maxTurns <= 0 {
-			maxTurns = defaultMaxTurns
-		}
-
 		if err := k.updateStatus(ctx, st, store.SessionStatusRunning, nil); err != nil {
 			yield(store.Event{}, err)
 			return
@@ -96,190 +103,279 @@ func (k *Kernel) Run(ctx context.Context, st *RunState, cfg RunConfig) iter.Seq2
 			}
 		}
 
-		for turn := 1; ; turn++ {
-			if turn > maxTurns {
-				k.terminate(ctx, st, yield, TerminalMaxTurnsExceeded(maxTurns))
+		k.runTurns(ctx, st, cfg, yield, 1)
+	}
+}
+
+// Resume continues a session a run suspended on an approval (kernel/
+// loop.go's suspendForApproval), acting on internal/oversight's resolution
+// for the ONE pending tool_use that suspended it (README task 5.8). st must
+// already be rehydrated (Rehydrate, kernel/rehydrate.go) — History and
+// Transcript populated from the session's stored event log up to and
+// including that tool_use — before this is called; Resume itself neither
+// replays nor decrypts anything.
+//
+// This is deliberately scoped to the approval-suspend case only, not
+// general crash/steer resume from an arbitrary point — Phase 6's
+// internal/runctl + the real Checkpoint artifact (README task 6.3) still
+// own that; this is the same kind of honest interim WorkspaceRoot already
+// is for the sandbox.
+func (k *Kernel) Resume(ctx context.Context, st *RunState, cfg RunConfig, res PendingResolution) iter.Seq2[store.Event, error] {
+	return func(yield func(store.Event, error) bool) {
+		if err := k.updateStatus(ctx, st, store.SessionStatusRunning, nil); err != nil {
+			yield(store.Event{}, err)
+			return
+		}
+
+		input := res.Input
+		if res.Decision == ApprovalDecisionGrantedModified {
+			input = res.ModifiedInput
+		}
+
+		var result ToolResult
+		switch res.Decision {
+		case ApprovalDecisionGranted, ApprovalDecisionGrantedModified:
+			executor, ok := k.Tools.(ApprovedExecutor)
+			if !ok {
+				yield(store.Event{}, fmt.Errorf("kernel: Resume called but the configured ToolExecutor does not implement ApprovedExecutor"))
 				return
 			}
+			execCtx := ExecContext{TenantID: st.TenantID, SessionID: st.SessionID, AutonomyLevel: cfg.AutonomyLevel}
+			result = executor.ExecuteApproved(ctx, ToolUseRequest{ToolName: res.ToolID, Input: input}, res.ApprovedDigest, execCtx)
+		case ApprovalDecisionDenied:
+			result = ToolResult{IsError: true, Synthetic: true, PermissionDenied: true, Reason: "approval_denied: " + res.Reason}
+		case ApprovalDecisionInvalidated:
+			result = ToolResult{IsError: true, Synthetic: true, PermissionDenied: true, Reason: "approval_invalidated: " + res.Reason}
+		}
 
-			// A ToolExecutor that also bounds hook cost per turn
-			// (internal/hooks task 3.11's per-turn cap, via
-			// PipelineExecutor -> tools.Pipeline) gets told a new turn has
-			// started. This is an optional interface, not part of
-			// ToolExecutor itself, so kernel.NotImplementedToolExecutor
-			// and any future executor with nothing to reset need no
-			// no-op method just to satisfy it.
-			if r, ok := k.Tools.(interface{ ResetTurn() }); ok {
-				r.ResetTurn()
-			}
+		toolID := res.ToolID
+		ev, err := k.appendToolResult(ctx, st, res.ToolUseEventID, &toolID, result)
+		if err != nil {
+			yield(store.Event{}, err)
+			return
+		}
+		st.Transcript = append(st.Transcript, provider.Message{Role: "tool", Text: resultText(result)})
+		if !yield(ev, nil) {
+			return
+		}
 
-			kept, synth := Hygiene(st.History)
-			st.History = kept
-			for _, s := range synth {
-				ev, err := k.appendToolResult(ctx, st, s.PairRef, s.ToolID, ToolResult{IsError: true, Synthetic: true, Reason: s.Reason})
-				if err != nil {
-					yield(store.Event{}, err)
-					return
-				}
-				st.Transcript = append(st.Transcript, provider.Message{Role: "tool", Text: "[synthetic error] " + s.Reason})
-				if !yield(ev, nil) {
-					return
-				}
-			}
+		// A denial, an invalidation, and an approval_mismatch are all the
+		// same severity class as a chain-level DENY (kernel.ToolResult's
+		// own doc comment on PermissionDenied): fatal to the run, not just
+		// to this one call — never silently continue past a refused
+		// execution. AwaitingApproval is checked only defensively:
+		// ExecuteApproved never resolves Ask by construction (it skips the
+		// permission chain entirely), so this would only fire on an
+		// ApprovedExecutor implementation bug.
+		if result.PermissionDenied || result.ApprovalMismatch {
+			k.terminate(ctx, st, yield, TerminalPermissionDenied(res.ToolID))
+			return
+		}
+		if result.AwaitingApproval {
+			yield(store.Event{}, fmt.Errorf("kernel: Resume's ApprovedExecutor unexpectedly resolved AwaitingApproval for %s", res.ToolID))
+			return
+		}
 
-			reservation, reserveErr := k.Budget.Reserve(ctx, cost.ReserveRequest{
-				TenantID: st.TenantID, SessionID: st.SessionID, ModelID: cfg.ModelID, Purpose: cost.PurposeTurn,
-			})
-			bev, err := k.appendBudgetDecision(ctx, st, reservation)
+		k.runTurns(ctx, st, cfg, yield, 1)
+	}
+}
+
+// runTurns is the turn loop both Run (from turn 1, after its own preamble)
+// and Resume (from turn 1, after resolving the one tool_use that suspended
+// the run) share: hygiene -> reserve -> build prompt -> stream -> classify
+// -> dispatch -> pair -> loop-or-terminate (README task 2.1). Every
+// appended event is durably committed (store.Append, inside InTenantTx)
+// before it is yielded, so a caller forwarding these events (e.g. over SSE)
+// never shows a client something that isn't already in the log.
+func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yield func(store.Event, error) bool, startTurn int) {
+	maxTurns := cfg.MaxTurns
+	if maxTurns <= 0 {
+		maxTurns = defaultMaxTurns
+	}
+
+	for turn := startTurn; ; turn++ {
+		if turn > maxTurns {
+			k.terminate(ctx, st, yield, TerminalMaxTurnsExceeded(maxTurns))
+			return
+		}
+
+		// A ToolExecutor that also bounds hook cost per turn
+		// (internal/hooks task 3.11's per-turn cap, via
+		// PipelineExecutor -> tools.Pipeline) gets told a new turn has
+		// started. This is an optional interface, not part of
+		// ToolExecutor itself, so kernel.NotImplementedToolExecutor
+		// and any future executor with nothing to reset need no
+		// no-op method just to satisfy it.
+		if r, ok := k.Tools.(interface{ ResetTurn() }); ok {
+			r.ResetTurn()
+		}
+
+		kept, synth := Hygiene(st.History)
+		st.History = kept
+		for _, s := range synth {
+			ev, err := k.appendToolResult(ctx, st, s.PairRef, s.ToolID, ToolResult{IsError: true, Synthetic: true, Reason: s.Reason})
 			if err != nil {
 				yield(store.Event{}, err)
 				return
 			}
-			if !yield(bev, nil) {
+			st.Transcript = append(st.Transcript, provider.Message{Role: "tool", Text: "[synthetic error] " + s.Reason})
+			if !yield(ev, nil) {
 				return
 			}
-			if reserveErr != nil {
-				k.terminate(ctx, st, yield, TerminalCostExhausted(reservation.Decision.Reason))
-				return
+		}
+
+		reservation, reserveErr := k.Budget.Reserve(ctx, cost.ReserveRequest{
+			TenantID: st.TenantID, SessionID: st.SessionID, ModelID: cfg.ModelID, Purpose: cost.PurposeTurn,
+		})
+		bev, err := k.appendBudgetDecision(ctx, st, reservation)
+		if err != nil {
+			yield(store.Event{}, err)
+			return
+		}
+		if !yield(bev, nil) {
+			return
+		}
+		if reserveErr != nil {
+			k.terminate(ctx, st, yield, TerminalCostExhausted(reservation.Decision.Reason))
+			return
+		}
+
+		prompt, _ := promptctx.Build(cfg.System, cfg.Catalog, st.Transcript)
+
+		stream, err := k.Provider.Stream(ctx, prompt, cfg.Catalog, provider.RunContext{TenantID: st.TenantID, SessionID: st.SessionID})
+		if err != nil {
+			k.reconcile(ctx, st, reservation, provider.Usage{}, false)
+			k.terminateFromStreamError(ctx, st, yield, err)
+			return
+		}
+
+		var contentText strings.Builder
+		var reasoningChunks [][]byte
+		var toolUses []ToolUseRequest
+		var usage provider.Usage
+		var usageReported bool
+		var done provider.DoneReason
+		var streamErr error
+		for {
+			chunk, ok, nerr := stream.Next(ctx)
+			if nerr != nil {
+				streamErr = nerr
+				break
 			}
+			if !ok {
+				break
+			}
+			switch chunk.Kind {
+			case provider.ChunkContent:
+				contentText.WriteString(chunk.Text)
+			case provider.ChunkReasoning:
+				reasoningChunks = append(reasoningChunks, chunk.Opaque)
+			case provider.ChunkToolUse:
+				toolUses = append(toolUses, ToolUseRequest{ToolUseID: chunk.ToolUseID, ToolName: chunk.ToolName, Input: chunk.Input})
+			case provider.ChunkUsage:
+				usage = chunk.Usage
+				usageReported = true
+			case provider.ChunkDone:
+				done = chunk.Done
+			}
+		}
+		// Reconcile unconditionally, success or failure: task 4.7's
+		// UNREPORTED case is a streamErr, even one arriving AFTER a
+		// usage chunk was already seen — failover.go's "committed
+		// after first chunk" only says a mid-stream error is never
+		// retried, not that a usage figure emitted before the error is
+		// still trustworthy for everything that came after it.
+		// Reconcile charges the full reserved worst case instead of a
+		// partial/zero usage figure from a stream that failed
+		// ("an unreliable provider must not look free").
+		k.reconcile(ctx, st, reservation, usage, usageReported && streamErr == nil)
+		if streamErr != nil {
+			k.terminateFromStreamError(ctx, st, yield, streamErr)
+			return
+		}
 
-			prompt, _ := promptctx.Build(cfg.System, cfg.Catalog, st.Transcript)
-
-			stream, err := k.Provider.Stream(ctx, prompt, cfg.Catalog, provider.RunContext{TenantID: st.TenantID, SessionID: st.SessionID})
+		for _, r := range reasoningChunks {
+			ev, err := k.appendThought(ctx, st, cfg.ModelID, r)
 			if err != nil {
-				k.reconcile(ctx, st, reservation, provider.Usage{}, false)
-				k.terminateFromStreamError(ctx, st, yield, err)
+				yield(store.Event{}, err)
 				return
 			}
-
-			var contentText strings.Builder
-			var reasoningChunks [][]byte
-			var toolUses []ToolUseRequest
-			var usage provider.Usage
-			var usageReported bool
-			var done provider.DoneReason
-			var streamErr error
-			for {
-				chunk, ok, nerr := stream.Next(ctx)
-				if nerr != nil {
-					streamErr = nerr
-					break
-				}
-				if !ok {
-					break
-				}
-				switch chunk.Kind {
-				case provider.ChunkContent:
-					contentText.WriteString(chunk.Text)
-				case provider.ChunkReasoning:
-					reasoningChunks = append(reasoningChunks, chunk.Opaque)
-				case provider.ChunkToolUse:
-					toolUses = append(toolUses, ToolUseRequest{ToolUseID: chunk.ToolUseID, ToolName: chunk.ToolName, Input: chunk.Input})
-				case provider.ChunkUsage:
-					usage = chunk.Usage
-					usageReported = true
-				case provider.ChunkDone:
-					done = chunk.Done
-				}
-			}
-			// Reconcile unconditionally, success or failure: task 4.7's
-			// UNREPORTED case is a streamErr, even one arriving AFTER a
-			// usage chunk was already seen — failover.go's "committed
-			// after first chunk" only says a mid-stream error is never
-			// retried, not that a usage figure emitted before the error is
-			// still trustworthy for everything that came after it.
-			// Reconcile charges the full reserved worst case instead of a
-			// partial/zero usage figure from a stream that failed
-			// ("an unreliable provider must not look free").
-			k.reconcile(ctx, st, reservation, usage, usageReported && streamErr == nil)
-			if streamErr != nil {
-				k.terminateFromStreamError(ctx, st, yield, streamErr)
+			// Reasoning is round-tripped, never shown (internal/provider's
+			// doc comment) — logged, but never added to the plaintext
+			// transcript a client or the next prompt sees.
+			if !yield(ev, nil) {
 				return
 			}
+		}
 
-			for _, r := range reasoningChunks {
-				ev, err := k.appendThought(ctx, st, cfg.ModelID, r)
+		if done == provider.DoneMaxOutput {
+			k.terminate(ctx, st, yield, TerminalError(fmt.Errorf("provider truncated output at max_output without a natural stop")))
+			return
+		}
+
+		if contentText.Len() > 0 {
+			ev, err := k.appendContent(ctx, st, cfg.ModelID, contentText.String())
+			if err != nil {
+				yield(store.Event{}, err)
+				return
+			}
+			st.Transcript = append(st.Transcript, provider.Message{Role: "assistant", Text: contentText.String()})
+			if !yield(ev, nil) {
+				return
+			}
+		}
+
+		var toolUseEvents []store.Event
+		for _, tu := range toolUses {
+			ev, err := k.appendToolUseEvent(ctx, st, cfg.ModelID, tu)
+			if err != nil {
+				yield(store.Event{}, err)
+				return
+			}
+			toolUseEvents = append(toolUseEvents, ev)
+			st.Transcript = append(st.Transcript, provider.Message{
+				Role: "assistant",
+				Text: fmt.Sprintf("[tool_use %s] %s(%s)", ev.EventID, tu.ToolName, string(tu.Input)),
+			})
+			if !yield(ev, nil) {
+				return
+			}
+		}
+
+		switch Classify(toolUses, contentText.String()) {
+		case ClassificationToolCalls:
+			execCtx := ExecContext{TenantID: st.TenantID, SessionID: st.SessionID, AutonomyLevel: cfg.AutonomyLevel}
+			for i, tu := range toolUses {
+				result := k.Tools.Execute(ctx, tu, execCtx)
+				ev, err := k.appendToolResult(ctx, st, toolUseEvents[i].EventID, toolUseEvents[i].ToolID, result)
 				if err != nil {
 					yield(store.Event{}, err)
 					return
 				}
-				// Reasoning is round-tripped, never shown (internal/provider's
-				// doc comment) — logged, but never added to the plaintext
-				// transcript a client or the next prompt sees.
+				st.Transcript = append(st.Transcript, provider.Message{Role: "tool", Text: resultText(result)})
 				if !yield(ev, nil) {
 					return
 				}
-			}
 
-			if done == provider.DoneMaxOutput {
-				k.terminate(ctx, st, yield, TerminalError(fmt.Errorf("provider truncated output at max_output without a natural stop")))
-				return
-			}
-
-			if contentText.Len() > 0 {
-				ev, err := k.appendContent(ctx, st, cfg.ModelID, contentText.String())
-				if err != nil {
-					yield(store.Event{}, err)
+				if result.PermissionDenied {
+					toolID := "unknown"
+					if toolUseEvents[i].ToolID != nil {
+						toolID = *toolUseEvents[i].ToolID
+					}
+					k.terminate(ctx, st, yield, TerminalPermissionDenied(toolID))
 					return
 				}
-				st.Transcript = append(st.Transcript, provider.Message{Role: "assistant", Text: contentText.String()})
-				if !yield(ev, nil) {
+				if result.AwaitingApproval {
+					k.suspendForApproval(ctx, st, yield, toolUseEvents[i].EventID, toolUseEvents[i].ToolID, tu.Input, result)
 					return
 				}
 			}
-
-			var toolUseEvents []store.Event
-			for _, tu := range toolUses {
-				ev, err := k.appendToolUseEvent(ctx, st, cfg.ModelID, tu)
-				if err != nil {
-					yield(store.Event{}, err)
-					return
-				}
-				toolUseEvents = append(toolUseEvents, ev)
-				st.Transcript = append(st.Transcript, provider.Message{
-					Role: "assistant",
-					Text: fmt.Sprintf("[tool_use %s] %s(%s)", ev.EventID, tu.ToolName, string(tu.Input)),
-				})
-				if !yield(ev, nil) {
-					return
-				}
-			}
-
-			switch Classify(toolUses, contentText.String()) {
-			case ClassificationToolCalls:
-				execCtx := ExecContext{TenantID: st.TenantID, SessionID: st.SessionID, AutonomyLevel: cfg.AutonomyLevel}
-				for i, tu := range toolUses {
-					result := k.Tools.Execute(ctx, tu, execCtx)
-					ev, err := k.appendToolResult(ctx, st, toolUseEvents[i].EventID, toolUseEvents[i].ToolID, result)
-					if err != nil {
-						yield(store.Event{}, err)
-						return
-					}
-					st.Transcript = append(st.Transcript, provider.Message{Role: "tool", Text: resultText(result)})
-					if !yield(ev, nil) {
-						return
-					}
-
-					if result.PermissionDenied {
-						toolID := "unknown"
-						if toolUseEvents[i].ToolID != nil {
-							toolID = *toolUseEvents[i].ToolID
-						}
-						k.terminate(ctx, st, yield, TerminalPermissionDenied(toolID))
-						return
-					}
-					if result.AwaitingApproval {
-						k.suspendForApproval(ctx, st, yield, toolUseEvents[i].ToolID, result)
-						return
-					}
-				}
-				// A dispatched tool call always continues to the next turn:
-				// the run isn't done until every tool_use has a paired
-				// result AND the model has seen it.
-			case ClassificationContent, ClassificationEmpty:
-				k.terminate(ctx, st, yield, TerminalCompleted())
-				return
-			}
+			// A dispatched tool call always continues to the next turn:
+			// the run isn't done until every tool_use has a paired
+			// result AND the model has seen it.
+		case ClassificationContent, ClassificationEmpty:
+			k.terminate(ctx, st, yield, TerminalCompleted())
+			return
 		}
 	}
 }
@@ -331,14 +427,14 @@ func (k *Kernel) terminate(ctx context.Context, st *RunState, yield func(store.E
 
 // suspendForApproval is the loop's reaction to an AwaitingApproval result
 // (Phase 3's permission chain resolving ASK with no standing scope to
-// satisfy it): append an EventApprovalRequested and mark the session
-// suspended, then stop the generator WITHOUT a terminal event — a suspended
-// run is paused, not done. Turning the appended event into an actual
-// grant/deny decision is Phase 5's internal/oversight; resuming the run
-// from here is Phase 6's internal/runctl + checkpoint. Both are seams this
-// phase deliberately stops short of, mirroring how kernel.NotImplementedToolExecutor
-// stopped short of Phase 3 in the same file two phases ago.
-func (k *Kernel) suspendForApproval(ctx context.Context, st *RunState, yield func(store.Event, error) bool, toolID *string, result ToolResult) {
+// satisfy it): append an EventApprovalRequested, mark the session
+// suspended, and (if OnSuspend is wired) durably record an approval bound
+// to toolUseEventID/digest — then stop the generator WITHOUT a terminal
+// event — a suspended run is paused, not done. Resuming from here is
+// Kernel.Resume (README task 5.8), driven by internal/oversight once a
+// human decides; general crash/steer resume from an arbitrary point is
+// still Phase 6's internal/runctl + checkpoint.
+func (k *Kernel) suspendForApproval(ctx context.Context, st *RunState, yield func(store.Event, error) bool, toolUseEventID uuid.UUID, toolID *string, input json.RawMessage, result ToolResult) {
 	ev, err := k.appendApprovalRequested(ctx, st, toolID, result.Reason, result.AskKind)
 	if err != nil {
 		yield(store.Event{}, err)
@@ -347,6 +443,24 @@ func (k *Kernel) suspendForApproval(ctx context.Context, st *RunState, yield fun
 	if err := k.updateStatus(ctx, st, store.SessionStatusSuspended, nil); err != nil {
 		yield(ev, fmt.Errorf("approval_requested event %s appended but session status update failed: %w", ev.EventID, err))
 		return
+	}
+	if k.OnSuspend != nil {
+		tid := ""
+		if toolID != nil {
+			tid = *toolID
+		}
+		err := k.Store.InTenantTx(ctx, st.TenantID, func(ctx context.Context, tx pgx.Tx) error {
+			return k.OnSuspend(ctx, tx, SuspendRequest{
+				TenantID: st.TenantID, SessionID: st.SessionID,
+				ToolUseEventID: toolUseEventID, ApprovalEventID: ev.EventID,
+				ToolID: tid, Input: input, CanonicalDigest: result.CanonicalDigest, AskKind: result.AskKind,
+				EffectClass: result.EffectClass,
+			})
+		})
+		if err != nil {
+			yield(ev, fmt.Errorf("approval_requested event %s appended but OnSuspend failed: %w", ev.EventID, err))
+			return
+		}
 	}
 	yield(ev, nil)
 }
@@ -400,6 +514,9 @@ type toolResultPayload struct {
 	PermissionDenied bool            `json:"permission_denied,omitempty"`
 	AwaitingApproval bool            `json:"awaiting_approval,omitempty"`
 	AskKind          string          `json:"ask_kind,omitempty"`
+	CanonicalDigest  []byte          `json:"canonical_digest,omitempty"`
+	ApprovalMismatch bool            `json:"approval_mismatch,omitempty"`
+	EffectClass      string          `json:"effect_class,omitempty"`
 }
 
 type approvalRequestedPayload struct {
@@ -442,7 +559,13 @@ func (k *Kernel) appendEvent(ctx context.Context, st *RunState, typ store.EventT
 	err = k.Store.InTenantTx(ctx, st.TenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var aerr error
 		out, aerr = store.Append(ctx, tx, e)
-		return aerr
+		if aerr != nil {
+			return aerr
+		}
+		if k.Receipts != nil {
+			return k.Receipts(ctx, tx, out)
+		}
+		return nil
 	})
 	if err != nil {
 		return store.Event{}, fmt.Errorf("append %s: %w", typ, err)

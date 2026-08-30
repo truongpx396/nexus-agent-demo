@@ -68,15 +68,30 @@ type Result struct {
 	Reason  string
 }
 
+// SandboxExec is the small structural interface a Phase-5 sandbox
+// implements to run a shell command for one call (internal/sandbox.
+// Docker.Exec, via internal/sandbox.SessionSandbox). Declared here rather
+// than importing internal/sandbox directly, the same decoupling idiom this
+// codebase uses throughout (kernel.SealFunc, tools.DerivedArtifactRecorder,
+// ...): internal/tools stays free of a direct Docker-client dependency,
+// and internal/sandbox's SessionSandbox satisfies this purely structurally
+// — neither package needs to know about the other's declaration.
+type SandboxExec interface {
+	Exec(ctx context.Context, cmd string) (output string, exitCode int, breach string, err error)
+}
+
 // RunContext carries the identifiers and per-session facilities a tool call
 // needs. WorkspaceDir is the per-session directory builtin filesystem tools
-// are scoped to — there is no sandbox yet (that's Phase 5's
-// internal/sandbox); this is the seam it will replace, not a security
-// boundary itself.
+// are scoped to. Sandbox, if set (README task 5.12), is what
+// platform/shell actually executes through instead of the process's own
+// os/exec — nil is valid (every pre-Phase-5 test, and any test that
+// deliberately doesn't wire Docker) and falls back to that unsandboxed
+// path, the same honest interim it always was.
 type RunContext struct {
 	TenantID     uuid.UUID
 	SessionID    uuid.UUID
 	WorkspaceDir string
+	Sandbox      SandboxExec
 }
 
 // Tool is the kernel ABI's Tool interface (README.md §4), translated

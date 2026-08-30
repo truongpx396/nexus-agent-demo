@@ -34,7 +34,7 @@ func TestWebFetch_SuccessfulFetch(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	w := WebFetch{AllowPrivateNetworks: true}
+	w := WebFetch{AllowPrivateNetworks: true, AllowedHosts: []string{"*"}}
 	in, err := json.Marshal(map[string]string{"url": srv.URL})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)

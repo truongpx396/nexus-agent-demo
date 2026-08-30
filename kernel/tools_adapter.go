@@ -38,5 +38,32 @@ func (p PipelineExecutor) Execute(ctx context.Context, req ToolUseRequest, rc Ex
 		PermissionDenied: out.PermissionDenied,
 		AwaitingApproval: out.AwaitingApproval,
 		AskKind:          out.AskKind,
+		CanonicalDigest:  out.CanonicalDigest,
+		ApprovalMismatch: out.ApprovalMismatch,
+		EffectClass:      out.EffectClass,
+	}
+}
+
+// ExecuteApproved implements kernel.ApprovedExecutor (README task 5.7) by
+// forwarding to tools.Pipeline.ExecuteApproved — the resume-time digest
+// re-verification path Kernel.Resume calls instead of Execute.
+func (p PipelineExecutor) ExecuteApproved(ctx context.Context, req ToolUseRequest, approvedDigest []byte, rc ExecContext) ToolResult {
+	out := p.Pipeline.ExecuteApproved(ctx, tools.Invocation{
+		TenantID:      rc.TenantID,
+		SessionID:     rc.SessionID,
+		ToolName:      req.ToolName,
+		Input:         req.Input,
+		AutonomyLevel: rc.AutonomyLevel,
+	}, approvedDigest)
+	return ToolResult{
+		Output:           out.Output,
+		IsError:          out.IsError,
+		Reason:           out.Reason,
+		PermissionDenied: out.PermissionDenied,
+		AwaitingApproval: out.AwaitingApproval,
+		AskKind:          out.AskKind,
+		CanonicalDigest:  out.CanonicalDigest,
+		ApprovalMismatch: out.ApprovalMismatch,
+		EffectClass:      out.EffectClass,
 	}
 }

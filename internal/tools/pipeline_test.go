@@ -379,3 +379,68 @@ func TestPipeline_SerialGateSerializesAnUnsafeTool(t *testing.T) {
 		t.Fatalf("counter = %d, want %d (concurrent calls were not serialized)", counter, n)
 	}
 }
+
+// TestPipeline_ExecuteApprovedHappyPath is README task 5.7/5.8's resume
+// path: the digest a supervised Ask produced (TestPipeline_
+// SupervisedAsksForMutating's own CanonicalDigest) is exactly what a human
+// approval binds to and ExecuteApproved re-verifies — presented back
+// unchanged, it must execute, skipping the chain entirely (a human already
+// decided out of band).
+func TestPipeline_ExecuteApprovedHappyPath(t *testing.T) {
+	tool := newFakeTool("platform", "shell", EffectClassMutating)
+	h := newHarness(t, tool)
+	p := h.pipeline()
+	inv := h.invocation("supervised", `{"cmd":"echo hi"}`)
+
+	asked := p.Execute(context.Background(), inv)
+	if !asked.AwaitingApproval || len(asked.CanonicalDigest) == 0 {
+		t.Fatalf("Execute() = %+v, want AwaitingApproval with a CanonicalDigest", asked)
+	}
+
+	got := p.ExecuteApproved(context.Background(), inv, asked.CanonicalDigest)
+	if got.IsError || got.ApprovalMismatch {
+		t.Fatalf("ExecuteApproved() = %+v, want a clean success", got)
+	}
+	if tool.callCount != 1 {
+		t.Fatalf("tool called %d times, want 1", tool.callCount)
+	}
+}
+
+// TestPipeline_ExecuteApprovedMismatchRefuses is the adversarial case
+// (README task 5.7, SC-025): a digest that does not match what was
+// actually approved — simulating either a bug upstream or a deliberate
+// substitution attempt after grant — must refuse, typed, and must NEVER
+// execute the tool. "Never a silent re-request" means this is the ONLY
+// outcome: no fallback to asking again, no partial execution.
+func TestPipeline_ExecuteApprovedMismatchRefuses(t *testing.T) {
+	tool := newFakeTool("platform", "shell", EffectClassMutating)
+	h := newHarness(t, tool)
+	p := h.pipeline()
+	inv := h.invocation("supervised", `{"cmd":"echo hi"}`)
+
+	asked := p.Execute(context.Background(), inv)
+	if !asked.AwaitingApproval {
+		t.Fatalf("Execute() = %+v, want AwaitingApproval", asked)
+	}
+
+	tamperedDigest := []byte("this-is-not-the-approved-digest")
+	got := p.ExecuteApproved(context.Background(), inv, tamperedDigest)
+	if !got.ApprovalMismatch {
+		t.Fatalf("ExecuteApproved() = %+v, want ApprovalMismatch", got)
+	}
+	if !got.IsError {
+		t.Fatal("ApprovalMismatch result must also be IsError — never a quiet success")
+	}
+	if tool.callCount != 0 {
+		t.Fatalf("tool called %d times, want 0 (a mismatched digest must never execute)", tool.callCount)
+	}
+
+	// ExecuteApproved is unreachable without SOME digest to check against —
+	// there is no standing-scope-style shortcut into it (README §5's Phase
+	// 5 adversarial test, SC-025): the only way to reach a clean execution
+	// is to already know the exact digest a human approved.
+	empty := p.ExecuteApproved(context.Background(), inv, nil)
+	if !empty.ApprovalMismatch || tool.callCount != 0 {
+		t.Fatalf("ExecuteApproved(nil digest) = %+v, want ApprovalMismatch and zero calls", empty)
+	}
+}

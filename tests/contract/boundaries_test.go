@@ -75,6 +75,21 @@ var rules = []boundaryRule{
 		},
 	},
 	{
+		// README.md §5, task 5.1: "nexusd can sign but cannot read the
+		// key." internal/audit/signerkey holds the Ed25519 private key and
+		// the only code that signs with it; cmd/signerd is the sole
+		// importer. nexusd only ever reaches signing through
+		// internal/audit.SignerClient's unix-socket RPC (internal/audit/
+		// signer.go) — this rule is what makes "cannot read the key" a
+		// property of the build graph, not a convention nexusd could
+		// accidentally violate by adding one import.
+		name: "nexusd must not import the signer's private key package",
+		pkg:  modulePrefix + "cmd/nexusd",
+		forbidden: []string{
+			modulePrefix + "internal/audit/signerkey",
+		},
+	},
+	{
 		name: "internal/version is a leaf: it must not import anything else in this module",
 		pkg:  modulePrefix + "internal/version",
 		forbidden: []string{

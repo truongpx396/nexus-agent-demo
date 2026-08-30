@@ -35,6 +35,25 @@ type ExecuteResult struct {
 	PermissionDenied bool
 	AwaitingApproval bool
 	AskKind          string
+
+	// ApprovalMismatch marks a result ExecuteApproved produced because the
+	// digest it recomputed at resume time didn't match the digest a human
+	// approved (README task 5.7) — refused, never a silent re-request.
+	ApprovalMismatch bool
+
+	// CanonicalDigest is set only alongside AwaitingApproval: the digest
+	// (steps 5/8's CanonicalDigest, over {tool_id, input} as it stood at
+	// the moment the chain asked) internal/oversight.Approvals.Create binds
+	// an approval to, and ExecuteApproved later re-verifies at resume time.
+	CanonicalDigest []byte
+
+	// EffectClass is set only alongside AwaitingApproval: the tool's own
+	// descriptor.EffectClass, folded into the ContextPackage an approver
+	// sees (internal/oversight.ContextPackage) — carried here rather than
+	// re-resolved later because Pipeline's own Registry/Manifest are
+	// unexported, and this is the one place that already has the
+	// descriptor in hand.
+	EffectClass string
 }
 
 func errorResult(reason string) ExecuteResult { return ExecuteResult{IsError: true, Reason: reason} }
@@ -52,14 +71,29 @@ type PipelineConfig struct {
 	HookConfigs []hooks.Config
 	Blobs       BlobStore
 
-	// WorkspaceRoot, if set, is the local directory each session's
-	// filesystem-touching builtin tools (file_read/file_write/file_search)
-	// are scoped under, one subdirectory per SessionID. There is no
-	// sandbox yet (Phase 5's internal/sandbox, task 5.12, owns a real
-	// per-session workspace); this is the honest, unsandboxed interim —
-	// the same "local dir stands in for the eventual isolated one" pattern
-	// BlobStore already uses in place of Phase-5+ infrastructure.
+	// DerivedArtifacts, if set, tracks each blob spill (README task 5.4) so
+	// internal/crypto/shred.go's erasure and reconciliation can find and
+	// hard-delete it. Nil is valid — spills simply go untracked, the
+	// pre-Phase-5 behavior every existing caller and test still gets.
+	DerivedArtifacts DerivedArtifactRecorder
+
+	// WorkspaceRoot is the local directory each session's filesystem-
+	// touching builtin tools (file_read/file_write/file_search) are scoped
+	// under, one subdirectory per SessionID — and, once SandboxFactory is
+	// set, the same directory a session's sandbox bind-mounts at
+	// /workspace (internal/sandbox.Config.WorkspaceDir), so both paths
+	// agree on what "the session's files" means.
 	WorkspaceRoot string
+
+	// SandboxFactory, if set, returns the SandboxExec (README task 5.12)
+	// platform/shell runs through for sessionID, one per invocation — cheap
+	// enough to call unconditionally (internal/sandbox.SessionSandbox is
+	// just a struct binding a Docker client + a per-session Config; no
+	// container exists until Exec is actually called). Nil is valid and
+	// leaves RunContext.Sandbox unset — the pre-Phase-5 unsandboxed
+	// fallback WorkspaceRoot's own doc comment used to name as the honest
+	// interim.
+	SandboxFactory func(sessionID uuid.UUID) SandboxExec
 }
 
 // sessionState is the per-session facilities the pipeline can't share
@@ -181,16 +215,22 @@ func (p *Pipeline) Execute(ctx context.Context, inv Invocation) ExecuteResult {
 	if p.cfg.WorkspaceRoot != "" {
 		rc.WorkspaceDir = filepath.Join(p.cfg.WorkspaceRoot, inv.SessionID.String())
 	}
+	if p.cfg.SandboxFactory != nil {
+		rc.Sandbox = p.cfg.SandboxFactory(inv.SessionID)
+	}
 	if err := tool.ValidateInput(ctx, input, rc); err != nil {
 		return errorResult("invalid_input: " + err.Error())
 	}
 
-	// Step 5: canonical digest (bind).
+	// Step 5: canonical digest (bind) — re-bound at step 8 if a hook
+	// rewrites input; carried into the Ask branch below (steps 10-11) as
+	// what internal/oversight.Approvals.Create binds an approval to
+	// (README task 5.6), and re-verified by ExecuteApproved at resume time
+	// (task 5.7).
 	digest, err := CanonicalDigest(ref.String(), input)
 	if err != nil {
 		return errorResult("digest_error: " + err.Error())
 	}
-	_ = digest // bound here; re-bound at step 8 if a hook rewrites input, and available to a later phase's approval/idempotency wiring
 
 	// Step 6: Gate 2, the tool's own CheckPermissions.
 	gate2Raw := tool.CheckPermissions(ctx, input, rc)
@@ -223,7 +263,6 @@ func (p *Pipeline) Execute(ctx context.Context, inv Invocation) ExecuteResult {
 			return errorResult("digest_error: " + err.Error())
 		}
 	}
-	_ = digest
 
 	// Step 9: the 10-layer permission chain. taintMu is held across the
 	// whole read-resolve-write sequence (sessionState's doc comment) —
@@ -265,6 +304,8 @@ func (p *Pipeline) Execute(ctx context.Context, inv Invocation) ExecuteResult {
 			Reason:           fmt.Sprintf("approval required at layer %s: %s", result.Resolution.Layer, result.Resolution.Reason),
 			AwaitingApproval: true,
 			AskKind:          string(result.Resolution.AskKind),
+			CanonicalDigest:  digest,
+			EffectClass:      string(descriptor.EffectClass),
 		}
 	case permissions.Allow:
 		// continue below
@@ -272,6 +313,86 @@ func (p *Pipeline) Execute(ctx context.Context, inv Invocation) ExecuteResult {
 		return errorResult(fmt.Sprintf("permission_chain_bug: Resolve returned a non-final Defer at layer %s", result.Resolution.Layer))
 	}
 
+	// Steps 12-16.
+	return p.finishCall(ctx, tool, ref, descriptor, input, rc, inv, state)
+}
+
+// ExecuteApproved is Phase 5's resume-time entry point (README task 5.7):
+// steps 1-5 (resolve, digest re-verify against the pinned manifest,
+// admission, input validation, canonical digest) run exactly as Execute's
+// do, but steps 6-11 (Gate 2, hooks, the 10-layer permission chain, the
+// decision gates) are deliberately skipped — a human already authorized
+// this exact digest out of band (internal/oversight.Approval), so re-asking
+// the chain would be nonsensical, not just redundant. Instead, the freshly
+// recomputed canonical digest is compared against approvedDigest (what the
+// approval actually bound, at Create or GrantModified time); on a mismatch
+// this refuses with ExecuteResult.ApprovalMismatch rather than executing —
+// "never a silent re-request." A match falls into the same steps 12-16
+// every ordinary call uses.
+func (p *Pipeline) ExecuteApproved(ctx context.Context, inv Invocation, approvedDigest []byte) ExecuteResult {
+	// Step 1: resolve.
+	ref, err := ParseToolRef(inv.ToolName)
+	if err != nil {
+		return errorResult("unknown_tool: " + err.Error())
+	}
+	entry, ok := p.cfg.Manifest.Resolve(ref)
+	if !ok {
+		return errorResult(fmt.Sprintf("unknown_tool: %q is not in this session's pinned catalog manifest", ref))
+	}
+	tool, ok := p.cfg.Registry.Lookup(ref)
+	if !ok {
+		return errorResult(fmt.Sprintf("unknown_tool: %q is pinned in the manifest but not registered in this process", ref))
+	}
+
+	// Step 2: digest re-verify — the live descriptor must match what was pinned.
+	descriptor := tool.Descriptor()
+	if liveDigest := descriptorDigest(descriptor); !bytes.Equal(liveDigest, entry.DescriptorDigest) {
+		return errorResult(fmt.Sprintf("descriptor_drift: %q no longer matches the digest pinned at session start", ref))
+	}
+
+	// Step 3: admission gate.
+	status, _ := p.cfg.Registry.AdmissionStatus(ref)
+	if status != AdmissionClean {
+		return errorResult(fmt.Sprintf("admission_%s: %q is not admitted clean", status, ref))
+	}
+
+	// Step 4: input validation.
+	input := inv.Input
+	if len(input) == 0 {
+		input = json.RawMessage("{}")
+	}
+	rc := RunContext{TenantID: inv.TenantID, SessionID: inv.SessionID}
+	if p.cfg.WorkspaceRoot != "" {
+		rc.WorkspaceDir = filepath.Join(p.cfg.WorkspaceRoot, inv.SessionID.String())
+	}
+	if p.cfg.SandboxFactory != nil {
+		rc.Sandbox = p.cfg.SandboxFactory(inv.SessionID)
+	}
+	if err := tool.ValidateInput(ctx, input, rc); err != nil {
+		return errorResult("invalid_input: " + err.Error())
+	}
+
+	// Step 5: canonical digest — and the check ExecuteApproved exists for.
+	digest, err := CanonicalDigest(ref.String(), input)
+	if err != nil {
+		return errorResult("digest_error: " + err.Error())
+	}
+	if !bytes.Equal(digest, approvedDigest) {
+		return ExecuteResult{
+			IsError:          true,
+			Reason:           fmt.Sprintf("approval_mismatch: the input being executed for %q no longer matches what was approved", ref),
+			ApprovalMismatch: true,
+		}
+	}
+
+	state := p.stateFor(inv.SessionID, inv.AutonomyLevel)
+	return p.finishCall(ctx, tool, ref, descriptor, input, rc, inv, state)
+}
+
+// finishCall runs steps 12-16 (concurrency gate, call, post-hooks, result
+// budgeting, emit) — the tail every successful Execute or ExecuteApproved
+// call shares, factored out so neither path duplicates it.
+func (p *Pipeline) finishCall(ctx context.Context, tool Tool, ref ToolRef, descriptor Descriptor, input json.RawMessage, rc RunContext, inv Invocation, state *sessionState) ExecuteResult {
 	// Step 12: concurrency-safety gate. There is no cross-worker lock yet
 	// (Phase 6 task 6.2's Redis session-key lock) — a single-process
 	// in-memory serial slot is the honest interim: it prevents this
@@ -305,7 +426,7 @@ func (p *Pipeline) Execute(ctx context.Context, inv Invocation) ExecuteResult {
 	}
 
 	// Step 15: result budgeting.
-	budgeted, err := BudgetResult(p.cfg.Blobs, inv.SessionID, ref.String(), out.Output)
+	budgeted, err := BudgetResult(ctx, p.cfg.Blobs, inv.TenantID, inv.SessionID, ref.String(), out.Output, p.cfg.DerivedArtifacts)
 	if err != nil {
 		return errorResult("result_budget_error: " + err.Error())
 	}

@@ -24,6 +24,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/harness"
+	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
@@ -42,6 +43,19 @@ type Server struct {
 	// resident catalog does.
 	CatalogManifestDigest []byte
 
+	// Oversight, if set, backs the approval endpoints (README task 5.6-5.8)
+	// — nil leaves them unmounted, which every pre-Phase-5 caller and test
+	// gets.
+	Oversight OversightPort
+
+	// Grants, if set, backs the content-access-grant endpoints (README
+	// task 5.11). internal/obs has no reason to import kernel, so — unlike
+	// Oversight — this package imports it directly; no translation seam is
+	// needed (tests/contract/boundaries_test.go's transitive kernel-import
+	// check on internal/surfaces is what actually decides which
+	// dependencies need one, not this package's own convenience).
+	Grants *obs.Grants
+
 	broker *broker
 }
 
@@ -55,6 +69,16 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/runs", s.handleCreateRun)
 	mux.HandleFunc("GET /v1/runs/{id}", s.handleGetRun)
 	mux.HandleFunc("GET /v1/runs/{id}/events", s.handleEvents)
+	if s.Oversight != nil {
+		mux.HandleFunc("GET /v1/approvals", s.handleListApprovals)
+		mux.HandleFunc("GET /v1/approvals/{id}", s.handleGetApproval)
+		mux.HandleFunc("POST /v1/approvals/{id}/grant", s.handleGrantApproval)
+		mux.HandleFunc("POST /v1/approvals/{id}/deny", s.handleDenyApproval)
+	}
+	if s.Grants != nil {
+		mux.HandleFunc("POST /v1/sessions/{id}/content-access-grants", s.handleRequestContentAccessGrant)
+		mux.HandleFunc("GET /v1/sessions/{id}/content-access-grants/read", s.handleReadUnderGrant)
+	}
 	return mux
 }
 

@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/tools"
@@ -54,6 +55,33 @@ type WebFetch struct {
 	Client               *http.Client
 	Resolver             *net.Resolver
 	AllowPrivateNetworks bool // test-only escape hatch; production leaves this false
+
+	// AllowedHosts is the egress allowlist (README task 5.13) — a positive
+	// list, checked independently of (and in addition to) the private-IP
+	// SSRF guard below. Fail-closed: a nil/empty list refuses every host,
+	// "*" allows every host, and "*.example.com" allows any subdomain of
+	// example.com (but not example.com itself — an operator lists that
+	// bare host too if that's also wanted). Sandboxed tools get the same
+	// deny set for free via --network none (internal/sandbox, task 5.12);
+	// this specifically covers web_fetch, which runs in-process, not
+	// inside a container.
+	AllowedHosts []string
+}
+
+func hostAllowed(patterns []string, host string) bool {
+	for _, p := range patterns {
+		switch {
+		case p == "*":
+			return true
+		case p == host:
+			return true
+		case strings.HasPrefix(p, "*."):
+			if suffix := strings.TrimPrefix(p, "*"); strings.HasSuffix(host, suffix) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 var webFetchRef = tools.ToolRef{Namespace: "platform", Name: "web_fetch", Version: "v1"}
@@ -86,7 +114,7 @@ func (WebFetch) CheckPermissions(context.Context, json.RawMessage, tools.RunCont
 	return tools.PermissionResult{Decision: "defer"}
 }
 
-func (WebFetch) ValidateInput(_ context.Context, in json.RawMessage, _ tools.RunContext) error {
+func (w WebFetch) ValidateInput(_ context.Context, in json.RawMessage, _ tools.RunContext) error {
 	var req webFetchInput
 	if err := json.Unmarshal(in, &req); err != nil {
 		return fmt.Errorf("invalid input: %w", err)
@@ -97,6 +125,9 @@ func (WebFetch) ValidateInput(_ context.Context, in json.RawMessage, _ tools.Run
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return fmt.Errorf("scheme %q not allowed", u.Scheme)
+	}
+	if !hostAllowed(w.AllowedHosts, u.Hostname()) {
+		return fmt.Errorf("egress_denied: host %q is not on the allowlist", u.Hostname())
 	}
 	return nil
 }
@@ -109,6 +140,10 @@ func (w WebFetch) Call(ctx context.Context, in json.RawMessage, _ tools.RunConte
 	u, err := url.Parse(req.URL)
 	if err != nil {
 		return tools.Result{IsError: true, Reason: err.Error()}, nil
+	}
+
+	if !hostAllowed(w.AllowedHosts, u.Hostname()) {
+		return tools.Result{IsError: true, Reason: fmt.Sprintf("egress_denied: host %q is not on the allowlist", u.Hostname())}, nil
 	}
 
 	if !w.AllowPrivateNetworks {

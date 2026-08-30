@@ -11,9 +11,11 @@ import (
 	"encoding/json"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
+	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
 // ToolUseRequest is the kernel's view of one tool_use assembled from a
@@ -48,6 +50,21 @@ type ToolResult struct {
 	// one's.
 	AwaitingApproval bool
 	AskKind          string // "once" | "session" | "multi_party" — set only when AwaitingApproval
+
+	// CanonicalDigest is set only alongside AwaitingApproval — mirrors
+	// tools.ExecuteResult.CanonicalDigest (README task 5.6): what
+	// internal/oversight.Approvals.Create binds an approval to.
+	CanonicalDigest []byte
+
+	// ApprovalMismatch marks a result ExecuteApproved (via the optional
+	// ApprovedExecutor interface below) produced because the digest it
+	// recomputed at resume time didn't match what a human approved
+	// (README task 5.7) — refused, never a silent re-request.
+	ApprovalMismatch bool
+
+	// EffectClass is set only alongside AwaitingApproval — mirrors
+	// tools.ExecuteResult.EffectClass.
+	EffectClass string
 }
 
 // ExecContext carries the per-run facts a ToolExecutor needs beyond one
@@ -69,6 +86,18 @@ type ExecContext struct {
 // now, even though nothing can actually execute a tool until Phase 3 lands.
 type ToolExecutor interface {
 	Execute(ctx context.Context, req ToolUseRequest, rc ExecContext) ToolResult
+}
+
+// ApprovedExecutor is the optional interface a ToolExecutor may also
+// implement to resume the ONE tool call an approval/input-request
+// suspended a run on (README task 5.7/5.8) — mirrors the
+// `interface{ ResetTurn() }` optional-interface check kernel/loop.go
+// already does for the hook chain's per-turn cap, so an executor with
+// nothing to resume (kernel.NotImplementedToolExecutor) needs no method for
+// it. kernel.PipelineExecutor (tools_adapter.go) implements this by calling
+// tools.Pipeline.ExecuteApproved.
+type ApprovedExecutor interface {
+	ExecuteApproved(ctx context.Context, req ToolUseRequest, approvedDigest []byte, rc ExecContext) ToolResult
 }
 
 // NotImplementedToolExecutor is the only ToolExecutor Phase 2 ships. Every
@@ -125,6 +154,19 @@ func (NoopBudgetGate) Reconcile(context.Context, cost.Reservation, provider.Usag
 // stay free of any crypto or DB setup.
 type SealFunc func(plaintext []byte) (sealed, digest []byte, keyID string, err error)
 
+// ReceiptFunc extends the tenant's hash-chained audit receipt
+// (internal/audit.Chain.Append, Phase 5, README task 5.2) for one event
+// that store.Append just durably appended — called from inside the SAME
+// transaction, so an event is never observable without a receipt for it
+// ("day one, co-equal perimeter controls," not a retrofit). Declared here
+// rather than imported from internal/audit, exactly like SealFunc above:
+// this package's own doc comment restricts its imports to
+// internal/{provider,tools,promptctx,store,cost,reliability,obs}, and
+// internal/audit isn't on that list. cmd/nexusd wires the real
+// internal/audit.Chain.Append in; a nil ReceiptFunc (every pre-Phase-5 test)
+// simply means no receipt is written, not an error.
+type ReceiptFunc func(ctx context.Context, tx pgx.Tx, e store.Event) error
+
 // RunConfig is everything one Run needs beyond the growing event history.
 // ModelID is the internal/provider/router.go decision, persisted onto the
 // session and stamped on model-produced events for audit — Phase 2 computes
@@ -137,8 +179,10 @@ type RunConfig struct {
 	ModelID  string
 	MaxTurns int
 	// Input, if non-empty, is appended as the run's opening EventUserMessage
-	// before the turn loop starts. Empty for a resumed/continued run (not
-	// exercised this phase — Phase 6 owns resume).
+	// before the turn loop starts. Empty for a resumed/continued run —
+	// Resume (loop.go, README task 5.8) never touches this field; general
+	// crash/steer resume from an arbitrary point is still Phase 6's
+	// internal/runctl + the real Checkpoint artifact.
 	Input string
 	// AutonomyLevel is the session's pinned autonomy level ("read_only" |
 	// "supervised" | "autonomous"), forwarded to every ToolExecutor.Execute
@@ -153,4 +197,63 @@ type RunConfig struct {
 	// lands in the volatile zone" (task 3.2's own wording) rather than being
 	// baked into the byte-stable system-prompt prefix.
 	LoadedTools []string
+}
+
+// SuspendRequest is everything OnSuspend needs to durably record an
+// approval bound to the tool_use a run just suspended on.
+type SuspendRequest struct {
+	TenantID  uuid.UUID
+	SessionID uuid.UUID
+	// ToolUseEventID is the tool_use this approval gates — the PairRef
+	// target Resume later attaches its tool_result to.
+	ToolUseEventID uuid.UUID
+	// ApprovalEventID is the EventID of the EventApprovalRequested
+	// suspendForApproval just appended, in case a caller wants to link the
+	// two records explicitly.
+	ApprovalEventID uuid.UUID
+	ToolID          string
+	// Input is the tool_use's PLAINTEXT original input, still held in
+	// memory from the live turn — never re-read from the sealed event, so
+	// OnSuspend needs no decrypt path of its own.
+	Input           json.RawMessage
+	CanonicalDigest []byte
+	AskKind         string
+	EffectClass     string
+}
+
+// OnSuspend is called once, right after suspendForApproval durably appends
+// EventApprovalRequested and marks the session suspended —
+// internal/oversight.Approvals.Create (Phase 5) is wired here from
+// cmd/nexusd, so an approval_requested event is never left without a
+// matching approvals row to eventually resolve it against. Declared here
+// rather than imported from internal/oversight for the same import-
+// allowlist reason as ReceiptFunc above. Nil is valid (every pre-Phase-5
+// test) and simply means nothing durable beyond the event itself is
+// recorded.
+type OnSuspend func(ctx context.Context, tx pgx.Tx, req SuspendRequest) error
+
+// ApprovalDecisionKind is the resolution internal/oversight (Phase 5)
+// reached for the tool_use a run suspended on — what Resume acts on.
+type ApprovalDecisionKind string
+
+const (
+	ApprovalDecisionGranted         ApprovalDecisionKind = "granted"
+	ApprovalDecisionGrantedModified ApprovalDecisionKind = "granted_modified"
+	ApprovalDecisionDenied          ApprovalDecisionKind = "denied"
+	ApprovalDecisionInvalidated     ApprovalDecisionKind = "invalidated"
+)
+
+// PendingResolution is what internal/oversight hands Kernel.Resume: the
+// pending tool_use this run suspended on, oversight's decision, and the
+// digest that decision is bound to. ModifiedInput is set only for
+// ApprovalDecisionGrantedModified; every other decision executes (or
+// refuses to execute) the tool_use's own original Input.
+type PendingResolution struct {
+	ToolUseEventID uuid.UUID
+	ToolID         string
+	Input          json.RawMessage
+	ModifiedInput  json.RawMessage
+	ApprovedDigest []byte
+	Decision       ApprovalDecisionKind
+	Reason         string // populated for Denied/Invalidated
 }
