@@ -282,7 +282,7 @@ func TestOversightApproval_GrantModifiedExecutesApproverInput(t *testing.T) {
 
 	// The decisive assertion: the file on disk carries the APPROVER's
 	// content, and the agent's own original input never ran.
-	written, err := os.ReadFile(filepath.Join(workspaceRoot, sessionID.String(), "out.txt"))
+	written, err := os.ReadFile(filepath.Join(workspaceRoot, sessionID.String(), "out.txt")) //nolint:gosec // workspaceRoot is this test's own t.TempDir(), never external input
 	if err != nil {
 		t.Fatalf("read written file: %v", err)
 	}

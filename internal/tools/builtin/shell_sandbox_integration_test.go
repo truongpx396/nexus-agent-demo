@@ -40,7 +40,7 @@ func TestShell_CallSandboxedRoutesThroughDocker(t *testing.T) {
 		t.Fatalf("Call() = %+v, want success", result)
 	}
 
-	marker, err := os.ReadFile(workspace + "/marker.txt")
+	marker, err := os.ReadFile(workspace + "/marker.txt") //nolint:gosec // workspace is this test's own t.TempDir(), never external input
 	if err != nil {
 		t.Fatalf("marker.txt not found on the host workspace — the container's /workspace bind mount didn't round-trip: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestShell_CallSandboxedRoutesThroughDocker(t *testing.T) {
 	// never this test process's actual host name — proof the command ran
 	// isolated, not via a local os/exec fallback.
 	hostHostname, _ := os.Hostname()
-	containerHostname, err := os.ReadFile(workspace + "/hostname.txt")
+	containerHostname, err := os.ReadFile(workspace + "/hostname.txt") //nolint:gosec // workspace is this test's own t.TempDir(), never external input
 	if err != nil {
 		t.Fatalf("hostname.txt not found: %v", err)
 	}

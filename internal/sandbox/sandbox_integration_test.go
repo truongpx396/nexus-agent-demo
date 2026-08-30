@@ -90,7 +90,7 @@ func TestDocker_ExecWorkspaceBindMountRoundTrips(t *testing.T) {
 	if _, err := d.Exec(context.Background(), cfg, "echo written-from-inside > /workspace/out.txt"); err != nil {
 		t.Fatalf("Exec: %v", err)
 	}
-	raw, err := os.ReadFile(workspace + "/out.txt")
+	raw, err := os.ReadFile(workspace + "/out.txt") //nolint:gosec // workspace is this test's own t.TempDir(), never external input
 	if err != nil {
 		t.Fatalf("read host-side file: %v", err)
 	}
