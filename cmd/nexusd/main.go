@@ -10,6 +10,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -37,6 +38,9 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/anthropic"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
+	"github.com/truongpx396/nexus-agent-demo/internal/queue"
+	"github.com/truongpx396/nexus-agent-demo/internal/reliability"
+	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
 	"github.com/truongpx396/nexus-agent-demo/internal/sandbox"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
@@ -168,13 +172,15 @@ func serve(ctx context.Context) error {
 	gate := cost.NewGate(st, redisClient, cost.DefaultMeters(), cost.GateConfig{})
 
 	approvals := oversight.NewApprovals(st, keyStore, chain)
+	inputs := oversight.NewInputs(st, keyStore, chain)
 	k := &kernel.Kernel{
 		Provider:  provider.Wrap([]provider.Provider{prov}),
 		Tools:     kernel.PipelineExecutor{Pipeline: pipeline}, // real tool pipeline, Phase 3
 		Budget:    gate,                                        // real reserve-then-reconcile cost gate, Phase 4
 		Store:     st,
-		Receipts:  chainReceiptFunc(chain),  // hash-chained audit receipts, Phase 5 task 5.2
-		OnSuspend: onSuspendFunc(approvals), // durably record an approval on every suspend, Phase 5 task 5.6
+		Receipts:  chainReceiptFunc(chain),                       // hash-chained audit receipts, Phase 5 task 5.2
+		OnSuspend: onSuspendFunc(approvals),                      // durably record an approval on every suspend, Phase 5 task 5.6
+		Stuck:     reliability.NewRegistry(stuckDetectionWindow), // README task 6.8
 	}
 
 	starter := &kernelRunStarter{
@@ -191,17 +197,34 @@ func serve(ctx context.Context) error {
 	}
 	grants := obs.NewGrants(st, keyStore, chain)
 
+	ctl := &runctl.Control{
+		Store: st, Keys: keyStore, Chain: chain, Approvals: approvals, Inputs: inputs, Kernel: k,
+		System: starter.system, Catalog: catalog, MaxTurns: starter.maxTurns, CatalogManifestDigest: catalogManifestDigest,
+	}
+
 	srv := rest.NewServer(starter, st, keyStore, catalogManifestDigest)
 	srv.Oversight = &nexusdOversightPort{approvals: approvals, resumer: resumer}
 	srv.Grants = grants
+	srv.RunCtl = &nexusdRunCtlPort{ctl: ctl}
 
 	stopAnchor := startAnchorLoop(ctx, st, chain)
 	defer stopAnchor()
+
+	stopWorkers := startQueueWorkers(ctx, st, redisClient, ctl)
+	defer stopWorkers()
 
 	addr := envOr("NEXUS_HTTP_ADDR", ":8080")
 	fmt.Printf("listening on %s (provider=%s)\n", addr, envOr("NEXUS_PROVIDER", "fake"))
 	return http.ListenAndServe(addr, srv.Handler()) //nolint:gosec // dev/demo server; timeouts are a hardening task, not a Phase 2 one
 }
+
+// stuckDetectionWindow is internal/reliability.NewRegistry's window (README
+// task 6.8): how many recent tool calls a session's own Tracker looks back
+// over for a repeating cycle. 8 is small enough to catch a tight retry loop
+// within a handful of turns without false-tripping on a normal multi-step
+// task that happens to touch the same tool (e.g. several distinct
+// file_read calls) more than once.
+const stuckDetectionWindow = 8
 
 // chainReceiptFunc adapts internal/audit.Chain.Append to kernel.ReceiptFunc
 // — the seam kernel/types.go declares locally so kernel itself never
@@ -311,6 +334,176 @@ func listTenantIDs(ctx context.Context) ([]uuid.UUID, error) {
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+// nexusdRunCtlPort is the only implementation of rest.RunCtlPort this
+// binary ships — the seam that lets internal/surfaces/rest drive
+// internal/runctl (which itself imports kernel) without importing it
+// directly, mirroring nexusdOversightPort's own role one struct down.
+type nexusdRunCtlPort struct {
+	ctl *runctl.Control
+}
+
+func (p *nexusdRunCtlPort) Cancel(ctx context.Context, tenantID, sessionID uuid.UUID, reason string) error {
+	return p.ctl.Cancel(ctx, tenantID, sessionID, reason)
+}
+
+func (p *nexusdRunCtlPort) Steer(ctx context.Context, tenantID, sessionID uuid.UUID, input string) error {
+	_, err := p.ctl.Steer(ctx, tenantID, sessionID, input)
+	return err
+}
+
+func (p *nexusdRunCtlPort) TightenAutonomy(ctx context.Context, tenantID, sessionID uuid.UUID, target string) error {
+	return p.ctl.TightenAutonomy(ctx, tenantID, sessionID, target)
+}
+
+func (p *nexusdRunCtlPort) Fork(ctx context.Context, tenantID, sessionID uuid.UUID, atSeq int64, modelOverride string) (rest.ForkView, error) {
+	result, err := p.ctl.Fork(ctx, tenantID, sessionID, atSeq, runctl.ForkOverrides{ModelID: modelOverride})
+	if err != nil {
+		return rest.ForkView{}, err
+	}
+	return rest.ForkView{
+		SessionID: result.SessionID.String(), DigestDiverged: result.DigestDiverged,
+		ParentDigest: hex.EncodeToString(result.ParentDigest), ChildDigest: hex.EncodeToString(result.ChildDigest),
+	}, nil
+}
+
+// startQueueWorkers wires internal/queue's worker pool (README tasks
+// 6.1-6.2) to internal/runctl.Control.Resume: the durable, crash-recoverable
+// path a session's turn loop continues through after this process (or a
+// prior one) died mid-turn. It also sweeps for sessions this process's own
+// PREVIOUS life left stuck in "running" (session status is written
+// synchronously at every turn boundary; a row still reading "running" at
+// startup can only mean the process that was driving it never got to write
+// anything past that point) and enqueues a resume job for each — the
+// concrete trigger behind README §6's demo line: "kill -9 the worker
+// mid-tool-call -> the job re-queues and resumes from the checkpoint."
+//
+// Deliberately NOT wired here: a fresh interactive run
+// (POST /v1/runs, kernelRunStarter.StartRun) stays on its own existing
+// synchronous fast path, never enqueued — queue_jobs.payload carries no
+// sealed envelope the way events.payload does (migrations/0011_queue.sql's
+// own doc comment), so it must never carry a plaintext opening message.
+// Recovering an orphaned FRESH run (one that never got far enough to
+// suspend or checkpoint) is exactly what the sweep below already covers:
+// its status is "running" either way.
+func startQueueWorkers(ctx context.Context, st *store.Store, redisClient *redis.Client, ctl *runctl.Control) (stop func()) {
+	adminDSN := envOr("NEXUS_ADMIN_DATABASE_URL", envOr("NEXUS_MIGRATE_DATABASE_URL", defaultMigrateDSN))
+	adminPool, err := pgxpool.New(ctx, adminDSN)
+	if err != nil {
+		slog.Error("nexusd: queue: connect as admin failed; the worker pool is NOT running (fresh runs still work; crash recovery does not)", "error", err)
+		return func() {}
+	}
+
+	port := queue.NewPostgres(adminPool)
+	lock := queue.NewSessionLock(redisClient, 30*time.Second)
+	runner := &queueRunner{ctl: ctl}
+
+	recoverOrphanedSessions(ctx, adminPool, port)
+
+	numWorkers := 2
+	workerCtx, cancel := context.WithCancel(ctx)
+	for i := 0; i < numWorkers; i++ {
+		w := queue.NewWorker(queue.WorkerConfig{
+			Port: port, Lock: lock, Runner: runner,
+			Owner: fmt.Sprintf("nexusd-worker-%d-%d", os.Getpid(), i),
+		})
+		go w.Run(workerCtx)
+	}
+	return func() {
+		cancel()
+		adminPool.Close()
+	}
+}
+
+// recoverOrphanedSessions enqueues a KindResume job for every session this
+// (or a prior) process left in "running" status — an admin, genuinely
+// cross-tenant read, connected the same way cmd/nexusd's own
+// listTenantIDs/runErase already establish precedent for.
+func recoverOrphanedSessions(ctx context.Context, adminPool *pgxpool.Pool, port queue.Port) {
+	rows, err := adminPool.Query(ctx, `SELECT session_id, tenant_id, session_key FROM sessions WHERE status = 'running'`)
+	if err != nil {
+		slog.Error("nexusd: queue: list orphaned running sessions failed", "error", err)
+		return
+	}
+	defer rows.Close()
+	var recovered int
+	for rows.Next() {
+		var sessionID, tenantID uuid.UUID
+		var sessionKey string
+		if err := rows.Scan(&sessionID, &tenantID, &sessionKey); err != nil {
+			slog.Error("nexusd: queue: scan orphaned session failed", "error", err)
+			continue
+		}
+		if _, err := port.Enqueue(ctx, queue.Job{TenantID: tenantID, SessionID: sessionID, SessionKey: sessionKey, Kind: queue.KindResume}); err != nil {
+			slog.Error("nexusd: queue: enqueue resume for orphaned session failed", "session_id", sessionID, "error", err)
+			continue
+		}
+		recovered++
+	}
+	if recovered > 0 {
+		slog.Info("nexusd: queue: enqueued resume jobs for orphaned running sessions", "count", recovered)
+	}
+}
+
+// queueRunner implements queue.Runner over internal/runctl.Control.Resume —
+// the only Kind this demo's queue ever carries; see startQueueWorkers' own
+// doc comment for why fork/steer are driven synchronously via REST instead
+// of through the queue.
+type queueRunner struct {
+	ctl *runctl.Control
+}
+
+func (r *queueRunner) Run(ctx context.Context, job queue.Job) error {
+	var lastErr error
+	for ev, err := range r.ctl.Resume(ctx, job.TenantID, job.SessionID) {
+		if err != nil {
+			lastErr = err
+			break
+		}
+		_ = ev
+	}
+	if lastErr != nil {
+		return lastErr
+	}
+
+	// A checkpoint after every leased job returns (README task 6.3) — a
+	// durable, denormalized pointer a FUTURE resume can consult fast,
+	// never the source of truth for any one field (its own doc comment,
+	// internal/store/checkpoint.go).
+	var harnessDigest []byte
+	err := r.ctl.Store.InTenantTx(ctx, job.TenantID, func(ctx context.Context, tx pgx.Tx) error {
+		sess, err := store.GetSession(ctx, tx, job.SessionID)
+		if err != nil {
+			return err
+		}
+		harnessDigest = sess.HarnessDigest
+		claims, err := store.ListInFlightClaims(ctx, tx, job.SessionID)
+		if err != nil {
+			return err
+		}
+		var openClaim *uuid.UUID
+		if len(claims) > 0 {
+			openClaim = &claims[0].ClaimID
+		}
+		history, err := store.ListEvents(ctx, tx, job.SessionID)
+		if err != nil {
+			return err
+		}
+		var coveredSeq int64
+		if len(history) > 0 {
+			coveredSeq = history[len(history)-1].Seq
+		}
+		_, err = store.SaveCheckpoint(ctx, tx, store.Checkpoint{
+			TenantID: job.TenantID, SessionID: job.SessionID, CoveredSeq: coveredSeq,
+			OpenClaimID: openClaim, HarnessDigest: harnessDigest,
+		})
+		return err
+	})
+	if err != nil {
+		slog.Error("nexusd: queue: save checkpoint after run failed", "job_id", job.JobID, "error", err)
+	}
+	return nil
 }
 
 // nexusdOversightPort is the only implementation of rest.OversightPort this
@@ -468,6 +661,14 @@ func newToolPipeline(st *store.Store, keyStore *crypto.KeyStore, chain *audit.Ch
 		WorkspaceRoot:    workspaceRoot,
 		DerivedArtifacts: derivedArtifactRecorder(st, chain),
 		SandboxFactory:   newSandboxFactory(workspaceRoot),
+		// Claims (README task 6.6): write-ahead idempotency for every
+		// non-read-only tool call. Built here (rather than passed in) so
+		// newToolPipeline stays the one place that wires the resident
+		// catalog — runctl.NewClaimTracker takes st/keyStore/chain
+		// directly, not a *runctl.Control, precisely so this can happen
+		// before a Control (which needs the *kernel.Kernel this very
+		// pipeline feeds into) exists.
+		Claims: runctl.NewClaimTracker(st, keyStore, chain),
 	})
 	return pipeline, catalog, manifest.Digest
 }
