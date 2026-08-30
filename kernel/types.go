@@ -197,6 +197,20 @@ type RunConfig struct {
 	// lands in the volatile zone" (task 3.2's own wording) rather than being
 	// baked into the byte-stable system-prompt prefix.
 	LoadedTools []string
+	// CondenserModelID is the cheaper model structured compaction runs
+	// under (README task 7.11, Kernel.CondenseThresholdBytes' own doc
+	// comment) — empty is valid (the provider port decides what an empty
+	// model id means, exactly like ModelID's own zero value); condensation
+	// itself only ever runs when CondenseThresholdBytes > 0.
+	CondenserModelID string
+	// MemorySources names the file-first memory files already folded into
+	// System by the caller (internal/memory.Store.Load, README task 7.1) —
+	// Run appends one EventMemoryLoaded audit record per session naming
+	// them, mirroring LoadedTools/EventToolLoaded above. Empty means no
+	// memory was loaded (a tenant with nothing on disk yet, or a
+	// resumed/continued run — memory is only ever injected at a fresh
+	// session's start, matching "writes take effect next session").
+	MemorySources []string
 }
 
 // SuspendRequest is everything OnSuspend needs to durably record an

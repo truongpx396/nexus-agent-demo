@@ -15,6 +15,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -27,6 +28,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
+	"github.com/truongpx396/nexus-agent-demo/internal/surfaces"
 )
 
 // Server holds everything one REST process needs to admit and serve runs
@@ -61,7 +63,33 @@ type Server struct {
 	// pre-Phase-6 caller and test gets.
 	RunCtl RunCtlPort
 
+	// Skills, if set, resolves one tenant's admitted-skill-set digest at
+	// session-creation time (README task 7.6) — nil leaves
+	// harness.Config.SkillSetDigest at its pre-Phase-7 zero value, which
+	// every earlier caller and test still gets. Unlike CatalogManifestDigest
+	// (fixed once at process startup — the resident tool catalog is
+	// process-wide), a skill set is per-tenant, so this has to be resolved
+	// per request rather than baked into a Server field.
+	Skills SkillSetPort
+
+	// Outbox/OutboxSender, if both set, back durable at-least-once delivery
+	// (README task 7.14) of one event class — EventApprovalRequested — that
+	// genuinely needs it: a human must actually see this to act, unlike the
+	// broker's best-effort SSE fan-out to whichever clients happen to be
+	// connected right now. Nil leaves this unmounted, which every
+	// pre-Phase-7 caller and test still gets; a real Telegram/email sender
+	// is Phase 11's.
+	Outbox       *surfaces.Outbox
+	OutboxSender surfaces.Sender
+
 	broker *broker
+}
+
+// SkillSetPort is the seam between this surface and internal/skills — the
+// same nil-valid-optional-interface idiom RunCtlPort/OversightPort already
+// use, so this package never imports internal/skills directly.
+type SkillSetPort interface {
+	Digest(ctx context.Context, tenantID uuid.UUID) ([]byte, error)
 }
 
 func NewServer(starter RunStarter, st *store.Store, ks *crypto.KeyStore, catalogManifestDigest []byte) *Server {
@@ -134,10 +162,16 @@ type createRunResponse struct {
 }
 
 func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
-	tenantID, userID, ok := s.principal(w, r)
-	if !ok {
+	// Task 7.13: the turn-submitting principal, resolved fresh from THIS
+	// request — resolvePrincipal reads the same headers principal() does,
+	// typed as capability.Principal, since starting a run is the clearest
+	// "submitting one turn" action this surface has.
+	principal, perr := s.resolvePrincipal(r)
+	if perr != nil {
+		http.Error(w, perr.Error(), http.StatusUnauthorized)
 		return
 	}
+	tenantID, userID := principal.TenantID, principal.UserID
 
 	var req createRunRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -179,10 +213,21 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		budgetCeiling = &amount
 	}
 
+	var skillSetDigest []byte
+	if s.Skills != nil {
+		var derr error
+		skillSetDigest, derr = s.Skills.Digest(r.Context(), tenantID)
+		if derr != nil {
+			http.Error(w, "resolve skill set digest: "+derr.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
 	sessionID := uuid.New()
 	digest := harness.Digest(harness.Config{
 		SystemPromptVersion:   "phase2-v1",
 		CatalogManifestDigest: s.CatalogManifestDigest,
+		SkillSetDigest:        skillSetDigest,
 		PromptMode:            "phase2-single-shot",
 	})
 
@@ -266,6 +311,32 @@ func (s *Server) publishUntilDone(sessionID uuid.UUID, events <-chan RunEvent) {
 	defer s.broker.closeSession(sessionID)
 	for re := range events {
 		s.broker.publish(sessionID, published(re))
+		if s.Outbox != nil && s.OutboxSender != nil && re.Err == nil && re.Event.Type == store.EventApprovalRequested {
+			s.deliverApprovalNotification(sessionID, re.Event)
+		}
+	}
+}
+
+// deliverApprovalNotification is task 7.14's one real call site: an
+// approval_requested event durably needs a human to see it, so it goes
+// through the outbox's at-least-once discipline rather than only the
+// broker's best-effort SSE fan-out. The notification payload is
+// deliberately minimal (session id + tool id, both already-plaintext
+// structural fields on store.Event) — never the event's own sealed
+// payload, which this package has no decrypt path for anyway.
+func (s *Server) deliverApprovalNotification(sessionID uuid.UUID, ev store.Event) {
+	toolID := ""
+	if ev.ToolID != nil {
+		toolID = *ev.ToolID
+	}
+	payload, err := json.Marshal(map[string]string{"session_id": sessionID.String(), "tool_id": toolID})
+	if err != nil {
+		slog.Error("rest: marshal approval notification payload", "error", err, "session_id", sessionID)
+		return
+	}
+	const operatorRecipient = "operator" // no per-tenant notification-target config exists yet (Phase 11's connector/OAuth work); one fixed recipient is the honest interim
+	if err := s.Outbox.Deliver(context.Background(), ev.TenantID, sessionID, ev.Seq, Descriptor.SurfaceID, operatorRecipient, payload, s.OutboxSender); err != nil {
+		slog.Error("rest: deliver approval notification", "error", err, "session_id", sessionID, "seq", ev.Seq)
 	}
 }
 

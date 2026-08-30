@@ -10,6 +10,8 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
@@ -28,9 +30,11 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
+	"github.com/truongpx396/nexus-agent-demo/internal/config"
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/hooks"
+	"github.com/truongpx396/nexus-agent-demo/internal/memory"
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
 	"github.com/truongpx396/nexus-agent-demo/internal/permissions"
@@ -42,7 +46,9 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/reliability"
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
 	"github.com/truongpx396/nexus-agent-demo/internal/sandbox"
+	"github.com/truongpx396/nexus-agent-demo/internal/skills"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
+	"github.com/truongpx396/nexus-agent-demo/internal/surfaces"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools/builtin"
@@ -162,7 +168,7 @@ func serve(ctx context.Context) error {
 	signer := audit.NewSignerClient(envOr("NEXUS_SIGNERD_SOCKET", defaultSignerdSocket))
 	chain := audit.NewChain(signer)
 
-	pipeline, catalog, catalogManifestDigest := newToolPipeline(st, keyStore, chain)
+	pipeline, catalog, catalogManifestDigest, admittedSkillBundles := newToolPipeline(st, keyStore, chain)
 	loadedTools := make([]string, len(catalog))
 	for i, c := range catalog {
 		loadedTools[i] = c.Name
@@ -183,12 +189,16 @@ func serve(ctx context.Context) error {
 		Stuck:     reliability.NewRegistry(stuckDetectionWindow), // README task 6.8
 	}
 
+	memStore := &memory.Store{RootDir: envOr("NEXUS_MEMORY_ROOT", ".dev/memory")}
+
 	starter := &kernelRunStarter{
 		kernel:      k,
 		system:      "You are a helpful agent. Tools may be denied or require approval depending on the session's autonomy level.",
 		catalog:     catalog,
 		loadedTools: loadedTools,
 		maxTurns:    25,
+		memory:      memStore,
+		store:       st,
 	}
 
 	resumer := &oversight.Resumer{
@@ -206,6 +216,9 @@ func serve(ctx context.Context) error {
 	srv.Oversight = &nexusdOversightPort{approvals: approvals, resumer: resumer}
 	srv.Grants = grants
 	srv.RunCtl = &nexusdRunCtlPort{ctl: ctl}
+	srv.Skills = &nexusdSkillSetPort{store: st, bundles: admittedSkillBundles}
+	srv.Outbox = &surfaces.Outbox{Store: st, Keys: keyStore, Chain: chain}
+	srv.OutboxSender = slogSender{}
 
 	stopAnchor := startAnchorLoop(ctx, st, chain)
 	defer stopAnchor()
@@ -334,6 +347,39 @@ func listTenantIDs(ctx context.Context) ([]uuid.UUID, error) {
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+// slogSender is the demo's stand-in surfaces.Sender (README task 7.14) —
+// logs the notification rather than actually reaching a human, the same
+// honest-interim posture demoSafetyModel and the unsandboxed platform/shell
+// fallback already take elsewhere in this file. A real Telegram/email
+// Sender is Phase 11's; the point of this phase is the outbox's own
+// durability discipline, not a new transport.
+type slogSender struct{}
+
+func (slogSender) Send(_ context.Context, surfaceID, recipient string, payload []byte) error {
+	slog.Info("nexusd: outbox delivery (demo sender)", "surface_id", surfaceID, "recipient", recipient, "payload", string(payload))
+	return nil
+}
+
+// nexusdSkillSetPort is the only implementation of rest.SkillSetPort this
+// binary ships (README task 7.6) — resolves one tenant's admitted skill set
+// (internal/config) against the process-wide trusted bundle set
+// (newToolPipeline's admittedSkillBundles) into a SkillSet digest, at
+// session-creation time. internal/surfaces/rest never imports
+// internal/skills or internal/config directly, mirroring every other Port
+// in this file.
+type nexusdSkillSetPort struct {
+	store   *store.Store
+	bundles []skills.SkillBundle
+}
+
+func (p *nexusdSkillSetPort) Digest(ctx context.Context, tenantID uuid.UUID) ([]byte, error) {
+	cfg, err := config.LoadForTenant(ctx, p.store, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("load tenant config for skill set digest: %w", err)
+	}
+	return skills.BuildSkillSet(p.bundles, cfg.AdmittedSkillIDs).Digest, nil
 }
 
 // nexusdRunCtlPort is the only implementation of rest.RunCtlPort this
@@ -606,17 +652,20 @@ func newProvider() (provider.Provider, error) {
 }
 
 // newToolPipeline wires the Phase 3 tool pipeline: the resident catalog
-// (the five builtin tools), the permission chain's tenant-independent
-// config, and the hook dispatcher. There is no tenant config store yet
-// (that's Phase 7's internal/config) — one process-wide profile bound to
-// every builtin tool is the honest Phase 3 stand-in, the same way Phase 2
-// pinned one hardcoded system prompt. st/keyStore/chain wire Phase 5's
-// derived-artifact tracking (task 5.4) into BudgetResult's spill path.
-func newToolPipeline(st *store.Store, keyStore *crypto.KeyStore, chain *audit.Chain) (*tools.Pipeline, []provider.ToolSchema, []byte) {
+// (the builtin tools, now including Phase 7's activate_skill/
+// read_skill_file), the permission chain's tenant-independent config, and
+// the hook dispatcher. st/keyStore/chain wire Phase 5's derived-artifact
+// tracking (task 5.4) into BudgetResult's spill path, and (Phase 7) back
+// runctl.NewSkillEventRecorder for skill_activated/skill_capability_ignored.
+// Returns the admitted skill bundles too, so main() can wire
+// nexusdSkillSetPort without reloading them.
+func newToolPipeline(st *store.Store, keyStore *crypto.KeyStore, chain *audit.Chain) (*tools.Pipeline, []provider.ToolSchema, []byte, []skills.SkillBundle) {
 	reg := tools.NewRegistry()
 	if err := reg.DeclareNamespace("platform", "nexusd"); err != nil {
 		fatalf("declare platform namespace: %v", err)
 	}
+
+	skillCatalog, admittedBundles, scriptTools := loadSkillCatalog(reg)
 
 	webFetchAllowlist := strings.Split(envOr("NEXUS_WEB_FETCH_ALLOWLIST", ""), ",")
 
@@ -626,6 +675,20 @@ func newToolPipeline(st *store.Store, keyStore *crypto.KeyStore, chain *audit.Ch
 		builtin.FileSearch{},
 		builtin.Shell{},
 		builtin.WebFetch{AllowedHosts: webFetchAllowlist},
+		builtin.ActivateSkill{
+			Catalog:  skillCatalog,
+			Registry: reg,
+			Events:   runctl.NewSkillEventRecorder(st, keyStore, chain),
+			Admitted: func(tenantID uuid.UUID) []string {
+				cfg, err := config.LoadForTenant(context.Background(), st, tenantID)
+				if err != nil {
+					slog.Error("nexusd: load tenant config for skill admission check", "tenant_id", tenantID, "error", err)
+					return nil // fail closed: an unreadable config admits nothing
+				}
+				return cfg.AdmittedSkillIDs
+			},
+		},
+		builtin.ReadSkillFile{Catalog: skillCatalog},
 	}
 	var toolRefs []string
 	var catalog []provider.ToolSchema
@@ -640,6 +703,15 @@ func newToolPipeline(st *store.Store, keyStore *crypto.KeyStore, chain *audit.Ch
 		if status != tools.AdmissionClean {
 			fatalf("builtin tool %s failed admission (%s): %v", t.ID(), status, findings)
 		}
+		toolRefs = append(toolRefs, t.ID().String())
+		d := t.Descriptor()
+		catalog = append(catalog, provider.ToolSchema{Name: d.ID.String(), Description: d.Description, InputSchema: d.InputSchema})
+	}
+	// Skill scripts were already registered+admitted inside
+	// loadSkillCatalog (it needs reg to declare the "skill" namespace
+	// before this function can build anything from it) — this loop only
+	// adds them to the resident catalog/tool-profile, never re-registers.
+	for _, t := range scriptTools {
 		toolRefs = append(toolRefs, t.ID().String())
 		d := t.Descriptor()
 		catalog = append(catalog, provider.ToolSchema{Name: d.ID.String(), Description: d.Description, InputSchema: d.InputSchema})
@@ -670,7 +742,73 @@ func newToolPipeline(st *store.Store, keyStore *crypto.KeyStore, chain *audit.Ch
 		// pipeline feeds into) exists.
 		Claims: runctl.NewClaimTracker(st, keyStore, chain),
 	})
-	return pipeline, catalog, manifest.Digest
+	return pipeline, catalog, manifest.Digest, admittedBundles
+}
+
+// loadSkillCatalog reads NEXUS_SKILLS_ROOT (default .dev/skills, same
+// zero-setup-path idiom as NEXUS_WORKSPACE_ROOT), admits every bundle that
+// scans clean AND carries a valid signature under NEXUS_SKILLS_SIGNING_PUBKEY
+// (base64 ed25519 public key) — a bundle failing either check is SKIPPED
+// and logged, not fataled: skill bundles are less-trusted content than a
+// first-party builtin tool, unlike the builtin loop above which fatals on a
+// bad admission (README task 7.5's "the whole bundle is refused" scoped to
+// that one bundle, not the process). A bundle with a script gets that
+// script registered as a real tool under the "skill" namespace; if
+// registration fails (e.g. a namespace/ref collision), the WHOLE bundle is
+// dropped, per task 7.5 — never a bundle with a body but a silently
+// missing tool. No NEXUS_SKILLS_SIGNING_PUBKEY configured means no bundle
+// is ever trusted — the honest empty default, exactly like an unset
+// NEXUS_SANDBOX leaves platform/shell unsandboxed rather than refusing to
+// start.
+func loadSkillCatalog(reg *tools.Registry) (*skills.Catalog, []skills.SkillBundle, []tools.Tool) {
+	bundles, err := skills.LoadBundles(envOr("NEXUS_SKILLS_ROOT", ".dev/skills"))
+	if err != nil {
+		fatalf("load skill bundles: %v", err)
+	}
+	if len(bundles) == 0 {
+		return skills.NewCatalog(nil), nil, nil
+	}
+
+	var pubKey ed25519.PublicKey
+	if raw := envOr("NEXUS_SKILLS_SIGNING_PUBKEY", ""); raw != "" {
+		decoded, err := base64.StdEncoding.DecodeString(raw)
+		if err != nil {
+			fatalf("decode NEXUS_SKILLS_SIGNING_PUBKEY: %v", err)
+		}
+		pubKey = ed25519.PublicKey(decoded)
+	}
+
+	if err := reg.DeclareNamespace("skill", "nexusd"); err != nil {
+		fatalf("declare skill namespace: %v", err)
+	}
+
+	var admitted []skills.SkillBundle
+	var scriptTools []tools.Tool
+	for _, b := range bundles {
+		if pubKey == nil || !skills.VerifySignature(b, pubKey) {
+			slog.Warn("nexusd: skipped a skill bundle with a missing or invalid signature", "skill_id", b.SkillID)
+			continue
+		}
+		status, findings := skills.ScanBundle(b)
+		if status != tools.AdmissionClean {
+			slog.Warn("nexusd: skipped a skill bundle that failed admission scanning", "skill_id", b.SkillID, "status", status, "findings", findings)
+			continue
+		}
+		if b.HasScript() {
+			script := skills.ScriptTool{SkillID: b.SkillID, Description: b.Description, Content: b.ScriptContent}
+			if err := reg.Register(script); err != nil {
+				slog.Warn("nexusd: skipped a skill bundle whose script failed to register as a tool", "skill_id", b.SkillID, "error", err)
+				continue
+			}
+			if err := reg.SetAdmissionStatus(script.ID(), tools.AdmissionClean); err != nil {
+				slog.Warn("nexusd: skipped a skill bundle whose script tool could not be admitted", "skill_id", b.SkillID, "error", err)
+				continue
+			}
+			scriptTools = append(scriptTools, script)
+		}
+		admitted = append(admitted, b)
+	}
+	return skills.NewCatalog(admitted), admitted, scriptTools
 }
 
 // derivedArtifactRecorder wires internal/tools.DerivedArtifactRecorder to a
@@ -759,18 +897,38 @@ type kernelRunStarter struct {
 	catalog     []provider.ToolSchema
 	loadedTools []string
 	maxTurns    int
+
+	// memory/store back README task 7.1's "injected at session start": a
+	// nil memory leaves cfg.System untouched and cfg.MemorySources empty,
+	// exactly the pre-Phase-7 behavior every earlier test still gets.
+	memory *memory.Store
+	store  *store.Store
 }
 
-func (a *kernelRunStarter) StartRun(_ context.Context, req rest.RunRequest) (<-chan rest.RunEvent, error) {
+func (a *kernelRunStarter) StartRun(ctx context.Context, req rest.RunRequest) (<-chan rest.RunEvent, error) {
+	system := a.system
+	var memorySources []string
+	if a.memory != nil && a.store != nil {
+		snap, err := a.memory.LoadForSession(ctx, a.store, req.TenantID)
+		if err != nil {
+			return nil, fmt.Errorf("load memory for tenant %s: %w", req.TenantID, err)
+		}
+		if snap.Text != "" {
+			system = system + "\n\n" + snap.Text
+		}
+		memorySources = snap.SourceIDs
+	}
+
 	st := &kernel.RunState{
 		TenantID:  req.TenantID,
 		SessionID: req.SessionID,
 		Seal:      kernel.SealFunc(req.Seal),
 	}
 	cfg := kernel.RunConfig{
-		System:        a.system,
+		System:        system,
 		Catalog:       a.catalog,
 		LoadedTools:   a.loadedTools,
+		MemorySources: memorySources,
 		ModelID:       req.ModelID,
 		MaxTurns:      a.maxTurns,
 		Input:         req.Input,
