@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/version"
@@ -38,6 +39,12 @@ func main() {
 		err = cmdRun(os.Args[2:])
 	case "approvals":
 		err = cmdApprovals(os.Args[2:])
+	case "cancel":
+		err = cmdCancel(os.Args[2:])
+	case "steer":
+		err = cmdSteer(os.Args[2:])
+	case "fork":
+		err = cmdFork(os.Args[2:])
 	default:
 		printUsage()
 		os.Exit(1)
@@ -54,6 +61,9 @@ func printUsage() {
   nexusctl approvals show <approval-id>
   nexusctl approvals grant <approval-id> [--modify='{"field":"value"}']
   nexusctl approvals deny <approval-id> --reason="<reason>"
+  nexusctl cancel <session-id> [--reason="<reason>"]
+  nexusctl steer <session-id> "<input>"
+  nexusctl fork <session-id> --at=<seq> [--model=<model-id>]
 
 env: NEXUS_HTTP_ADDR (default http://localhost:8080),
      NEXUS_TENANT_ID, NEXUS_USER_ID (dev-mode principal headers)`)
@@ -233,6 +243,79 @@ func approvalsDeny(c *client, id, reason string) error {
 	}
 	if status != http.StatusOK {
 		return fmt.Errorf("deny approval: status %d: %s", status, respBody)
+	}
+	return printPretty(respBody)
+}
+
+// cmdCancel drives POST /v1/runs/{id}/cancel (README task 6.9) — the sole
+// producer of the "aborted" terminal reason.
+func cmdCancel(args []string) error {
+	positional, flags := parseFlags(args)
+	if len(positional) != 1 {
+		return fmt.Errorf(`cancel requires exactly one argument: nexusctl cancel <session-id>`)
+	}
+	c := newClient()
+	body := map[string]string{}
+	if v, ok := flags["reason"]; ok {
+		body["reason"] = v
+	}
+	respBody, status, err := c.do(http.MethodPost, "/v1/runs/"+positional[0]+"/cancel", body)
+	if err != nil {
+		return err
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("cancel: status %d: %s", status, respBody)
+	}
+	return printPretty(respBody)
+}
+
+// cmdSteer drives POST /v1/runs/{id}/steer (README task 6.9).
+func cmdSteer(args []string) error {
+	positional, _ := parseFlags(args)
+	if len(positional) != 2 {
+		return fmt.Errorf(`steer requires exactly two arguments: nexusctl steer <session-id> "<input>"`)
+	}
+	c := newClient()
+	respBody, status, err := c.do(http.MethodPost, "/v1/runs/"+positional[0]+"/steer", map[string]string{"input": positional[1]})
+	if err != nil {
+		return err
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("steer: status %d: %s", status, respBody)
+	}
+	return printPretty(respBody)
+}
+
+// cmdFork drives POST /v1/runs/{id}/fork (README task 6.11) — README §6's
+// own demo line: `nexusctl fork <session> --at 42 --model haiku`.
+func cmdFork(args []string) error {
+	positional, flags := parseFlags(args)
+	if len(positional) != 1 {
+		return fmt.Errorf(`fork requires exactly one argument: nexusctl fork <session-id> --at=<seq> [--model=<model-id>]`)
+	}
+	atSeq, ok := flags["at"]
+	if !ok {
+		return fmt.Errorf("fork requires --at=<seq>")
+	}
+	// at_seq must be a JSON number, not a string — parseFlags only ever
+	// gives us strings, so parse and re-encode it rather than growing
+	// parseFlags a type system for one call site.
+	seq, err := strconv.ParseInt(atSeq, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid --at=%q: %w", atSeq, err)
+	}
+	body := map[string]any{"at_seq": seq}
+	if v, ok := flags["model"]; ok {
+		body["model"] = v
+	}
+
+	c := newClient()
+	respBody, status, err := c.do(http.MethodPost, "/v1/runs/"+positional[0]+"/fork", body)
+	if err != nil {
+		return err
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("fork: status %d: %s", status, respBody)
 	}
 	return printPretty(respBody)
 }

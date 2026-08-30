@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"sync"
 
@@ -94,6 +95,12 @@ type PipelineConfig struct {
 	// fallback WorkspaceRoot's own doc comment used to name as the honest
 	// interim.
 	SandboxFactory func(sessionID uuid.UUID) SandboxExec
+
+	// Claims, if set, is the write-ahead idempotency hook README task 6.6
+	// names — wrapped around Tool.Call for every non-read-only effect class
+	// in finishCall. Nil is valid and simply skips write-ahead tracking, the
+	// pre-Phase-6 behavior every existing test still gets.
+	Claims Claims
 }
 
 // sessionState is the per-session facilities the pipeline can't share
@@ -314,7 +321,7 @@ func (p *Pipeline) Execute(ctx context.Context, inv Invocation) ExecuteResult {
 	}
 
 	// Steps 12-16.
-	return p.finishCall(ctx, tool, ref, descriptor, input, rc, inv, state)
+	return p.finishCall(ctx, tool, ref, descriptor, input, digest, rc, inv, state)
 }
 
 // ExecuteApproved is Phase 5's resume-time entry point (README task 5.7):
@@ -386,13 +393,13 @@ func (p *Pipeline) ExecuteApproved(ctx context.Context, inv Invocation, approved
 	}
 
 	state := p.stateFor(inv.SessionID, inv.AutonomyLevel)
-	return p.finishCall(ctx, tool, ref, descriptor, input, rc, inv, state)
+	return p.finishCall(ctx, tool, ref, descriptor, input, digest, rc, inv, state)
 }
 
 // finishCall runs steps 12-16 (concurrency gate, call, post-hooks, result
 // budgeting, emit) — the tail every successful Execute or ExecuteApproved
 // call shares, factored out so neither path duplicates it.
-func (p *Pipeline) finishCall(ctx context.Context, tool Tool, ref ToolRef, descriptor Descriptor, input json.RawMessage, rc RunContext, inv Invocation, state *sessionState) ExecuteResult {
+func (p *Pipeline) finishCall(ctx context.Context, tool Tool, ref ToolRef, descriptor Descriptor, input json.RawMessage, digest []byte, rc RunContext, inv Invocation, state *sessionState) ExecuteResult {
 	// Step 12: concurrency-safety gate. There is no cross-worker lock yet
 	// (Phase 6 task 6.2's Redis session-key lock) — a single-process
 	// in-memory serial slot is the honest interim: it prevents this
@@ -404,8 +411,47 @@ func (p *Pipeline) finishCall(ctx context.Context, tool Tool, ref ToolRef, descr
 		defer state.serialLock.Unlock()
 	}
 
-	// Step 13: call.
+	// Step 13 (write-ahead half): task 6.6's claim, opened for every
+	// non-read-only effect BEFORE Tool.Call runs — "before the effect
+	// leaves the process." A read-only tool never touches Claims at all: it
+	// has nothing to make idempotent in the first place.
+	nonReadOnly := descriptor.EffectClass != EffectClassReadOnly
+	var claimID uuid.UUID
+	if nonReadOnly && p.cfg.Claims != nil {
+		id, outcome, err := p.cfg.Claims.Open(ctx, inv.TenantID, inv.SessionID, ref.String(), digest)
+		if err != nil {
+			return errorResult("claim_error: " + err.Error())
+		}
+		switch outcome {
+		case ClaimAmbiguous:
+			return errorResult(fmt.Sprintf("effect_claim_in_flight: an earlier attempt at this exact call (%s) is unresolved and must be resolved — probe or human, never re-executed — before this can run again", id))
+		case ClaimDone:
+			return errorResult(fmt.Sprintf("effect_claim_already_completed: this exact call already ran once (claim %s); not re-executed", id))
+		case ClaimFresh:
+			claimID = id
+		}
+	}
+
+	// Step 13 (call).
 	out, callErr := safeCall(ctx, tool, input, rc)
+
+	if nonReadOnly && p.cfg.Claims != nil && claimID != uuid.Nil {
+		failed := callErr != nil || out.IsError
+		reason := out.Reason
+		if callErr != nil {
+			reason = callErr.Error()
+		}
+		if cerr := p.cfg.Claims.Complete(ctx, inv.TenantID, inv.SessionID, claimID, failed, reason); cerr != nil {
+			// Best-effort: the tool's own outcome is not invalidated by a
+			// bookkeeping write failing, exactly like kernel/loop.go's
+			// reconcile() logs rather than fails the turn over a cost
+			// reconciliation error. A claim left in_flight here is exactly
+			// the ambiguous state a future retry's Open() already refuses
+			// to silently re-execute past.
+			slog.Error("tools: failed to complete write-ahead claim", "error", cerr, "claim_id", claimID, "tool_id", ref.String())
+		}
+	}
+
 	if callErr != nil {
 		return errorResult("tool_error: " + callErr.Error())
 	}

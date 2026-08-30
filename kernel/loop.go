@@ -14,6 +14,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	"github.com/truongpx396/nexus-agent-demo/internal/promptctx"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
+	"github.com/truongpx396/nexus-agent-demo/internal/reliability"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
@@ -45,6 +46,15 @@ type Kernel struct {
 	// task 5.6). Nil is valid — every pre-Phase-5 test — and simply means
 	// nothing beyond EventApprovalRequested itself is recorded.
 	OnSuspend OnSuspend
+
+	// Stuck is task 6.8's per-turn observer (internal/reliability/stuck.go,
+	// Phase 6): folds each dispatched tool_use into that session's own
+	// Tracker and, on a SECOND corroborating trip, is what makes
+	// TerminalStuckTerminated fire (that function's own doc comment names
+	// this call site). Nil is valid — every pre-Phase-6 test — and simply
+	// means stuck detection never runs, exactly like a nil Receipts/
+	// OnSuspend already means "that phase's control isn't wired."
+	Stuck *reliability.Registry
 }
 
 // RunState is the mutable state one Run call owns: TenantID/SessionID
@@ -176,6 +186,30 @@ func (k *Kernel) Resume(ctx context.Context, st *RunState, cfg RunConfig, res Pe
 			return
 		}
 
+		k.runTurns(ctx, st, cfg, yield, 1)
+	}
+}
+
+// Continue re-enters the turn loop for a session that already has durable
+// history — general crash/steer resume from an arbitrary point
+// (internal/runctl.Resume, README task 6.9), as distinct from Run (a fresh
+// session, appends an opening EventUserMessage first) and Resume above
+// (scoped narrowly to resolving the ONE tool_use an approval suspended a
+// run on). st must already be rehydrated (History/Transcript populated via
+// kernel.Rehydrate, exactly like Resume's own loadRunState convention) —
+// Continue itself does no replay or decrypt of its own.
+//
+// The turn loop's own first step, Hygiene, is what makes this safe after a
+// crash: any tool_use a prior process left unpaired (killed mid-Call) gets
+// a synthesized "interrupted_before_execution" result before the next model
+// call, never a silent re-execution — Hygiene's own doc comment already
+// names Phase 6's queue+checkpoint as the trigger this method is.
+func (k *Kernel) Continue(ctx context.Context, st *RunState, cfg RunConfig) iter.Seq2[store.Event, error] {
+	return func(yield func(store.Event, error) bool) {
+		if err := k.updateStatus(ctx, st, store.SessionStatusRunning, nil); err != nil {
+			yield(store.Event{}, err)
+			return
+		}
 		k.runTurns(ctx, st, cfg, yield, 1)
 	}
 }
@@ -369,6 +403,24 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 					k.suspendForApproval(ctx, st, yield, toolUseEvents[i].EventID, toolUseEvents[i].ToolID, tu.Input, result)
 					return
 				}
+
+				if k.Stuck != nil {
+					verdict := k.Stuck.Record(st.SessionID, tu.ToolName, tu.Input)
+					if verdict.Suspected {
+						sev, err := k.appendEvent(ctx, st, store.EventStuckSuspected, store.ActorSystem, nil, nil, nil, stuckSuspectedPayload{Reason: string(verdict.Reason)})
+						if err != nil {
+							yield(store.Event{}, err)
+							return
+						}
+						if !yield(sev, nil) {
+							return
+						}
+						if verdict.Terminate {
+							k.terminate(ctx, st, yield, TerminalStuckTerminated(string(verdict.Reason)))
+							return
+						}
+					}
+				}
 			}
 			// A dispatched tool call always continues to the next turn:
 			// the run isn't done until every tool_use has a paired
@@ -421,6 +473,9 @@ func (k *Kernel) terminate(ctx context.Context, st *RunState, yield func(store.E
 	if err := k.updateStatus(ctx, st, status, &reason); err != nil {
 		yield(ev, fmt.Errorf("terminal event %s appended but session status update failed: %w", ev.EventID, err))
 		return
+	}
+	if k.Stuck != nil {
+		k.Stuck.Forget(st.SessionID) // a terminated session accumulates no further stuck-detection state
 	}
 	yield(ev, nil)
 }
@@ -517,6 +572,10 @@ type toolResultPayload struct {
 	CanonicalDigest  []byte          `json:"canonical_digest,omitempty"`
 	ApprovalMismatch bool            `json:"approval_mismatch,omitempty"`
 	EffectClass      string          `json:"effect_class,omitempty"`
+}
+
+type stuckSuspectedPayload struct {
+	Reason string `json:"reason"`
 }
 
 type approvalRequestedPayload struct {

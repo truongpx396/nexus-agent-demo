@@ -112,6 +112,9 @@ const (
 	EventForked         EventType = "forked"
 	EventTerminal       EventType = "terminal"
 	EventErasure        EventType = "erasure"
+
+	// Control (internal/runctl, Phase 6)
+	EventAutonomyTightened EventType = "autonomy_tightened"
 )
 
 // CurrentSchemaVersion is the envelope version new events are written under.

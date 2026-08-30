@@ -42,6 +42,15 @@ type Session struct {
 	DelegationRole string
 	Status         string
 	TerminalReason *string
+
+	// ForkedFromSessionID/ForkSeq/ForkOverrides are the fork lineage columns
+	// migrations/0002_sessions.sql seamed in at Phase 1, populated
+	// meaningfully starting Phase 6 (README task 6.11,
+	// internal/runctl.Fork). Nil/zero for every non-forked session — which
+	// is every session before this phase.
+	ForkedFromSessionID *uuid.UUID
+	ForkSeq             *int64
+	ForkOverrides       map[string]string
 }
 
 // CreateSession inserts a new session row. Must run inside a tenant-scoped
@@ -51,6 +60,10 @@ func CreateSession(ctx context.Context, tx pgx.Tx, s Session) error {
 	reason, err := json.Marshal(s.RouteReason)
 	if err != nil {
 		return fmt.Errorf("marshal route_reason: %w", err)
+	}
+	overrides, err := json.Marshal(s.ForkOverrides)
+	if err != nil {
+		return fmt.Errorf("marshal fork_overrides: %w", err)
 	}
 	root := s.RootSessionID
 	if root == uuid.Nil {
@@ -70,12 +83,14 @@ func CreateSession(ctx context.Context, tx pgx.Tx, s Session) error {
 			session_id, session_key, tenant_id, surface_id, user_id,
 			agent_id, agent_version, harness_digest,
 			data_label, route_model_id, route_reason,
-			autonomy_level, root_session_id, depth, delegation_role
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+			autonomy_level, root_session_id, depth, delegation_role,
+			forked_from_session_id, fork_seq, fork_overrides
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
 		s.SessionID, s.SessionKey, s.TenantID, s.SurfaceID, s.UserID,
 		s.AgentID, s.AgentVersion, s.HarnessDigest,
 		s.DataLabel, s.RouteModelID, reason,
 		autonomy, root, s.Depth, delegationRole,
+		s.ForkedFromSessionID, s.ForkSeq, overrides,
 	)
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)
@@ -87,13 +102,14 @@ func CreateSession(ctx context.Context, tx pgx.Tx, s Session) error {
 // package.
 func GetSession(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) (Session, error) {
 	var s Session
-	var reason []byte
+	var reason, overrides []byte
 	err := tx.QueryRow(ctx, `
 		SELECT session_id, session_key, tenant_id, surface_id, user_id,
 		       agent_id, agent_version, harness_digest,
 		       data_label, route_model_id, route_reason,
 		       autonomy_level, root_session_id, depth, delegation_role,
-		       status, terminal_reason
+		       status, terminal_reason,
+		       forked_from_session_id, fork_seq, fork_overrides
 		FROM sessions WHERE session_id = $1`, sessionID,
 	).Scan(
 		&s.SessionID, &s.SessionKey, &s.TenantID, &s.SurfaceID, &s.UserID,
@@ -101,6 +117,7 @@ func GetSession(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) (Session, e
 		&s.DataLabel, &s.RouteModelID, &reason,
 		&s.AutonomyLevel, &s.RootSessionID, &s.Depth, &s.DelegationRole,
 		&s.Status, &s.TerminalReason,
+		&s.ForkedFromSessionID, &s.ForkSeq, &overrides,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -111,6 +128,11 @@ func GetSession(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) (Session, e
 	if len(reason) > 0 {
 		if err := json.Unmarshal(reason, &s.RouteReason); err != nil {
 			return Session{}, fmt.Errorf("unmarshal route_reason: %w", err)
+		}
+	}
+	if len(overrides) > 0 {
+		if err := json.Unmarshal(overrides, &s.ForkOverrides); err != nil {
+			return Session{}, fmt.Errorf("unmarshal fork_overrides: %w", err)
 		}
 	}
 	return s, nil

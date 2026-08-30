@@ -56,6 +56,11 @@ type Server struct {
 	// dependencies need one, not this package's own convenience).
 	Grants *obs.Grants
 
+	// RunCtl, if set, backs the cancel/steer/tighten-autonomy/fork endpoints
+	// (README task 6.9-6.11) — nil leaves them unmounted, which every
+	// pre-Phase-6 caller and test gets.
+	RunCtl RunCtlPort
+
 	broker *broker
 }
 
@@ -78,6 +83,12 @@ func (s *Server) Handler() http.Handler {
 	if s.Grants != nil {
 		mux.HandleFunc("POST /v1/sessions/{id}/content-access-grants", s.handleRequestContentAccessGrant)
 		mux.HandleFunc("GET /v1/sessions/{id}/content-access-grants/read", s.handleReadUnderGrant)
+	}
+	if s.RunCtl != nil {
+		mux.HandleFunc("POST /v1/runs/{id}/cancel", s.handleCancelRun)
+		mux.HandleFunc("POST /v1/runs/{id}/steer", s.handleSteerRun)
+		mux.HandleFunc("POST /v1/runs/{id}/autonomy", s.handleTightenAutonomy)
+		mux.HandleFunc("POST /v1/runs/{id}/fork", s.handleForkRun)
 	}
 	return mux
 }
