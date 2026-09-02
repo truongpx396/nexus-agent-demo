@@ -1,4 +1,4 @@
-.PHONY: up down build run signerd test lint migrate seed eval verify-chain erase
+.PHONY: up down build run signerd test lint migrate seed eval eval-baseline verify-chain erase dashboard go-live
 
 TENANT ?= acme
 
@@ -40,8 +40,17 @@ migrate: build ## apply SQL migrations incl. RLS policies, direct to postgres (b
 seed: build ## seed one tenant (TENANT=name, default acme) + its default price book; agent + skill seeding lands Phase 1/7
 	./bin/nexusd seed --tenant=$(TENANT)
 
-eval: ## run the eval corpus as the CI release gate (Phase 1 skeleton; hardens in Phase 9)
+eval: ## run the eval corpus as the CI release gate: k trials, Wilson intervals, class policies, held-out gap, efficiency gating, baseline regression check (Phase 10)
 	go run ./evals/cmd/runner
+
+eval-baseline: ## regenerate evals/testdata/baseline.json from the current corpus's own run — commit the diff once the corpus is deliberately changed
+	go run ./evals/cmd/runner -update-baseline
 
 verify-chain: build ## verify the hash-chained audit log has no break or gap (README task 5.3)
 	./bin/nexusd verify-chain
+
+dashboard: build ## print the golden-signal dashboard per tenant (README task 10.12)
+	./bin/nexusd dashboard
+
+go-live: build ## run the go-live checklist against a live deployment (README task 10.13, docs/go-live.md)
+	./bin/nexusd go-live

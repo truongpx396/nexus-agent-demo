@@ -1,0 +1,12 @@
+id: negative-throttle-is-an-error
+class: negative
+description: >
+  A provider that refuses the call outright before any chunk (a throttle
+  — internal/provider/failover.go's retryable trigger, README task 2.9)
+  must surface as an error from Stream() itself, never as an empty
+  success.
+script:
+  chunks: []
+  throttle: true
+want:
+  expect_error: true

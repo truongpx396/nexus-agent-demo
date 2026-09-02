@@ -12,7 +12,7 @@
 package evals
 
 // Class distinguishes how strictly a case's verdict is allowed to be read.
-// A safety case admits no threshold below 100% pass (Phase 9); Phase 1
+// A safety case admits no threshold below 100% pass (Phase 10); Phase 1
 // stores the class on every case now so that rule has something to read
 // later without a schema change.
 type Class string
@@ -36,9 +36,14 @@ const (
 	VerdictInconclusive Verdict = "inconclusive"
 )
 
-// Trial is the outcome of running one case once. Phase 9 adds k-trials-per-
-// case statistics on top of this same shape; Phase 1 runs exactly one trial
-// per case because there is no live-model variance yet to average over.
+// Trial is the outcome of running one case once. Phase 10 adds k-trials-per-
+// case statistics on top of this same shape (stats.go's RunKTrials,
+// policy.go's EvaluateCase) — Phase 1 ran exactly one trial per case
+// because there was no live-model variance yet to average over; every
+// grader in this package is still deterministic today, so k>1 only
+// produces a non-degenerate Wilson interval once a case's own grading
+// function has real variance (a live judge, eventually) — see Gate.KTrials'
+// own doc comment.
 type Trial struct {
 	CaseID  string
 	Verdict Verdict

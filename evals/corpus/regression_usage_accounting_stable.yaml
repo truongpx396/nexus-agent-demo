@@ -1,0 +1,22 @@
+id: regression-usage-accounting-stable
+class: regression
+description: >
+  A usage chunk interleaved with content still lets the stream drain
+  cleanly to a `stop` with the right concatenated text — internal/cost
+  (Phase 4) depends on the fake provider actually emitting these chunks
+  without disturbing content assembly.
+script:
+  chunks:
+    - kind: content
+      text: "the answer is "
+    - kind: usage
+      input_uncached: 120
+      input_cache_read: 480
+      output_tokens: 12
+    - kind: content
+      text: "42"
+    - kind: done
+      done: stop
+want:
+  final_text: "the answer is 42"
+  done: stop

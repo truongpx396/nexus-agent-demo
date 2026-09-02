@@ -21,6 +21,11 @@ type Span struct {
 // the wire format, is what Phase 1 is proving.
 type Exporter struct {
 	w io.Writer
+	// Drops counts every Emit's attempted-vs-dropped attribute keys (Phase
+	// 10, README task 10.12's "telemetry attribute-drop rate") — nil is
+	// valid and simply means this exporter isn't counted toward any
+	// dashboard.
+	Drops *DropTracker
 }
 
 func NewExporter(w io.Writer) *Exporter {
@@ -30,7 +35,7 @@ func NewExporter(w io.Writer) *Exporter {
 // Emit filters attrs through the allowlist before writing — the exporter
 // itself cannot bypass Filter, because it never sees anything else.
 func (e *Exporter) Emit(name string, attrs Attrs) error {
-	span := Span{Name: name, Attrs: Filter(attrs)}
+	span := Span{Name: name, Attrs: FilterTracked(attrs, e.Drops)}
 	enc := json.NewEncoder(e.w)
 	return enc.Encode(span)
 }
