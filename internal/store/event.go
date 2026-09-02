@@ -115,6 +115,16 @@ const (
 
 	// Control (internal/runctl, Phase 6)
 	EventAutonomyTightened EventType = "autonomy_tightened"
+
+	// Peer agent teams (internal/teams, Phase 9). Board actions themselves
+	// (read/claim/write/update) carry no dedicated event type: the ordinary
+	// tool_use/tool_result pair the kernel already appends for any tool call
+	// fully captures them, the same minimal-extra-events posture Phase 7's
+	// skills took (EventSkillActivated/EventSkillCapabilityIgnored are the
+	// only two skill-specific types, not one per skill action either).
+	EventTeamCreated      EventType = "team_created"
+	EventTeamEnded        EventType = "team_ended"
+	EventBoardCardFlagged EventType = "board_card_flagged"
 )
 
 // CurrentSchemaVersion is the envelope version new events are written under.

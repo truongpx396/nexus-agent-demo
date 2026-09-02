@@ -51,6 +51,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
+	"github.com/truongpx396/nexus-agent-demo/internal/teams"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools/builtin"
 	"github.com/truongpx396/nexus-agent-demo/internal/version"
@@ -82,6 +83,13 @@ const (
 	// anchorInterval is how often the periodic anchor+verify pass (task
 	// 5.3's "scheduled verifier") runs against every tenant.
 	anchorInterval = 5 * time.Minute
+	// teamBackstopSweepInterval is how often startTeamBackstopLoop checks
+	// every tenant for an 'active' team past teamBackstopWindow (README task
+	// 9.9's own wall-clock trigger); teamBackstopWindow is that window
+	// itself — generous for a demo (a stuck team is a bug to notice, not a
+	// tight SLA to enforce).
+	teamBackstopSweepInterval = 5 * time.Minute
+	teamBackstopWindow        = 30 * time.Minute
 )
 
 func main() {
@@ -170,7 +178,8 @@ func serve(ctx context.Context) error {
 	chain := audit.NewChain(signer)
 
 	delegations := delegate.NewDelegations(st, keyStore, chain)
-	pipeline, catalog, catalogManifestDigest, admittedSkillBundles := newToolPipeline(st, keyStore, chain, delegations)
+	teamsSvc := teams.NewService(st, keyStore, chain)
+	pipeline, catalog, catalogManifestDigest, admittedSkillBundles := newToolPipeline(st, keyStore, chain, delegations, teamsSvc)
 	loadedTools := make([]string, len(catalog))
 	for i, c := range catalog {
 		loadedTools[i] = c.Name
@@ -225,8 +234,18 @@ func serve(ctx context.Context) error {
 		System: starter.system, Catalog: catalog, MaxTurns: starter.maxTurns, CatalogManifestDigest: catalogManifestDigest,
 	}
 
+	// teamsSvc.Wire's own doc comment: must land before the first real
+	// dispatch, the same "well before serve() returns" timing
+	// delegations.Wire above already follows. Canceler is ctl itself —
+	// endTeam reaps a still-active member the same way runctl.Control.Cancel
+	// already reaps anything else (README task 9.9, reusing 8.14).
+	teamsSvc.Wire(teams.Config{
+		Kernel: k, Pipeline: pipeline, Canceler: ctl,
+		System: starter.system, Catalog: catalog, LoadedTools: loadedTools, MaxTurns: starter.maxTurns,
+	})
+
 	srv := rest.NewServer(starter, st, keyStore, catalogManifestDigest)
-	srv.Oversight = &nexusdOversightPort{approvals: approvals, resumer: resumer, delegations: delegations}
+	srv.Oversight = &nexusdOversightPort{approvals: approvals, resumer: resumer, delegations: delegations, teams: teamsSvc}
 	srv.Grants = grants
 	srv.RunCtl = &nexusdRunCtlPort{ctl: ctl}
 	srv.Skills = &nexusdSkillSetPort{store: st, bundles: admittedSkillBundles}
@@ -236,7 +255,10 @@ func serve(ctx context.Context) error {
 	stopAnchor := startAnchorLoop(ctx, st, chain)
 	defer stopAnchor()
 
-	stopWorkers := startQueueWorkers(ctx, st, redisClient, ctl, delegations)
+	stopTeamBackstop := startTeamBackstopLoop(ctx, teamsSvc)
+	defer stopTeamBackstop()
+
+	stopWorkers := startQueueWorkers(ctx, st, redisClient, ctl, delegations, teamsSvc)
 	defer stopWorkers()
 
 	addr := envOr("NEXUS_HTTP_ADDR", ":8080")
@@ -304,6 +326,68 @@ func (s nexusdDelegationSpawner) Spawn(ctx context.Context, req builtin.SpawnReq
 	})
 }
 
+// nexusdBoardAdapter adapts *internal/teams.Service to the four board
+// tools' own structural interfaces (internal/tools/builtin/board.go) —
+// translating between internal/teams.Card and builtin.BoardCard, the same
+// deliberately-independent-shapes translation nexusdDelegationSpawner
+// already performs for Delegate/Spawn. A thin, stateless value type (like
+// nexusdDelegationSpawner), safe to construct fresh at each registration
+// site above rather than threaded through as a shared field.
+type nexusdBoardAdapter struct{ teams *teams.Service }
+
+func toBoardCard(c teams.Card) builtin.BoardCard {
+	var claimedBy string
+	if c.ClaimedBySessionID != nil {
+		claimedBy = c.ClaimedBySessionID.String()
+	}
+	return builtin.BoardCard{
+		CardID: c.CardID.String(), Title: c.Title, Body: c.Body, Status: string(c.Status),
+		Flagged: c.ScanStatus != teams.ScanClean, ClaimedBySessionID: claimedBy,
+	}
+}
+
+func (a nexusdBoardAdapter) TeamIDFor(ctx context.Context, tenantID, sessionID uuid.UUID) (uuid.UUID, bool, error) {
+	return a.teams.TeamIDFor(ctx, tenantID, sessionID)
+}
+
+func (a nexusdBoardAdapter) ReadBoard(ctx context.Context, tenantID, teamID, readerSessionID uuid.UUID) ([]builtin.BoardCard, error) {
+	cards, err := a.teams.ReadBoard(ctx, tenantID, teamID, readerSessionID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]builtin.BoardCard, len(cards))
+	for i, c := range cards {
+		out[i] = toBoardCard(c)
+	}
+	return out, nil
+}
+
+func (a nexusdBoardAdapter) ClaimCard(ctx context.Context, tenantID, teamID, cardID, sessionID uuid.UUID) (builtin.BoardCard, bool, error) {
+	c, ok, err := a.teams.ClaimCard(ctx, tenantID, teamID, cardID, sessionID)
+	if err != nil || !ok {
+		return builtin.BoardCard{}, ok, err
+	}
+	return toBoardCard(c), true, nil
+}
+
+func (a nexusdBoardAdapter) WriteCard(ctx context.Context, req builtin.WriteCardRequest) (builtin.BoardCard, error) {
+	c, err := a.teams.WriteCard(ctx, teams.WriteCardRequest{
+		TenantID: req.TenantID, TeamID: req.TeamID, Title: req.Title, Body: req.Body, WrittenBySessionID: req.WrittenBySessionID,
+	})
+	if err != nil {
+		return builtin.BoardCard{}, err
+	}
+	return toBoardCard(c), nil
+}
+
+func (a nexusdBoardAdapter) UpdateCardStatus(ctx context.Context, tenantID, teamID, cardID, sessionID uuid.UUID, status string) (builtin.BoardCard, bool, error) {
+	c, ok, err := a.teams.UpdateCardStatus(ctx, tenantID, teamID, cardID, sessionID, teams.CardStatus(status))
+	if err != nil || !ok {
+		return builtin.BoardCard{}, ok, err
+	}
+	return toBoardCard(c), true, nil
+}
+
 // startAnchorLoop runs the scheduled verifier task 5.3 asks for: every
 // anchorInterval, anchor every tenant's new receipts and verify the whole
 // chain, logging (not panicking on) a break or a gap — an alert a real
@@ -347,6 +431,41 @@ func anchorAndVerifyAllTenants(ctx context.Context, st *store.Store, chain *audi
 			return nil
 		}); err != nil {
 			slog.Error("nexusd: anchor/verify pass failed", "tenant_id", tenantID, "error", err)
+		}
+	}
+}
+
+// startTeamBackstopLoop runs README task 9.9's own wall-clock trigger: every
+// teamBackstopSweepInterval, sweep every tenant for an 'active' team older
+// than teamBackstopWindow and end it as 'aborted' — the same
+// list-every-tenant-then-loop shape startAnchorLoop/anchorAndVerifyAllTenants
+// already use for a periodic cross-tenant pass.
+func startTeamBackstopLoop(ctx context.Context, teamsSvc *teams.Service) (stop func()) {
+	ticker := time.NewTicker(teamBackstopSweepInterval)
+	done := make(chan struct{})
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				sweepTeamBackstopAllTenants(ctx, teamsSvc)
+			}
+		}
+	}()
+	return func() { close(done) }
+}
+
+func sweepTeamBackstopAllTenants(ctx context.Context, teamsSvc *teams.Service) {
+	tenantIDs, err := listTenantIDs(ctx)
+	if err != nil {
+		slog.Error("nexusd: list tenants for team backstop sweep", "error", err)
+		return
+	}
+	for _, tenantID := range tenantIDs {
+		if err := teamsSvc.SweepBackstop(ctx, tenantID, teamBackstopWindow); err != nil {
+			slog.Error("nexusd: team backstop sweep failed", "tenant_id", tenantID, "error", err)
 		}
 	}
 }
@@ -471,7 +590,7 @@ func (p *nexusdRunCtlPort) Fork(ctx context.Context, tenantID, sessionID uuid.UU
 // Recovering an orphaned FRESH run (one that never got far enough to
 // suspend or checkpoint) is exactly what the sweep below already covers:
 // its status is "running" either way.
-func startQueueWorkers(ctx context.Context, st *store.Store, redisClient *redis.Client, ctl *runctl.Control, delegations *delegate.Delegations) (stop func()) {
+func startQueueWorkers(ctx context.Context, st *store.Store, redisClient *redis.Client, ctl *runctl.Control, delegations *delegate.Delegations, teamsSvc *teams.Service) (stop func()) {
 	adminDSN := envOr("NEXUS_ADMIN_DATABASE_URL", envOr("NEXUS_MIGRATE_DATABASE_URL", defaultMigrateDSN))
 	adminPool, err := pgxpool.New(ctx, adminDSN)
 	if err != nil {
@@ -481,7 +600,7 @@ func startQueueWorkers(ctx context.Context, st *store.Store, redisClient *redis.
 
 	port := queue.NewPostgres(adminPool)
 	lock := queue.NewSessionLock(redisClient, 30*time.Second)
-	runner := &queueRunner{ctl: ctl, delegations: delegations}
+	runner := &queueRunner{ctl: ctl, delegations: delegations, teams: teamsSvc}
 
 	recoverOrphanedSessions(ctx, adminPool, port)
 
@@ -537,6 +656,7 @@ func recoverOrphanedSessions(ctx context.Context, adminPool *pgxpool.Pool, port 
 type queueRunner struct {
 	ctl         *runctl.Control
 	delegations *delegate.Delegations
+	teams       *teams.Service
 }
 
 func (r *queueRunner) Run(ctx context.Context, job queue.Job) error {
@@ -559,6 +679,15 @@ func (r *queueRunner) Run(ctx context.Context, job queue.Job) error {
 	if r.delegations != nil {
 		if err := r.delegations.OnChildTerminal(ctx, job.TenantID, job.SessionID); err != nil {
 			slog.Error("nexusd: queue: resolve delegation after crash-recovered child failed", "session_id", job.SessionID, "error", err)
+		}
+	}
+	// A crash-recovered session that is ALSO a team member (README task 9.9)
+	// may have just reached its own terminal state via the resume above —
+	// OnMemberTerminal is a documented no-op for every other session, and
+	// only does real work here, mirroring OnChildTerminal's own call above.
+	if r.teams != nil {
+		if err := r.teams.OnMemberTerminal(ctx, job.TenantID, job.SessionID); err != nil {
+			slog.Error("nexusd: queue: resolve team after crash-recovered member failed", "session_id", job.SessionID, "error", err)
 		}
 	}
 
@@ -610,6 +739,7 @@ type nexusdOversightPort struct {
 	approvals   *oversight.Approvals
 	resumer     *oversight.Resumer
 	delegations *delegate.Delegations
+	teams       *teams.Service
 }
 
 func (p *nexusdOversightPort) GetApproval(ctx context.Context, tenantID, approvalID uuid.UUID) (rest.ApprovalView, error) {
@@ -663,15 +793,25 @@ func (p *nexusdOversightPort) Deny(ctx context.Context, tenantID, approvalID uui
 // OnChildTerminal is a documented no-op unless it is (the overwhelming
 // majority of approval decisions resolve an ordinary root run).
 func (p *nexusdOversightPort) onResumed(ctx context.Context, tenantID uuid.UUID, out rest.ResumeOutcome) {
-	if p.delegations == nil || out.Err != "" || out.SessionID == "" {
+	if out.Err != "" || out.SessionID == "" {
 		return
 	}
 	sessionID, err := uuid.Parse(out.SessionID)
 	if err != nil {
 		return
 	}
-	if err := p.delegations.OnChildTerminal(ctx, tenantID, sessionID); err != nil {
-		slog.Error("nexusd: resolve delegation after approval-resumed child failed", "session_id", sessionID, "error", err)
+	if p.delegations != nil {
+		if err := p.delegations.OnChildTerminal(ctx, tenantID, sessionID); err != nil {
+			slog.Error("nexusd: resolve delegation after approval-resumed child failed", "session_id", sessionID, "error", err)
+		}
+	}
+	// An approval-resumed session may ALSO be a team member (README task
+	// 9.9) — OnMemberTerminal is a documented no-op unless it is, mirroring
+	// OnChildTerminal's own call just above.
+	if p.teams != nil {
+		if err := p.teams.OnMemberTerminal(ctx, tenantID, sessionID); err != nil {
+			slog.Error("nexusd: resolve team after approval-resumed member failed", "session_id", sessionID, "error", err)
+		}
 	}
 }
 
@@ -741,7 +881,7 @@ func newProvider() (provider.Provider, error) {
 // Ledger/Spawner fields are satisfied by delegations/nexusdDelegationSpawner
 // immediately — Wire only needs to land before the FIRST real dispatch,
 // which is well after serve() finishes wiring everything.
-func newToolPipeline(st *store.Store, keyStore *crypto.KeyStore, chain *audit.Chain, delegations *delegate.Delegations) (*tools.Pipeline, []provider.ToolSchema, []byte, []skills.SkillBundle) {
+func newToolPipeline(st *store.Store, keyStore *crypto.KeyStore, chain *audit.Chain, delegations *delegate.Delegations, teamsSvc *teams.Service) (*tools.Pipeline, []provider.ToolSchema, []byte, []skills.SkillBundle) {
 	reg := tools.NewRegistry()
 	if err := reg.DeclareNamespace("platform", "nexusd"); err != nil {
 		fatalf("declare platform namespace: %v", err)
@@ -776,6 +916,10 @@ func newToolPipeline(st *store.Store, keyStore *crypto.KeyStore, chain *audit.Ch
 			Spawner:  nexusdDelegationSpawner{delegations: delegations},
 			Registry: reg,
 		},
+		builtin.ReadBoard{Resolver: nexusdBoardAdapter{teams: teamsSvc}, Reader: nexusdBoardAdapter{teams: teamsSvc}},
+		builtin.ClaimCard{Resolver: nexusdBoardAdapter{teams: teamsSvc}, Claimer: nexusdBoardAdapter{teams: teamsSvc}},
+		builtin.WriteCard{Resolver: nexusdBoardAdapter{teams: teamsSvc}, Writer: nexusdBoardAdapter{teams: teamsSvc}},
+		builtin.UpdateCardStatus{Resolver: nexusdBoardAdapter{teams: teamsSvc}, Updater: nexusdBoardAdapter{teams: teamsSvc}},
 	}
 	var toolRefs []string
 	var catalog []provider.ToolSchema
