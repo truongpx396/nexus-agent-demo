@@ -66,6 +66,18 @@ type Result struct {
 	Output  json.RawMessage
 	IsError bool
 	Reason  string
+
+	// AwaitingChildSessionID is set only by platform/delegate's own Call
+	// (README task 8.9-8.10): the effect it declares — spawning a child
+	// session — has ALREADY happened asynchronously by the time Call
+	// returns, so there is nothing further for Pipeline.finishCall's own
+	// result-budgeting/emit steps to do with Output. Pipeline.Execute
+	// translates a non-nil value here into ExecuteResult.AwaitingDelegation,
+	// the same short-circuit shape AwaitingApproval already is, just
+	// resolved by a different out-of-band caller (internal/delegate's
+	// return-time fold, never a human decision). No other tool in this
+	// codebase ever sets this field.
+	AwaitingChildSessionID *uuid.UUID
 }
 
 // SandboxExec is the small structural interface a Phase-5 sandbox

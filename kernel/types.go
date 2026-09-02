@@ -65,6 +65,21 @@ type ToolResult struct {
 	// EffectClass is set only alongside AwaitingApproval — mirrors
 	// tools.ExecuteResult.EffectClass.
 	EffectClass string
+
+	// AwaitingDelegation marks a result the `delegate` tool produced after
+	// it already spawned a child session (README task 8.10): the effect
+	// (the child running) has already started, asynchronously, by the time
+	// this is set — it is never resolved by a human decision the way
+	// AwaitingApproval is. The loop reacts by suspending the run exactly
+	// the same shape as an approval suspend (append an event, mark the
+	// session suspended) but through a DIFFERENT resolution path
+	// (ResumeDelegation, not Resume): a delegation is resolved by the CHILD
+	// reaching its own terminal state, never by ExecuteApproved re-running
+	// Tool.Call.
+	AwaitingDelegation bool
+	// ChildSessionID is set only alongside AwaitingDelegation: the session
+	// internal/delegate just created and started running independently.
+	ChildSessionID uuid.UUID
 }
 
 // ExecContext carries the per-run facts a ToolExecutor needs beyond one
@@ -270,4 +285,68 @@ type PendingResolution struct {
 	ApprovedDigest []byte
 	Decision       ApprovalDecisionKind
 	Reason         string // populated for Denied/Invalidated
+}
+
+// DelegateSuspendRequest is everything OnDelegate needs to durably bind the
+// delegation internal/tools/builtin.Delegate's Call already created (as a
+// pending row with no tool_use_event_id yet) to the tool_use it gates —
+// mirrors SuspendRequest field-for-field, minus the approval-specific
+// digest/effect-class fields a delegation has no use for (a delegation is
+// never re-verified against a canonical digest the way ExecuteApproved
+// re-verifies an approval).
+type DelegateSuspendRequest struct {
+	TenantID       uuid.UUID
+	SessionID      uuid.UUID
+	ToolUseEventID uuid.UUID
+	// DelegationEventID is the EventID of the EventDelegationRequested
+	// suspendForDelegation just appended.
+	DelegationEventID uuid.UUID
+	ToolID            string
+	ChildSessionID    uuid.UUID
+}
+
+// OnDelegate is called once, right after suspendForDelegation durably
+// appends EventDelegationRequested and marks the session suspended —
+// internal/delegate.Delegations.Bind is wired here from cmd/nexusd, so a
+// delegation_requested event is never left without a matching delegations
+// row bound to the tool_use it gates. Nil is valid (every pre-Phase-8 test)
+// and simply means nothing beyond the event itself is recorded.
+type OnDelegate func(ctx context.Context, tx pgx.Tx, req DelegateSuspendRequest) error
+
+// DelegationOutcomeKind is how a delegation this run suspended on was
+// resolved — what ResumeDelegation acts on. Unlike ApprovalDecisionKind,
+// none of these are a human's decision: a delegation resolves by the CHILD
+// reaching its own terminal state (Returned), by an operator/reliability
+// trigger reaping an orphaned one (Reaped), or by the child's own return
+// failing its declared acceptance criterion (BoundExceeded, task 8.14 —
+// "non-retryable").
+type DelegationOutcomeKind string
+
+const (
+	DelegationReturned      DelegationOutcomeKind = "returned"
+	DelegationReaped        DelegationOutcomeKind = "reaped"
+	DelegationBoundExceeded DelegationOutcomeKind = "bound_exceeded"
+)
+
+// DelegationResolution is what internal/delegate hands Kernel.ResumeDelegation:
+// the pending tool_use this run suspended on, and the child's outcome.
+// Result is the child's own validated return value (task 8.14: validated
+// against its declared return_schema BEFORE this is ever constructed) —
+// folded into the paired tool_result exactly like any other tool's output,
+// never treated as instructions.
+//
+// The taint-ascend fold itself (README task 8.11 — the parent's own
+// taint_state projection folding in the child's event-derived one) does NOT
+// happen here: it happens in internal/delegate, BEFORE ResumeDelegation is
+// ever called, via tools.Pipeline.FoldTaint plus its own EventTaintTransition
+// append — kernel's own permission-chain/Rule-of-Two state
+// (internal/tools/pipeline.go's sessionState) is private to that package,
+// and kernel has no reason to import internal/permissions just to shuttle a
+// [3]bool through this struct.
+type DelegationResolution struct {
+	ToolUseEventID uuid.UUID
+	ToolID         string
+	Outcome        DelegationOutcomeKind
+	Result         json.RawMessage // set only for DelegationReturned
+	Reason         string          // set for Reaped/BoundExceeded
 }

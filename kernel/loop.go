@@ -47,6 +47,13 @@ type Kernel struct {
 	// nothing beyond EventApprovalRequested itself is recorded.
 	OnSuspend OnSuspend
 
+	// OnDelegate durably binds a delegation to the tool_use it gates, right
+	// after suspendForDelegation appends EventDelegationRequested
+	// (internal/delegate.Delegations.Bind, Phase 8, README task 8.10). Nil
+	// is valid — every pre-Phase-8 test — and simply means nothing beyond
+	// EventDelegationRequested itself is recorded.
+	OnDelegate OnDelegate
+
 	// Stuck is task 6.8's per-turn observer (internal/reliability/stuck.go,
 	// Phase 6): folds each dispatched tool_use into that session's own
 	// Tracker and, on a SECOND corroborating trip, is what makes
@@ -215,6 +222,48 @@ func (k *Kernel) Resume(ctx context.Context, st *RunState, cfg RunConfig, res Pe
 		}
 		if result.AwaitingApproval {
 			yield(store.Event{}, fmt.Errorf("kernel: Resume's ApprovedExecutor unexpectedly resolved AwaitingApproval for %s", res.ToolID))
+			return
+		}
+
+		k.runTurns(ctx, st, cfg, yield, 1)
+	}
+}
+
+// ResumeDelegation continues a session a run suspended on a delegation
+// (kernel/loop.go's suspendForDelegation), acting on internal/delegate's
+// resolution for the ONE pending tool_use that suspended it (README task
+// 8.10). st must already be rehydrated (History/Transcript populated up to
+// and including that tool_use) before this is called, exactly like Resume's
+// own contract — ResumeDelegation itself neither replays nor decrypts
+// anything, and never re-runs the delegate tool's own Call (unlike
+// ExecuteApproved, which re-runs an approval-gated Tool.Call on purpose):
+// the child already ran; this only delivers its outcome as the paired
+// tool_result.
+func (k *Kernel) ResumeDelegation(ctx context.Context, st *RunState, cfg RunConfig, res DelegationResolution) iter.Seq2[store.Event, error] {
+	return func(yield func(store.Event, error) bool) {
+		if err := k.updateStatus(ctx, st, store.SessionStatusRunning, nil); err != nil {
+			yield(store.Event{}, err)
+			return
+		}
+
+		var result ToolResult
+		switch res.Outcome {
+		case DelegationReturned:
+			result = ToolResult{Output: res.Result}
+		case DelegationReaped:
+			result = ToolResult{IsError: true, Synthetic: true, Reason: "delegation_reaped: " + res.Reason}
+		case DelegationBoundExceeded:
+			result = ToolResult{IsError: true, Synthetic: true, Reason: "bound_exceeded: " + res.Reason}
+		}
+
+		toolID := res.ToolID
+		ev, err := k.appendToolResult(ctx, st, res.ToolUseEventID, &toolID, result)
+		if err != nil {
+			yield(store.Event{}, err)
+			return
+		}
+		st.Transcript = append(st.Transcript, provider.Message{Role: "tool", Text: resultText(result)})
+		if !yield(ev, nil) {
 			return
 		}
 
@@ -512,6 +561,10 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 					k.suspendForApproval(ctx, st, yield, toolUseEvents[i].EventID, toolUseEvents[i].ToolID, tu.Input, result)
 					return
 				}
+				if result.AwaitingDelegation {
+					k.suspendForDelegation(ctx, st, yield, toolUseEvents[i].EventID, toolUseEvents[i].ToolID, result.ChildSessionID)
+					return
+				}
 
 				if k.Stuck != nil {
 					verdict := k.Stuck.Record(st.SessionID, tu.ToolName, tu.Input)
@@ -685,6 +738,47 @@ func (k *Kernel) suspendForApproval(ctx context.Context, st *RunState, yield fun
 	yield(ev, nil)
 }
 
+// suspendForDelegation is the loop's reaction to an AwaitingDelegation result
+// (README task 8.10): platform/delegate's own Call already spawned the
+// child, asynchronously, before this ever runs — this appends
+// EventDelegationRequested, marks the session suspended, and (if OnDelegate
+// is wired) durably binds the pending delegations row internal/delegate
+// already created to toolUseEventID — then stops the generator WITHOUT a
+// terminal event, the same "paused, not done" shape suspendForApproval
+// already uses. Resuming from here is Kernel.ResumeDelegation, driven by
+// internal/delegate once the child reaches its own terminal state — never a
+// human decision, which is what makes this a DIFFERENT resolution path from
+// Resume even though the suspend shape is identical.
+func (k *Kernel) suspendForDelegation(ctx context.Context, st *RunState, yield func(store.Event, error) bool, toolUseEventID uuid.UUID, toolID *string, childSessionID uuid.UUID) {
+	tid := ""
+	if toolID != nil {
+		tid = *toolID
+	}
+	ev, err := k.appendEvent(ctx, st, store.EventDelegationRequested, store.ActorSystem, toolID, nil, nil, delegationRequestedPayload{ToolID: tid, ChildSessionID: childSessionID})
+	if err != nil {
+		yield(store.Event{}, err)
+		return
+	}
+	if err := k.updateStatus(ctx, st, store.SessionStatusSuspended, nil); err != nil {
+		yield(ev, fmt.Errorf("delegation_requested event %s appended but session status update failed: %w", ev.EventID, err))
+		return
+	}
+	if k.OnDelegate != nil {
+		err := k.Store.InTenantTx(ctx, st.TenantID, func(ctx context.Context, tx pgx.Tx) error {
+			return k.OnDelegate(ctx, tx, DelegateSuspendRequest{
+				TenantID: st.TenantID, SessionID: st.SessionID,
+				ToolUseEventID: toolUseEventID, DelegationEventID: ev.EventID,
+				ToolID: tid, ChildSessionID: childSessionID,
+			})
+		})
+		if err != nil {
+			yield(ev, fmt.Errorf("delegation_requested event %s appended but OnDelegate failed: %w", ev.EventID, err))
+			return
+		}
+	}
+	yield(ev, nil)
+}
+
 // terminateFromStreamError maps a Provider.Stream/Stream.Next failure onto a
 // terminal reason via internal/provider/failover's typed trigger taxonomy —
 // by the time an error reaches here, any failover across providers/retries
@@ -749,16 +843,18 @@ type toolUsePayload struct {
 }
 
 type toolResultPayload struct {
-	Output           json.RawMessage `json:"output,omitempty"`
-	IsError          bool            `json:"is_error"`
-	Reason           string          `json:"reason,omitempty"`
-	Synthetic        bool            `json:"synthetic,omitempty"`
-	PermissionDenied bool            `json:"permission_denied,omitempty"`
-	AwaitingApproval bool            `json:"awaiting_approval,omitempty"`
-	AskKind          string          `json:"ask_kind,omitempty"`
-	CanonicalDigest  []byte          `json:"canonical_digest,omitempty"`
-	ApprovalMismatch bool            `json:"approval_mismatch,omitempty"`
-	EffectClass      string          `json:"effect_class,omitempty"`
+	Output             json.RawMessage `json:"output,omitempty"`
+	IsError            bool            `json:"is_error"`
+	Reason             string          `json:"reason,omitempty"`
+	Synthetic          bool            `json:"synthetic,omitempty"`
+	PermissionDenied   bool            `json:"permission_denied,omitempty"`
+	AwaitingApproval   bool            `json:"awaiting_approval,omitempty"`
+	AskKind            string          `json:"ask_kind,omitempty"`
+	CanonicalDigest    []byte          `json:"canonical_digest,omitempty"`
+	ApprovalMismatch   bool            `json:"approval_mismatch,omitempty"`
+	EffectClass        string          `json:"effect_class,omitempty"`
+	AwaitingDelegation bool            `json:"awaiting_delegation,omitempty"`
+	ChildSessionID     uuid.UUID       `json:"child_session_id,omitzero"`
 }
 
 type stuckSuspectedPayload struct {
@@ -769,6 +865,11 @@ type approvalRequestedPayload struct {
 	ToolID  string `json:"tool_id,omitempty"`
 	Reason  string `json:"reason,omitempty"`
 	AskKind string `json:"ask_kind,omitempty"`
+}
+
+type delegationRequestedPayload struct {
+	ToolID         string    `json:"tool_id,omitempty"`
+	ChildSessionID uuid.UUID `json:"child_session_id"`
 }
 
 type budgetDecisionPayload struct {

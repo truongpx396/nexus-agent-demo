@@ -43,6 +43,15 @@ type Session struct {
 	Status         string
 	TerminalReason *string
 
+	// PlanID/PlanVersion pin which orchestration_plans row (README §8,
+	// Phase 8) this session's own event log is a run of — nil/nil for every
+	// ordinary, non-plan-driven session. Pinned at session creation, exactly
+	// like HarnessDigest, so a later plan edit can never retroactively
+	// change what an in-flight run is executing (internal/plan/lifecycle.go
+	// task 8.4's "in-flight runs finish on their version").
+	PlanID      *uuid.UUID
+	PlanVersion *int
+
 	// ForkedFromSessionID/ForkSeq/ForkOverrides are the fork lineage columns
 	// migrations/0002_sessions.sql seamed in at Phase 1, populated
 	// meaningfully starting Phase 6 (README task 6.11,
@@ -84,13 +93,15 @@ func CreateSession(ctx context.Context, tx pgx.Tx, s Session) error {
 			agent_id, agent_version, harness_digest,
 			data_label, route_model_id, route_reason,
 			autonomy_level, root_session_id, depth, delegation_role,
-			forked_from_session_id, fork_seq, fork_overrides
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+			forked_from_session_id, fork_seq, fork_overrides,
+			plan_id, plan_version
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
 		s.SessionID, s.SessionKey, s.TenantID, s.SurfaceID, s.UserID,
 		s.AgentID, s.AgentVersion, s.HarnessDigest,
 		s.DataLabel, s.RouteModelID, reason,
 		autonomy, root, s.Depth, delegationRole,
 		s.ForkedFromSessionID, s.ForkSeq, overrides,
+		s.PlanID, s.PlanVersion,
 	)
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)
@@ -109,7 +120,8 @@ func GetSession(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) (Session, e
 		       data_label, route_model_id, route_reason,
 		       autonomy_level, root_session_id, depth, delegation_role,
 		       status, terminal_reason,
-		       forked_from_session_id, fork_seq, fork_overrides
+		       forked_from_session_id, fork_seq, fork_overrides,
+		       plan_id, plan_version
 		FROM sessions WHERE session_id = $1`, sessionID,
 	).Scan(
 		&s.SessionID, &s.SessionKey, &s.TenantID, &s.SurfaceID, &s.UserID,
@@ -118,6 +130,7 @@ func GetSession(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) (Session, e
 		&s.AutonomyLevel, &s.RootSessionID, &s.Depth, &s.DelegationRole,
 		&s.Status, &s.TerminalReason,
 		&s.ForkedFromSessionID, &s.ForkSeq, &overrides,
+		&s.PlanID, &s.PlanVersion,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {

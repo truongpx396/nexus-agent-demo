@@ -55,6 +55,13 @@ type ExecuteResult struct {
 	// unexported, and this is the one place that already has the
 	// descriptor in hand.
 	EffectClass string
+
+	// AwaitingDelegation/ChildSessionID mirror Result.AwaitingChildSessionID
+	// one layer up (README task 8.10) — finishCall's own short-circuit,
+	// translated by kernel/tools_adapter.go into kernel.ToolResult exactly
+	// like AwaitingApproval already is.
+	AwaitingDelegation bool
+	ChildSessionID     uuid.UUID
 }
 
 func errorResult(reason string) ExecuteResult { return ExecuteResult{IsError: true, Reason: reason} }
@@ -157,6 +164,50 @@ func (p *Pipeline) stateFor(sessionID uuid.UUID, autonomyLevel string) *sessionS
 		p.sessions[sessionID] = s
 	}
 	return s
+}
+
+// TaintStateFor snapshots sessionID's current Rule-of-Two engaged legs — used
+// by internal/delegate at TWO moments (README task 8.11): reading the
+// PARENT's state at spawn time (to seed the child's own copy-at-spawn), and
+// reading the CHILD's state at return time (to fold into the parent).
+// Honest scope note, matching this codebase's own convention for a
+// documented gap rather than a silent one: this is Pipeline's own
+// process-lifetime cache, not a replay of a durable taint_transition event
+// stream — migrations/0002_sessions.sql's own taint_state column is marked
+// PROJECTION but nothing in this codebase (pre- or post-Phase-8) actually
+// writes it yet, so a worker restart mid-run loses it exactly the way it
+// already loses every other piece of Pipeline.sessionState. Wiring a real
+// durable projection is future work, not a Phase 8 regression.
+func (p *Pipeline) TaintStateFor(sessionID uuid.UUID) [3]bool {
+	state := p.stateFor(sessionID, "")
+	state.taintMu.Lock()
+	defer state.taintMu.Unlock()
+	return state.taintState.Engaged
+}
+
+// FoldTaint folds engaged (a child session's own event-derived Rule-of-Two
+// legs) into sessionID's running TaintState (README task 8.11 — the
+// taint-ascend rule: "a summary never clears the untrusted leg"). Callers
+// (internal/delegate's return-time resolution) call this exactly once per
+// resolved delegation, BEFORE any further tool_use in sessionID is
+// dispatched — engagedCount only ever grows, matching layer 7's own
+// ResolveRuleOfTwo semantics, so a session already at two legs that folds in
+// a third is exactly as constrained afterward as if it had engaged that
+// third leg itself. Creates sessionID's state (pinned to AutonomyReadOnly,
+// the same fail-closed default stateFor uses for an unrecognized level) if
+// this is the first thing this process has ever seen for it — a delegation
+// can resolve after every OTHER call this process ever routed through
+// Execute for the parent, so sessionID is not guaranteed to already have an
+// entry.
+func (p *Pipeline) FoldTaint(sessionID uuid.UUID, engaged [3]bool) {
+	state := p.stateFor(sessionID, "")
+	state.taintMu.Lock()
+	defer state.taintMu.Unlock()
+	for i, e := range engaged {
+		if e {
+			state.taintState.Engaged[i] = true
+		}
+	}
 }
 
 // ResetTurn forwards to the hook dispatcher's per-turn cap reset
@@ -454,6 +505,16 @@ func (p *Pipeline) finishCall(ctx context.Context, tool Tool, ref ToolRef, descr
 
 	if callErr != nil {
 		return errorResult("tool_error: " + callErr.Error())
+	}
+
+	// platform/delegate's own short-circuit (README task 8.10): the effect
+	// already happened (a child session is running, asynchronously, out of
+	// process) — there is no ordinary Output to run through PostToolUse
+	// hooks or result budgeting, and nothing to emit as a tool_result yet.
+	// kernel/loop.go's dispatch loop reacts to ExecuteResult.AwaitingDelegation
+	// exactly the way it reacts to AwaitingApproval: suspend, don't continue.
+	if out.AwaitingChildSessionID != nil {
+		return ExecuteResult{AwaitingDelegation: true, ChildSessionID: *out.AwaitingChildSessionID, EffectClass: string(descriptor.EffectClass)}
 	}
 
 	// Step 14: PostToolUse hooks — observe/tighten only.
