@@ -33,6 +33,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/config"
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent-demo/internal/delegate"
 	"github.com/truongpx396/nexus-agent-demo/internal/hooks"
 	"github.com/truongpx396/nexus-agent-demo/internal/memory"
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
@@ -168,7 +169,8 @@ func serve(ctx context.Context) error {
 	signer := audit.NewSignerClient(envOr("NEXUS_SIGNERD_SOCKET", defaultSignerdSocket))
 	chain := audit.NewChain(signer)
 
-	pipeline, catalog, catalogManifestDigest, admittedSkillBundles := newToolPipeline(st, keyStore, chain)
+	delegations := delegate.NewDelegations(st, keyStore, chain)
+	pipeline, catalog, catalogManifestDigest, admittedSkillBundles := newToolPipeline(st, keyStore, chain, delegations)
 	loadedTools := make([]string, len(catalog))
 	for i, c := range catalog {
 		loadedTools[i] = c.Name
@@ -180,13 +182,14 @@ func serve(ctx context.Context) error {
 	approvals := oversight.NewApprovals(st, keyStore, chain)
 	inputs := oversight.NewInputs(st, keyStore, chain)
 	k := &kernel.Kernel{
-		Provider:  provider.Wrap([]provider.Provider{prov}),
-		Tools:     kernel.PipelineExecutor{Pipeline: pipeline}, // real tool pipeline, Phase 3
-		Budget:    gate,                                        // real reserve-then-reconcile cost gate, Phase 4
-		Store:     st,
-		Receipts:  chainReceiptFunc(chain),                       // hash-chained audit receipts, Phase 5 task 5.2
-		OnSuspend: onSuspendFunc(approvals),                      // durably record an approval on every suspend, Phase 5 task 5.6
-		Stuck:     reliability.NewRegistry(stuckDetectionWindow), // README task 6.8
+		Provider:   provider.Wrap([]provider.Provider{prov}),
+		Tools:      kernel.PipelineExecutor{Pipeline: pipeline}, // real tool pipeline, Phase 3
+		Budget:     gate,                                        // real reserve-then-reconcile cost gate, Phase 4
+		Store:      st,
+		Receipts:   chainReceiptFunc(chain),                       // hash-chained audit receipts, Phase 5 task 5.2
+		OnSuspend:  onSuspendFunc(approvals),                      // durably record an approval on every suspend, Phase 5 task 5.6
+		OnDelegate: onDelegateFunc(delegations),                   // bind a delegation to its gating tool_use, Phase 8 task 8.10
+		Stuck:      reliability.NewRegistry(stuckDetectionWindow), // README task 6.8
 	}
 
 	memStore := &memory.Store{RootDir: envOr("NEXUS_MEMORY_ROOT", ".dev/memory")}
@@ -201,6 +204,16 @@ func serve(ctx context.Context) error {
 		store:       st,
 	}
 
+	// Wire's own doc comment: must land before the first real dispatch —
+	// well before serve() returns and starts accepting traffic. Reuses
+	// starter's own System/MaxTurns so a delegated child's kernel run is
+	// configured identically to a root run's (README task 8.9's own child
+	// session inherits the parent's harness_digest for the same reason).
+	delegations.Wire(delegate.Config{
+		Kernel: k, Pipeline: pipeline,
+		System: starter.system, Catalog: catalog, LoadedTools: loadedTools, MaxTurns: starter.maxTurns,
+	})
+
 	resumer := &oversight.Resumer{
 		Kernel: k, Approvals: approvals, Store: st, Keys: keyStore,
 		System: starter.system, Catalog: catalog, MaxTurns: starter.maxTurns,
@@ -213,7 +226,7 @@ func serve(ctx context.Context) error {
 	}
 
 	srv := rest.NewServer(starter, st, keyStore, catalogManifestDigest)
-	srv.Oversight = &nexusdOversightPort{approvals: approvals, resumer: resumer}
+	srv.Oversight = &nexusdOversightPort{approvals: approvals, resumer: resumer, delegations: delegations}
 	srv.Grants = grants
 	srv.RunCtl = &nexusdRunCtlPort{ctl: ctl}
 	srv.Skills = &nexusdSkillSetPort{store: st, bundles: admittedSkillBundles}
@@ -223,7 +236,7 @@ func serve(ctx context.Context) error {
 	stopAnchor := startAnchorLoop(ctx, st, chain)
 	defer stopAnchor()
 
-	stopWorkers := startQueueWorkers(ctx, st, redisClient, ctl)
+	stopWorkers := startQueueWorkers(ctx, st, redisClient, ctl, delegations)
 	defer stopWorkers()
 
 	addr := envOr("NEXUS_HTTP_ADDR", ":8080")
@@ -264,6 +277,31 @@ func onSuspendFunc(approvals *oversight.Approvals) kernel.OnSuspend {
 		})
 		return err
 	}
+}
+
+// onDelegateFunc adapts internal/delegate.Delegations.Bind to kernel.OnDelegate
+// — the seam kernel/types.go declares locally so kernel itself never
+// imports internal/delegate (not on its own import allowlist).
+func onDelegateFunc(delegations *delegate.Delegations) kernel.OnDelegate {
+	return func(ctx context.Context, tx pgx.Tx, req kernel.DelegateSuspendRequest) error {
+		return delegations.Bind(ctx, tx, req.ChildSessionID, req.ToolUseEventID)
+	}
+}
+
+// nexusdDelegationSpawner adapts *internal/delegate.Delegations.Spawn to
+// internal/tools/builtin.DelegationSpawner — the two packages deliberately
+// carry independent SpawnRequest shapes (internal/tools/builtin/delegate.go's
+// own doc comment on why), so this translation always lives at the wiring
+// layer, never inside either package.
+type nexusdDelegationSpawner struct {
+	delegations *delegate.Delegations
+}
+
+func (s nexusdDelegationSpawner) Spawn(ctx context.Context, req builtin.SpawnRequest) (uuid.UUID, error) {
+	return s.delegations.Spawn(ctx, delegate.SpawnRequest{
+		TenantID: req.TenantID, ParentSessionID: req.ParentSessionID,
+		AgentID: req.AgentID, Task: req.Task, ScopeGrant: req.ScopeGrant, ReturnSchema: req.ReturnSchema,
+	})
 }
 
 // startAnchorLoop runs the scheduled verifier task 5.3 asks for: every
@@ -433,7 +471,7 @@ func (p *nexusdRunCtlPort) Fork(ctx context.Context, tenantID, sessionID uuid.UU
 // Recovering an orphaned FRESH run (one that never got far enough to
 // suspend or checkpoint) is exactly what the sweep below already covers:
 // its status is "running" either way.
-func startQueueWorkers(ctx context.Context, st *store.Store, redisClient *redis.Client, ctl *runctl.Control) (stop func()) {
+func startQueueWorkers(ctx context.Context, st *store.Store, redisClient *redis.Client, ctl *runctl.Control, delegations *delegate.Delegations) (stop func()) {
 	adminDSN := envOr("NEXUS_ADMIN_DATABASE_URL", envOr("NEXUS_MIGRATE_DATABASE_URL", defaultMigrateDSN))
 	adminPool, err := pgxpool.New(ctx, adminDSN)
 	if err != nil {
@@ -443,7 +481,7 @@ func startQueueWorkers(ctx context.Context, st *store.Store, redisClient *redis.
 
 	port := queue.NewPostgres(adminPool)
 	lock := queue.NewSessionLock(redisClient, 30*time.Second)
-	runner := &queueRunner{ctl: ctl}
+	runner := &queueRunner{ctl: ctl, delegations: delegations}
 
 	recoverOrphanedSessions(ctx, adminPool, port)
 
@@ -497,7 +535,8 @@ func recoverOrphanedSessions(ctx context.Context, adminPool *pgxpool.Pool, port 
 // doc comment for why fork/steer are driven synchronously via REST instead
 // of through the queue.
 type queueRunner struct {
-	ctl *runctl.Control
+	ctl         *runctl.Control
+	delegations *delegate.Delegations
 }
 
 func (r *queueRunner) Run(ctx context.Context, job queue.Job) error {
@@ -511,6 +550,16 @@ func (r *queueRunner) Run(ctx context.Context, job queue.Job) error {
 	}
 	if lastErr != nil {
 		return lastErr
+	}
+
+	// A crash-recovered session that is ALSO a delegation's child (README
+	// task 8.10) may have just reached its own terminal state via the
+	// resume above — OnChildTerminal is a documented no-op for every other
+	// session (the overwhelming majority), and only does real work here.
+	if r.delegations != nil {
+		if err := r.delegations.OnChildTerminal(ctx, job.TenantID, job.SessionID); err != nil {
+			slog.Error("nexusd: queue: resolve delegation after crash-recovered child failed", "session_id", job.SessionID, "error", err)
+		}
 	}
 
 	// A checkpoint after every leased job returns (README task 6.3) — a
@@ -558,8 +607,9 @@ func (r *queueRunner) Run(ctx context.Context, job queue.Job) error {
 // without importing it directly, exactly mirroring kernelRunStarter's own
 // role for kernel.Kernel.Run.
 type nexusdOversightPort struct {
-	approvals *oversight.Approvals
-	resumer   *oversight.Resumer
+	approvals   *oversight.Approvals
+	resumer     *oversight.Resumer
+	delegations *delegate.Delegations
 }
 
 func (p *nexusdOversightPort) GetApproval(ctx context.Context, tenantID, approvalID uuid.UUID) (rest.ApprovalView, error) {
@@ -591,15 +641,38 @@ func toApprovalView(ap oversight.Approval) rest.ApprovalView {
 }
 
 func (p *nexusdOversightPort) Grant(ctx context.Context, tenantID, approvalID uuid.UUID, decidedBy string) rest.ResumeOutcome {
-	return drainResume(p.resumer.Grant(ctx, tenantID, approvalID, decidedBy))
+	out := drainResume(p.resumer.Grant(ctx, tenantID, approvalID, decidedBy))
+	p.onResumed(ctx, tenantID, out)
+	return out
 }
 
 func (p *nexusdOversightPort) GrantModified(ctx context.Context, tenantID, approvalID uuid.UUID, decidedBy string, modifiedInput json.RawMessage) rest.ResumeOutcome {
-	return drainResume(p.resumer.GrantModified(ctx, tenantID, approvalID, decidedBy, modifiedInput))
+	out := drainResume(p.resumer.GrantModified(ctx, tenantID, approvalID, decidedBy, modifiedInput))
+	p.onResumed(ctx, tenantID, out)
+	return out
 }
 
 func (p *nexusdOversightPort) Deny(ctx context.Context, tenantID, approvalID uuid.UUID, decidedBy, reason string) rest.ResumeOutcome {
-	return drainResume(p.resumer.Deny(ctx, tenantID, approvalID, decidedBy, reason))
+	out := drainResume(p.resumer.Deny(ctx, tenantID, approvalID, decidedBy, reason))
+	p.onResumed(ctx, tenantID, out)
+	return out
+}
+
+// onResumed is README task 8.10's other resume-path hook: a session an
+// ordinary tool approval just resumed may ALSO be a delegation's child —
+// OnChildTerminal is a documented no-op unless it is (the overwhelming
+// majority of approval decisions resolve an ordinary root run).
+func (p *nexusdOversightPort) onResumed(ctx context.Context, tenantID uuid.UUID, out rest.ResumeOutcome) {
+	if p.delegations == nil || out.Err != "" || out.SessionID == "" {
+		return
+	}
+	sessionID, err := uuid.Parse(out.SessionID)
+	if err != nil {
+		return
+	}
+	if err := p.delegations.OnChildTerminal(ctx, tenantID, sessionID); err != nil {
+		slog.Error("nexusd: resolve delegation after approval-resumed child failed", "session_id", sessionID, "error", err)
+	}
 }
 
 // drainResume fully consumes a Kernel.Resume generator — the same
@@ -659,7 +732,16 @@ func newProvider() (provider.Provider, error) {
 // runctl.NewSkillEventRecorder for skill_activated/skill_capability_ignored.
 // Returns the admitted skill bundles too, so main() can wire
 // nexusdSkillSetPort without reloading them.
-func newToolPipeline(st *store.Store, keyStore *crypto.KeyStore, chain *audit.Chain) (*tools.Pipeline, []provider.ToolSchema, []byte, []skills.SkillBundle) {
+// newToolPipeline builds the resident catalog. delegations is constructed
+// by the caller (serve()) BEFORE this runs and Wire()d AFTER — the same
+// two-phase dependency this file already has for everything downstream of a
+// *kernel.Kernel that the kernel's OWN construction also needs a pipeline
+// for (Claims/skill events face an easier version of this: they never
+// needed the Kernel itself, only Store/Keys/Chain). platform/delegate's own
+// Ledger/Spawner fields are satisfied by delegations/nexusdDelegationSpawner
+// immediately — Wire only needs to land before the FIRST real dispatch,
+// which is well after serve() finishes wiring everything.
+func newToolPipeline(st *store.Store, keyStore *crypto.KeyStore, chain *audit.Chain, delegations *delegate.Delegations) (*tools.Pipeline, []provider.ToolSchema, []byte, []skills.SkillBundle) {
 	reg := tools.NewRegistry()
 	if err := reg.DeclareNamespace("platform", "nexusd"); err != nil {
 		fatalf("declare platform namespace: %v", err)
@@ -689,6 +771,11 @@ func newToolPipeline(st *store.Store, keyStore *crypto.KeyStore, chain *audit.Ch
 			},
 		},
 		builtin.ReadSkillFile{Catalog: skillCatalog},
+		builtin.Delegate{
+			Ledger:   delegations,
+			Spawner:  nexusdDelegationSpawner{delegations: delegations},
+			Registry: reg,
+		},
 	}
 	var toolRefs []string
 	var catalog []provider.ToolSchema

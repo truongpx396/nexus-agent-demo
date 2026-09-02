@@ -444,3 +444,64 @@ func TestPipeline_ExecuteApprovedMismatchRefuses(t *testing.T) {
 		t.Fatalf("ExecuteApproved(nil digest) = %+v, want ApprovalMismatch and zero calls", empty)
 	}
 }
+
+// TestPipeline_AwaitingChildSessionIDShortCircuits is README task 8.10's
+// own pipeline-level seam: a Tool.Call that sets
+// Result.AwaitingChildSessionID (platform/delegate, internal/tools/builtin)
+// must skip PostToolUse hooks and result budgeting entirely and translate
+// straight into ExecuteResult.AwaitingDelegation — the same short-circuit
+// shape AwaitingApproval already gets one layer up, just triggered AFTER
+// Call runs instead of before it.
+func TestPipeline_AwaitingChildSessionIDShortCircuits(t *testing.T) {
+	childID := uuid.New()
+	tool := newFakeTool("platform", "delegate", EffectClassMutating)
+	tool.callResult = Result{Output: json.RawMessage(`{"status":"delegated"}`), AwaitingChildSessionID: &childID}
+	h := newHarness(t, tool)
+	p := h.pipeline()
+	inv := h.invocation("autonomous", `{}`)
+
+	got := p.Execute(context.Background(), inv)
+	if !got.AwaitingDelegation {
+		t.Fatalf("Execute() = %+v, want AwaitingDelegation", got)
+	}
+	if got.ChildSessionID != childID {
+		t.Fatalf("ChildSessionID = %s, want %s", got.ChildSessionID, childID)
+	}
+	if got.IsError {
+		t.Fatalf("Execute() = %+v, an awaiting-delegation result must not also be an error", got)
+	}
+}
+
+// TestPipeline_FoldTaint_CopyAtSpawnAndFoldOnReturn exercises the two
+// moments README task 8.11 needs from Pipeline directly (internal/delegate
+// is what actually calls these, at spawn time and at resolve time — this
+// test isolates the mechanism itself from that package's own DB-backed
+// machinery).
+func TestPipeline_FoldTaint_CopyAtSpawnAndFoldOnReturn(t *testing.T) {
+	tool := newFakeTool("platform", "noop", EffectClassReadOnly)
+	h := newHarness(t, tool)
+	p := h.pipeline()
+
+	parent, child := uuid.New(), uuid.New()
+	if got := p.TaintStateFor(parent); got != ([3]bool{}) {
+		t.Fatalf("a session nobody ever touched should start all-false, got %v", got)
+	}
+
+	// Copy-at-spawn: the parent already engaged the untrusted-input leg;
+	// the child must start with that SAME leg engaged.
+	p.FoldTaint(parent, [3]bool{true, false, false})
+	p.FoldTaint(child, p.TaintStateFor(parent))
+	if got := p.TaintStateFor(child); got != ([3]bool{true, false, false}) {
+		t.Fatalf("child taint after copy-at-spawn = %v, want the parent's own state copied in", got)
+	}
+
+	// Fold-on-return: the child ALSO touched private data while it ran —
+	// folding it into the parent must ADD that leg, never clear the one
+	// the parent already had (task 8.11: "a summary never clears the
+	// untrusted leg").
+	p.FoldTaint(child, [3]bool{false, true, false})
+	p.FoldTaint(parent, p.TaintStateFor(child))
+	if got := p.TaintStateFor(parent); got != ([3]bool{true, true, false}) {
+		t.Fatalf("parent taint after fold-on-return = %v, want both legs engaged", got)
+	}
+}

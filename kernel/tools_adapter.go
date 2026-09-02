@@ -32,15 +32,17 @@ func (p PipelineExecutor) Execute(ctx context.Context, req ToolUseRequest, rc Ex
 		AutonomyLevel: rc.AutonomyLevel,
 	})
 	return ToolResult{
-		Output:           out.Output,
-		IsError:          out.IsError,
-		Reason:           out.Reason,
-		PermissionDenied: out.PermissionDenied,
-		AwaitingApproval: out.AwaitingApproval,
-		AskKind:          out.AskKind,
-		CanonicalDigest:  out.CanonicalDigest,
-		ApprovalMismatch: out.ApprovalMismatch,
-		EffectClass:      out.EffectClass,
+		Output:             out.Output,
+		IsError:            out.IsError,
+		Reason:             out.Reason,
+		PermissionDenied:   out.PermissionDenied,
+		AwaitingApproval:   out.AwaitingApproval,
+		AskKind:            out.AskKind,
+		CanonicalDigest:    out.CanonicalDigest,
+		ApprovalMismatch:   out.ApprovalMismatch,
+		EffectClass:        out.EffectClass,
+		AwaitingDelegation: out.AwaitingDelegation,
+		ChildSessionID:     out.ChildSessionID,
 	}
 }
 
@@ -56,14 +58,16 @@ func (p PipelineExecutor) ExecuteApproved(ctx context.Context, req ToolUseReques
 		AutonomyLevel: rc.AutonomyLevel,
 	}, approvedDigest)
 	return ToolResult{
-		Output:           out.Output,
-		IsError:          out.IsError,
-		Reason:           out.Reason,
-		PermissionDenied: out.PermissionDenied,
-		AwaitingApproval: out.AwaitingApproval,
-		AskKind:          out.AskKind,
-		CanonicalDigest:  out.CanonicalDigest,
-		ApprovalMismatch: out.ApprovalMismatch,
-		EffectClass:      out.EffectClass,
+		Output:             out.Output,
+		IsError:            out.IsError,
+		Reason:             out.Reason,
+		PermissionDenied:   out.PermissionDenied,
+		AwaitingApproval:   out.AwaitingApproval,
+		AskKind:            out.AskKind,
+		CanonicalDigest:    out.CanonicalDigest,
+		ApprovalMismatch:   out.ApprovalMismatch,
+		EffectClass:        out.EffectClass,
+		AwaitingDelegation: out.AwaitingDelegation,
+		ChildSessionID:     out.ChildSessionID,
 	}
 }
