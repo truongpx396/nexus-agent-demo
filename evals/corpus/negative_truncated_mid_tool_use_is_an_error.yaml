@@ -1,0 +1,18 @@
+id: negative-truncated-mid-tool-use-is-an-error
+class: negative
+description: >
+  A stream that truncates right after a tool_use, before a terminal
+  `done`, must surface as an error exactly like a truncated content-only
+  stream (safety_truncated_stream_is_an_error.yaml) — a caller must never
+  treat a truncated tool_use as "the call happened, we just didn't hear
+  back," since that ambiguity is precisely what internal/store/claims.go's
+  write-ahead claim exists to resolve, not the stream layer.
+script:
+  chunks:
+    - kind: tool_use
+      tool_use_id: "t1"
+      tool_name: "shell"
+      input: '{"cmd":"ls"}'
+  truncate: true
+want:
+  expect_error: true

@@ -1,0 +1,28 @@
+id: regression-multi-chunk-content-concatenates
+class: regression
+description: >
+  Content delivered as many small chunks (the realistic streaming shape,
+  not one giant chunk) still concatenates byte-for-byte in order — the
+  floor internal/promptctx's own byte-stable-prefix property depends on
+  the harness getting right.
+script:
+  chunks:
+    - kind: content
+      text: "S"
+    - kind: content
+      text: "t"
+    - kind: content
+      text: "r"
+    - kind: content
+      text: "e"
+    - kind: content
+      text: "a"
+    - kind: content
+      text: "m"
+    - kind: content
+      text: "ing"
+    - kind: done
+      done: stop
+want:
+  final_text: "Streaming"
+  done: stop

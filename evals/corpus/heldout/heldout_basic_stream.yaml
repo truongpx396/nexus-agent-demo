@@ -1,0 +1,19 @@
+id: heldout-basic-stream
+class: regression
+description: >
+  Held out from the visible corpus (README task 10.6): a fresh instance
+  of the same "does the harness replay a scripted stream verbatim" claim
+  regression_basic_stream.yaml makes, kept in evals/corpus/heldout/ (never
+  loaded by LoadProviderScriptCases against evals/corpus/ itself, since
+  that call skips subdirectories) so a change tuned to make the VISIBLE
+  corpus pass has to also still satisfy an instance it was never graded
+  against.
+script:
+  chunks:
+    - kind: content
+      text: "held out but equivalent"
+    - kind: done
+      done: stop
+want:
+  final_text: "held out but equivalent"
+  done: stop

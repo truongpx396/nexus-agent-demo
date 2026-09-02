@@ -1,0 +1,17 @@
+id: capability-reasoning-not-leaked-into-output
+class: capability
+description: >
+  A reasoning chunk (internal/provider's Opaque, round-tripped but never
+  shown per README §4's Chunk doc comment) must never appear in the final
+  visible text — only ChunkContent does.
+script:
+  chunks:
+    - kind: reasoning
+      text: "let me think about this step by step before answering"
+    - kind: content
+      text: "the capital of France is Paris"
+    - kind: done
+      done: stop
+want:
+  final_text: "the capital of France is Paris"
+  done: stop

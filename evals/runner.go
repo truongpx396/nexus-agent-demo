@@ -10,7 +10,7 @@ import (
 )
 
 // RunProviderScriptCases grades every case as a deterministic code check —
-// no judge, no live model, because none of this is subjective (Phase 9's
+// no judge, no live model, because none of this is subjective (Phase 10's
 // "a judge is the last resort, not the default" rule, satisfied trivially
 // here since every case in this suite IS objectively checkable).
 func RunProviderScriptCases(cases []ProviderScriptCase) Report {

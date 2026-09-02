@@ -1,0 +1,29 @@
+id: heldout-multi-tool-use
+class: capability
+description: >
+  Held-out counterpart of capability_multi_tool_use.yaml — same claim
+  (interleaved content and multiple tool_use chunks still concatenate
+  correctly), a fresh script, never part of the visible corpus.
+script:
+  chunks:
+    - kind: content
+      text: "looking at three files: "
+    - kind: tool_use
+      tool_use_id: "h1"
+      tool_name: "file_read"
+      input: '{"path":"x.txt"}'
+    - kind: tool_use
+      tool_use_id: "h2"
+      tool_name: "file_read"
+      input: '{"path":"y.txt"}'
+    - kind: tool_use
+      tool_use_id: "h3"
+      tool_name: "file_read"
+      input: '{"path":"z.txt"}'
+    - kind: content
+      text: "finished."
+    - kind: done
+      done: stop
+want:
+  final_text: "looking at three files: finished."
+  done: stop

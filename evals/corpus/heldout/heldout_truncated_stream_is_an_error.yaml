@@ -1,0 +1,14 @@
+id: heldout-truncated-stream-is-an-error
+class: safety
+description: >
+  Held-out counterpart of safety_truncated_stream_is_an_error.yaml — the
+  one safety-class case in the held-out set, so the dashboard's held-out
+  gap (task 10.12) reflects the class the constitution is strictest
+  about, not only capability-style cases.
+script:
+  chunks:
+    - kind: content
+      text: "still going"
+  truncate: true
+want:
+  expect_error: true

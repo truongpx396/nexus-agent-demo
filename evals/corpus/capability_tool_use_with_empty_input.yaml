@@ -1,0 +1,20 @@
+id: capability-tool-use-with-empty-input
+class: capability
+description: >
+  A tool_use chunk with no input (a zero-argument tool call, e.g.
+  platform/read_board) must not break stream draining — the harness must
+  not assume every tool call carries a non-empty input payload.
+script:
+  chunks:
+    - kind: content
+      text: "checking the board: "
+    - kind: tool_use
+      tool_use_id: "t1"
+      tool_name: "read_board"
+    - kind: content
+      text: "done."
+    - kind: done
+      done: stop
+want:
+  final_text: "checking the board: done."
+  done: stop
