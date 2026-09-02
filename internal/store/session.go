@@ -60,6 +60,13 @@ type Session struct {
 	ForkedFromSessionID *uuid.UUID
 	ForkSeq             *int64
 	ForkOverrides       map[string]string
+
+	// TeamID is the peer-team seam (README §9, Phase 9): nil for every
+	// non-team session (every session before this phase, and every root/
+	// delegation session after it). Set once at creation for a
+	// delegation_role="team_member" session and never updated afterward —
+	// the roster is fixed at team creation (internal/teams task 9.1).
+	TeamID *uuid.UUID
 }
 
 // CreateSession inserts a new session row. Must run inside a tenant-scoped
@@ -94,14 +101,14 @@ func CreateSession(ctx context.Context, tx pgx.Tx, s Session) error {
 			data_label, route_model_id, route_reason,
 			autonomy_level, root_session_id, depth, delegation_role,
 			forked_from_session_id, fork_seq, fork_overrides,
-			plan_id, plan_version
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
+			plan_id, plan_version, team_id
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
 		s.SessionID, s.SessionKey, s.TenantID, s.SurfaceID, s.UserID,
 		s.AgentID, s.AgentVersion, s.HarnessDigest,
 		s.DataLabel, s.RouteModelID, reason,
 		autonomy, root, s.Depth, delegationRole,
 		s.ForkedFromSessionID, s.ForkSeq, overrides,
-		s.PlanID, s.PlanVersion,
+		s.PlanID, s.PlanVersion, s.TeamID,
 	)
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)
@@ -121,7 +128,7 @@ func GetSession(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) (Session, e
 		       autonomy_level, root_session_id, depth, delegation_role,
 		       status, terminal_reason,
 		       forked_from_session_id, fork_seq, fork_overrides,
-		       plan_id, plan_version
+		       plan_id, plan_version, team_id
 		FROM sessions WHERE session_id = $1`, sessionID,
 	).Scan(
 		&s.SessionID, &s.SessionKey, &s.TenantID, &s.SurfaceID, &s.UserID,
@@ -130,7 +137,7 @@ func GetSession(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) (Session, e
 		&s.AutonomyLevel, &s.RootSessionID, &s.Depth, &s.DelegationRole,
 		&s.Status, &s.TerminalReason,
 		&s.ForkedFromSessionID, &s.ForkSeq, &overrides,
-		&s.PlanID, &s.PlanVersion,
+		&s.PlanID, &s.PlanVersion, &s.TeamID,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
