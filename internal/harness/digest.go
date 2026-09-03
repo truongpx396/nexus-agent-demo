@@ -23,6 +23,14 @@ type Config struct {
 	SafetyPolicyVersion   string
 	ApprovalPolicyVersion string
 	PromptMode            string
+
+	// MCPCatalogDigest folds in one tenant's admitted-MCP-server tool
+	// listing (README task 11.1) the same way SkillSetDigest already folds
+	// in a tenant's admitted skill set — a per-tenant addition to the
+	// resolvable tool universe is behavior-bearing config like any other
+	// (task 3.2, pattern 14), so a session's digest must move if a remote
+	// server's tools do. internal/surfaces/mcp.Port.Digest computes it.
+	MCPCatalogDigest []byte
 }
 
 // Digest returns a stable digest over c. Encoding order is fixed and
@@ -36,5 +44,6 @@ func Digest(c Config) []byte {
 	_, _ = fmt.Fprintf(h, "safety_policy_version=%s\n", c.SafetyPolicyVersion)
 	_, _ = fmt.Fprintf(h, "approval_policy_version=%s\n", c.ApprovalPolicyVersion)
 	_, _ = fmt.Fprintf(h, "prompt_mode=%s\n", c.PromptMode)
+	_, _ = fmt.Fprintf(h, "mcp_catalog_digest=%x\n", c.MCPCatalogDigest)
 	return h.Sum(nil)
 }

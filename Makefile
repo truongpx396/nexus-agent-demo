@@ -1,4 +1,4 @@
-.PHONY: up down build run signerd test lint migrate seed eval eval-baseline verify-chain erase dashboard go-live
+.PHONY: up down build run signerd test lint migrate seed eval eval-baseline verify-chain erase dashboard go-live web-build
 
 TENANT ?= acme
 
@@ -54,3 +54,8 @@ dashboard: build ## print the golden-signal dashboard per tenant (README task 10
 
 go-live: build ## run the go-live checklist against a live deployment (README task 10.13, docs/go-live.md)
 	./bin/nexusd go-live
+
+# --- Web ---
+
+web-build: ## build the React web app (README task 11.7)
+	cd web && npm ci && npm run build

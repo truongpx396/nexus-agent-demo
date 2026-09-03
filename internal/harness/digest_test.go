@@ -10,6 +10,7 @@ func baseConfig() Config {
 		SafetyPolicyVersion:   "2026-08-01",
 		ApprovalPolicyVersion: "v1",
 		PromptMode:            "full",
+		MCPCatalogDigest:      []byte{0x05, 0x06},
 	}
 }
 
@@ -35,6 +36,7 @@ func TestDigestIsSensitiveToEveryField(t *testing.T) {
 		"SafetyPolicyVersion":   func(c *Config) { c.SafetyPolicyVersion = "2026-09-01" },
 		"ApprovalPolicyVersion": func(c *Config) { c.ApprovalPolicyVersion = "v2" },
 		"PromptMode":            func(c *Config) { c.PromptMode = "minimal" },
+		"MCPCatalogDigest":      func(c *Config) { c.MCPCatalogDigest = []byte{0xFF} },
 	}
 
 	for name, mutate := range mutations {

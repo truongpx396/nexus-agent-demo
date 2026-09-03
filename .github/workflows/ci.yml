@@ -70,3 +70,22 @@ jobs:
         with:
           go-version-file: go.mod
       - run: make eval
+
+  # The web app (README task 11.7, web/) is a standalone npm project that
+  # talks to the existing REST API over HTTP — it needs nothing from the Go
+  # build, so this job has no `needs:` on the Go jobs above.
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - run: npm run lint
+        working-directory: web
+      - run: npm run build
+        working-directory: web

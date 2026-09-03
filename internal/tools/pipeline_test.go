@@ -505,3 +505,152 @@ func TestPipeline_FoldTaint_CopyAtSpawnAndFoldOnReturn(t *testing.T) {
 		t.Fatalf("parent taint after fold-on-return = %v, want both legs engaged", got)
 	}
 }
+
+// fakeDynamicResolver is a fully scriptable DynamicResolver (README task
+// 11.1) — the same "no builtin exercised here" isolation newFakeTool's own
+// doc comment explains, applied to internal/surfaces/mcp.Resolver's seam
+// instead of a builtin tool.
+type fakeDynamicResolver struct {
+	tool   Tool
+	ok     bool
+	err    error
+	gotCtx context.Context
+	gotTID uuid.UUID
+	gotSID uuid.UUID
+	gotRef ToolRef
+	calls  int
+}
+
+func (f *fakeDynamicResolver) Resolve(ctx context.Context, tenantID, sessionID uuid.UUID, ref ToolRef) (Tool, bool, error) {
+	f.calls++
+	f.gotCtx, f.gotTID, f.gotSID, f.gotRef = ctx, tenantID, sessionID, ref
+	return f.tool, f.ok, f.err
+}
+
+// TestPipeline_DynamicResolverFallback_HappyPath proves a ref absent from
+// the static Manifest still runs end to end through cfg.Dynamic, without
+// ever needing Registry.Register or SetAdmissionStatus — the exact shape
+// Phase 11's per-tenant MCP tools need, since they can never live in the
+// single process-wide Manifest/Registry pair.
+func TestPipeline_DynamicResolverFallback_HappyPath(t *testing.T) {
+	tool := newFakeTool("platform", "unrelated", EffectClassReadOnly) // registered/manifested, but NOT the one we call
+	h := newHarness(t, tool)
+
+	dynamicTool := newFakeTool("mcp/github", "create_issue", EffectClassExternal)
+	dynamicTool.checkPerm = PermissionResult{Decision: "defer"}
+	resolver := &fakeDynamicResolver{tool: dynamicTool, ok: true}
+	h.cfg.Dynamic = resolver
+	// A dynamically-resolved tool is still an ordinary Gate 1 member check
+	// (README's own Phase 11 demo: an admitted-but-unprofiled MCP tool is
+	// denied at layer 4 exactly like a builtin would be) — bind it into the
+	// session's tool profile here so THIS test isolates the dynamic-resolve
+	// mechanism from that separate, already-covered gate.
+	h.cfg.Chain = permissions.NewChain(permissions.ChainConfig{
+		Profiles: permissions.ProfileSet{Profiles: []permissions.ToolProfile{
+			permissions.NewToolProfile("default", 1, tool.ref.String(), dynamicTool.ref.String()),
+		}},
+		Safety: safety.NewClassifier(safety.DefaultRules(), alwaysDeferModel{}, 0),
+	})
+	p := h.pipeline()
+
+	tenantID := uuid.New()
+	inv := Invocation{TenantID: tenantID, SessionID: uuid.New(), ToolName: dynamicTool.ref.String(), Input: json.RawMessage(`{}`), AutonomyLevel: "autonomous"}
+	got := p.Execute(context.Background(), inv)
+	if got.IsError || got.PermissionDenied || got.AwaitingApproval {
+		t.Fatalf("Execute() = %+v, want a clean success via the dynamic resolver", got)
+	}
+	if resolver.calls != 1 {
+		t.Fatalf("DynamicResolver.Resolve called %d times, want 1", resolver.calls)
+	}
+	if resolver.gotTID != tenantID {
+		t.Fatalf("DynamicResolver.Resolve tenantID = %s, want %s", resolver.gotTID, tenantID)
+	}
+	if resolver.gotSID != inv.SessionID {
+		t.Fatalf("DynamicResolver.Resolve sessionID = %s, want %s", resolver.gotSID, inv.SessionID)
+	}
+	if resolver.gotRef != dynamicTool.ref {
+		t.Fatalf("DynamicResolver.Resolve ref = %+v, want %+v", resolver.gotRef, dynamicTool.ref)
+	}
+	if dynamicTool.callCount != 1 {
+		t.Fatalf("dynamic tool called %d times, want 1", dynamicTool.callCount)
+	}
+}
+
+// TestPipeline_DynamicResolverFallback_DeniedByToolProfile is README's own
+// Phase 11 demo language made a test: "An MCP-provided tool is admitted,
+// then denied at permission layer 4 for a tenant whose tool profile
+// excludes it, audited identically to a builtin tool refusal." Being
+// resolvable (the DynamicResolver said yes) is orthogonal to being
+// permitted — Gate 1 still runs, unmodified, on a dynamically-resolved ref
+// exactly as it does on a static one.
+func TestPipeline_DynamicResolverFallback_DeniedByToolProfile(t *testing.T) {
+	tool := newFakeTool("platform", "unrelated", EffectClassReadOnly)
+	h := newHarness(t, tool) // h.cfg.Chain's only profile member is tool.ref — the dynamic tool is deliberately excluded
+
+	dynamicTool := newFakeTool("mcp/github", "create_issue", EffectClassExternal)
+	h.cfg.Dynamic = &fakeDynamicResolver{tool: dynamicTool, ok: true}
+	p := h.pipeline()
+
+	tenantID := uuid.New()
+	inv := Invocation{TenantID: tenantID, SessionID: uuid.New(), ToolName: dynamicTool.ref.String(), Input: json.RawMessage(`{}`), AutonomyLevel: "autonomous"}
+	got := p.Execute(context.Background(), inv)
+	if !got.PermissionDenied || !strings.Contains(got.Reason, "gate1_tool_profile") {
+		t.Fatalf("Execute() = %+v, want a Gate 1 tool-profile denial", got)
+	}
+}
+
+// TestPipeline_DynamicResolverFallback_NotFoundIsUnknownTool proves a
+// tenant-scoped refusal (an unadmitted MCP server, a digest that no longer
+// matches) surfaces as the SAME unknown_tool error a static-manifest miss
+// already produces — there is no separate "found but refused" signal a
+// caller could use to distinguish "never existed" from "exists but denied,"
+// which is the point (resolveTool's own doc comment).
+func TestPipeline_DynamicResolverFallback_NotFoundIsUnknownTool(t *testing.T) {
+	tool := newFakeTool("platform", "unrelated", EffectClassReadOnly)
+	h := newHarness(t, tool)
+	h.cfg.Dynamic = &fakeDynamicResolver{ok: false}
+	p := h.pipeline()
+
+	inv := h.invocation("autonomous", `{}`)
+	inv.ToolName = "mcp/unadmitted-server/some_tool@v1"
+	got := p.Execute(context.Background(), inv)
+	if !got.IsError || !strings.Contains(got.Reason, "unknown_tool") {
+		t.Fatalf("Execute() = %+v, want an unknown_tool error", got)
+	}
+}
+
+// TestPipeline_DynamicResolverFallback_ErrorSurfaces proves a resolver-level
+// error (a network failure reaching the remote MCP server, say) is reported
+// as its own typed reason rather than silently collapsing into
+// unknown_tool, which would make a transient outage indistinguishable from
+// "this was never a real tool."
+func TestPipeline_DynamicResolverFallback_ErrorSurfaces(t *testing.T) {
+	tool := newFakeTool("platform", "unrelated", EffectClassReadOnly)
+	h := newHarness(t, tool)
+	h.cfg.Dynamic = &fakeDynamicResolver{err: context.DeadlineExceeded}
+	p := h.pipeline()
+
+	inv := h.invocation("autonomous", `{}`)
+	inv.ToolName = "mcp/flaky-server/some_tool@v1"
+	got := p.Execute(context.Background(), inv)
+	if !got.IsError || !strings.Contains(got.Reason, "dynamic_resolve_error") {
+		t.Fatalf("Execute() = %+v, want a dynamic_resolve_error", got)
+	}
+}
+
+// TestPipeline_DynamicResolverFallback_NilDynamicIsUnknownTool proves the
+// nil-valid default (every pre-Phase-11 test) behaves exactly as it always
+// has — a ref outside the static manifest is unknown_tool, full stop, when
+// no DynamicResolver is configured at all.
+func TestPipeline_DynamicResolverFallback_NilDynamicIsUnknownTool(t *testing.T) {
+	tool := newFakeTool("platform", "unrelated", EffectClassReadOnly)
+	h := newHarness(t, tool)
+	p := h.pipeline() // h.cfg.Dynamic is nil
+
+	inv := h.invocation("autonomous", `{}`)
+	inv.ToolName = "mcp/some-server/some_tool@v1"
+	got := p.Execute(context.Background(), inv)
+	if !got.IsError || !strings.Contains(got.Reason, "unknown_tool") {
+		t.Fatalf("Execute() = %+v, want an unknown_tool error", got)
+	}
+}

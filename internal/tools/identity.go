@@ -19,7 +19,15 @@ func (r ToolRef) String() string {
 	return r.Namespace + "/" + r.Name + "@" + r.Version
 }
 
-var refPattern = regexp.MustCompile(`^([a-z0-9_-]+)/([a-z0-9_-]+)@(v?[0-9][a-zA-Z0-9_.-]*)$`)
+// Namespace may itself be multiple `/`-separated segments (Phase 11, README
+// task 11.1): a remote MCP server's tools are qualified as
+// "mcp/{server}/{tool}@{version}" — Namespace is the whole "mcp/{server}"
+// prefix, one declared-and-owned namespace per admitted server, so two
+// servers never collide under the single shared Registry. Every namespace
+// that predates Phase 11 ("platform", "skill", ...) is a single segment and
+// parses identically to before — this widens the grammar, it does not change
+// it for anything already using it.
+var refPattern = regexp.MustCompile(`^([a-z0-9_-]+(?:/[a-z0-9_-]+)*)/([a-z0-9_-]+)@(v?[0-9][a-zA-Z0-9_.-]*)$`)
 
 // ParseToolRef parses the wire/string form. Failing loud on a malformed ref
 // is deliberate — the pipeline's step 1 (resolve) must never guess at an

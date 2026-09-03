@@ -9,8 +9,10 @@ require (
 	github.com/moby/moby/api v1.55.0
 	github.com/moby/moby/client v0.5.0
 	github.com/redis/go-redis/v9 v9.22.0
+	github.com/robfig/cron/v3 v3.0.1
 	github.com/testcontainers/testcontainers-go v0.44.0
 	github.com/testcontainers/testcontainers-go/modules/redis v0.44.0
+	golang.org/x/oauth2 v0.36.0
 	golang.org/x/tools v0.49.0
 	gopkg.in/yaml.v3 v3.0.1
 )

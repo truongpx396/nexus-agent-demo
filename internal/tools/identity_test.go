@@ -16,6 +16,23 @@ func TestParseToolRef(t *testing.T) {
 	}
 }
 
+func TestParseToolRef_MultiSegmentNamespace(t *testing.T) {
+	// Phase 11 task 11.1: a remote MCP server's tools are qualified as
+	// "mcp/{server}/{tool}@{version}" — Namespace is the whole "mcp/{server}"
+	// prefix, not just "mcp".
+	got, err := ParseToolRef("mcp/github/create_issue@v1a2b3c4")
+	if err != nil {
+		t.Fatalf("ParseToolRef error = %v", err)
+	}
+	want := ToolRef{Namespace: "mcp/github", Name: "create_issue", Version: "v1a2b3c4"}
+	if got != want {
+		t.Fatalf("ParseToolRef = %+v, want %+v", got, want)
+	}
+	if got.String() != "mcp/github/create_issue@v1a2b3c4" {
+		t.Fatalf("String() = %q, want %q", got.String(), "mcp/github/create_issue@v1a2b3c4")
+	}
+}
+
 func TestParseToolRef_Malformed(t *testing.T) {
 	for _, s := range []string{"", "no-at-sign", "platform/shell", "@v1", "platform/shell@", "platform//shell@v1"} {
 		if _, err := ParseToolRef(s); err == nil {
