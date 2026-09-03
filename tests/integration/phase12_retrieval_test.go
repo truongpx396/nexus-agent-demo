@@ -181,7 +181,7 @@ func TestRetrieval_IngestIndexSearchErase(t *testing.T) {
 	// this document as two SEPARATE chunks, one per paragraph, so the
 	// search assertion below is about picking the RIGHT chunk out of
 	// several, not the only one that exists.
-	revenueParagraph := strings.Repeat("Quarterly revenue grew twelve percent year over year. ", 12) // 648 chars
+	revenueParagraph := strings.Repeat("Quarterly revenue grew twelve percent year over year. ", 12)    // 648 chars
 	churnParagraph := strings.Repeat("Customer churn declined for the third consecutive quarter. ", 12) // 708 chars; 648+708+1 > 1000
 	text := revenueParagraph + "\n\n" + churnParagraph
 	doc, err := retriever.IndexDocument(ctx, tenantID, sessionID, "q3-report.txt", ingest.MimePlainText, []byte(text))
