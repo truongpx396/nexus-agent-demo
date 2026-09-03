@@ -38,6 +38,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/delegate"
 	"github.com/truongpx396/nexus-agent-demo/internal/hooks"
+	"github.com/truongpx396/nexus-agent-demo/internal/ingest"
 	"github.com/truongpx396/nexus-agent-demo/internal/memory"
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
@@ -48,6 +49,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
 	"github.com/truongpx396/nexus-agent-demo/internal/queue"
 	"github.com/truongpx396/nexus-agent-demo/internal/reliability"
+	"github.com/truongpx396/nexus-agent-demo/internal/retrieval"
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
 	"github.com/truongpx396/nexus-agent-demo/internal/sandbox"
 	"github.com/truongpx396/nexus-agent-demo/internal/skills"
@@ -132,6 +134,10 @@ func main() {
 		if err := runErase(ctx, os.Args[2:]); err != nil {
 			fatalf("erase: %v", err)
 		}
+	case "ingest":
+		if err := runIngest(ctx, os.Args[2:]); err != nil {
+			fatalf("ingest: %v", err)
+		}
 	default:
 		runServe()
 	}
@@ -201,15 +207,21 @@ func serve(ctx context.Context) error {
 
 	vault := &connectors.Vault{Store: st, Keys: keyStore, Providers: newConnectorRegistry(), Redis: redisClient}
 
+	// Built here, ahead of newToolPipeline (moved up from its original
+	// Phase 4 position below): Phase 12's platform/retrieve tool needs a
+	// Retriever wired into the resident catalog, and a Retriever needs a
+	// Gate to reserve embedding calls against (README task 12.4) — the
+	// same "construct the shared dependency before the thing that needs
+	// it" ordering vault itself already follows one step up.
+	gate := cost.NewGate(st, redisClient, cost.DefaultMeters(), cost.GateConfig{})
+
 	delegations := delegate.NewDelegations(st, keyStore, chain)
 	teamsSvc := teams.NewService(st, keyStore, chain)
-	pipeline, catalog, catalogManifestDigest, admittedSkillBundles, mcpPort := newToolPipeline(st, keyStore, chain, delegations, teamsSvc, vault)
+	pipeline, catalog, catalogManifestDigest, admittedSkillBundles, mcpPort := newToolPipeline(st, keyStore, chain, delegations, teamsSvc, vault, gate)
 	loadedTools := make([]string, len(catalog))
 	for i, c := range catalog {
 		loadedTools[i] = c.Name
 	}
-
-	gate := cost.NewGate(st, redisClient, cost.DefaultMeters(), cost.GateConfig{})
 
 	approvals := oversight.NewApprovals(st, keyStore, chain)
 	inputs := oversight.NewInputs(st, keyStore, chain)
@@ -444,6 +456,29 @@ func (a nexusdBoardAdapter) UpdateCardStatus(ctx context.Context, tenantID, team
 		return builtin.BoardCard{}, ok, err
 	}
 	return toBoardCard(c), true, nil
+}
+
+// nexusdRetrieverAdapter adapts *internal/retrieval.Retriever to
+// internal/tools/builtin.Searcher — translating retrieval.ScoredChunk into
+// builtin.RetrievedChunk, the same deliberately-independent-shapes
+// translation nexusdBoardAdapter and nexusdDelegationSpawner already
+// perform for their own packages (each one's own doc comment explains why:
+// internal/tools/builtin never imports the service package it's adapting).
+type nexusdRetrieverAdapter struct{ retriever *retrieval.Retriever }
+
+func (a nexusdRetrieverAdapter) Search(ctx context.Context, tenantID, sessionID uuid.UUID, query string, topK int) ([]builtin.RetrievedChunk, error) {
+	results, err := a.retriever.Search(ctx, tenantID, sessionID, query, topK)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]builtin.RetrievedChunk, len(results))
+	for i, r := range results {
+		out[i] = builtin.RetrievedChunk{
+			DocID: r.DocID.String(), ChunkID: r.ChunkID.String(), ChunkIndex: r.ChunkIndex,
+			Content: r.Content, Distance: r.Distance, SourceDigest: hex.EncodeToString(r.SourceDigest),
+		}
+	}
+	return out, nil
 }
 
 // startAnchorLoop runs the scheduled verifier task 5.3 asks for: every
@@ -922,6 +957,21 @@ func newProvider() (provider.Provider, error) {
 	}
 }
 
+// newEmbedder returns this demo's one Embedder: internal/provider/fake's
+// deterministic fake (README task 12.5 — "no correctness test calls a live
+// embedding model"). Unlike newProvider, there is no real-adapter branch
+// here: Anthropic has no first-party embedding endpoint, and adding a
+// third-party embedding vendor's adapter is a real-integration concern
+// README §8's own trigger table gates behind "one is actually wanted" —
+// nothing in Phase 12's own task list (12.1-12.8) asks for one. Swapping a
+// real embedder in later is exactly the kind of change internal/provider.
+// Embedder's port exists to make an internal one: a new adapter package
+// behind the same interface, no caller-visible change here beyond this
+// function's own body.
+func newEmbedder() provider.Embedder {
+	return fake.NewEmbedder()
+}
+
 // newToolPipeline wires the Phase 3 tool pipeline: the resident catalog
 // (the builtin tools, now including Phase 7's activate_skill/
 // read_skill_file), the permission chain's tenant-independent config, and
@@ -939,7 +989,7 @@ func newProvider() (provider.Provider, error) {
 // Ledger/Spawner fields are satisfied by delegations/nexusdDelegationSpawner
 // immediately — Wire only needs to land before the FIRST real dispatch,
 // which is well after serve() finishes wiring everything.
-func newToolPipeline(st *store.Store, keyStore *crypto.KeyStore, chain *audit.Chain, delegations *delegate.Delegations, teamsSvc *teams.Service, vault *connectors.Vault) (*tools.Pipeline, []provider.ToolSchema, []byte, []skills.SkillBundle, *mcp.Port) {
+func newToolPipeline(st *store.Store, keyStore *crypto.KeyStore, chain *audit.Chain, delegations *delegate.Delegations, teamsSvc *teams.Service, vault *connectors.Vault, gate *cost.Gate) (*tools.Pipeline, []provider.ToolSchema, []byte, []skills.SkillBundle, *mcp.Port) {
 	reg := tools.NewRegistry()
 	if err := reg.DeclareNamespace("platform", "nexusd"); err != nil {
 		fatalf("declare platform namespace: %v", err)
@@ -956,6 +1006,15 @@ func newToolPipeline(st *store.Store, keyStore *crypto.KeyStore, chain *audit.Ch
 
 	mcpResolver := &mcp.Resolver{Store: st, Keys: keyStore, Tokens: vault, AllowedHosts: webFetchAllowlist}
 	mcpPort := &mcp.Port{Resolver: mcpResolver}
+
+	// Phase 12: platform/retrieve's own Searcher, backed by a Retriever
+	// wired to the same Store/Gate everything else here shares and to
+	// newEmbedder()'s embedding port (task 12.4/12.6). ModelID is a price-
+	// book/cost-record label, not a live credential (internal/retrieval.
+	// Retriever.ModelID's own doc comment).
+	retriever := &retrieval.Retriever{
+		Store: st, Gate: gate, Embedder: newEmbedder(), ModelID: "fake-embedder-v1", TopK: 5,
+	}
 
 	builtinTools := []tools.Tool{
 		builtin.FileRead{},
@@ -987,6 +1046,7 @@ func newToolPipeline(st *store.Store, keyStore *crypto.KeyStore, chain *audit.Ch
 		builtin.WriteCard{Resolver: nexusdBoardAdapter{teams: teamsSvc}, Writer: nexusdBoardAdapter{teams: teamsSvc}},
 		builtin.UpdateCardStatus{Resolver: nexusdBoardAdapter{teams: teamsSvc}, Updater: nexusdBoardAdapter{teams: teamsSvc}},
 		builtin.ConnectorFetch{Tokens: vault, Sessions: nexusdSessionLookup{store: st}, AllowedHosts: webFetchAllowlist},
+		builtin.Retrieve{Searcher: nexusdRetrieverAdapter{retriever: retriever}},
 	}
 	var toolRefs []string
 	var catalog []provider.ToolSchema
@@ -1612,17 +1672,28 @@ func runErase(ctx context.Context, args []string) error {
 	if *tenantName != "" {
 		tenantID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("nexus-agent-demo/tenant/"+*tenantName))
 		var result crypto.ErasureResult
+		var deletedChunks, deletedDocs int
 		err := st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 			var eerr error
 			result, eerr = crypto.EraseTenant(ctx, tx, chain, tenantID, *reason)
+			if eerr != nil {
+				return eerr
+			}
+			// Phase 12, task 12.8: the retrieval index is a second durable,
+			// tenant-owned knowledge store outside the encrypted event log
+			// (like derived_artifacts, but not session-scoped — see
+			// internal/retrieval.DeleteTenant's own doc comment) — it must
+			// empty in the SAME erasure transaction as the DEK shred above,
+			// never on a best-effort follow-up job.
+			deletedChunks, deletedDocs, eerr = retrieval.Erase(ctx, tx, tenantID)
 			return eerr
 		})
 		if err != nil {
 			return fmt.Errorf("erase tenant %s: %w", *tenantName, err)
 		}
 		reclaimArtifacts(result)
-		fmt.Printf("erased tenant %q: %d key(s) shredded, %d session(s), %d derived artifact(s) removed\n",
-			*tenantName, len(result.ShreddedKeyIDs), len(result.ErasureEvents), len(result.DeletedArtifacts))
+		fmt.Printf("erased tenant %q: %d key(s) shredded, %d session(s), %d derived artifact(s) removed, %d retrieval chunk(s) and %d document(s) removed\n",
+			*tenantName, len(result.ShreddedKeyIDs), len(result.ErasureEvents), len(result.DeletedArtifacts), deletedChunks, deletedDocs)
 		return nil
 	}
 
@@ -1670,6 +1741,78 @@ func reclaimArtifacts(result crypto.ErasureResult) {
 			slog.Warn("nexusd: failed to unlink derived artifact after erasure", "path", a.Path, "error", err)
 		}
 	}
+}
+
+// runIngest is Phase 12's admin operation (README §5's Demo: "ingest a
+// 200-page PDF"): convert, admission-scan, embed, and index one local file
+// for a tenant — the same one-shot, construct-everything-from-scratch shape
+// runErase above already has, because ingestion (like erasure) is an
+// operator action outside any kernel session, not a tool a model calls
+// (platform/retrieve, the tool a model DOES call, only ever searches an
+// already-ingested corpus). It still mints and persists a minimal session
+// row below purely as a cost-accounting label — see that INSERT's own
+// comment for why a real row is required, not optional, here.
+func runIngest(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("ingest", flag.ExitOnError)
+	tenantName := fs.String("tenant", "", "tenant name to ingest into (required)")
+	path := fs.String("file", "", "path to the local source file to ingest (required)")
+	mimeType := fs.String("mime", "", fmt.Sprintf("mime type: one of %s, %s, %s, %s (required)",
+		ingest.MimePlainText, ingest.MimeHTML, ingest.MimePDF, ingest.MimeDOCX))
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *tenantName == "" || *path == "" || *mimeType == "" {
+		return fmt.Errorf("--tenant, --file, and --mime are all required")
+	}
+
+	data, err := os.ReadFile(*path)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", *path, err)
+	}
+
+	dsn := envOr("NEXUS_DATABASE_URL", defaultAppDSN)
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		return fmt.Errorf("connect: %w", err)
+	}
+	defer pool.Close()
+	st := store.New(pool)
+
+	redisClient := redis.NewClient(&redis.Options{Addr: envOr("NEXUS_REDIS_ADDR", defaultRedisAddr)})
+	gate := cost.NewGate(st, redisClient, cost.DefaultMeters(), cost.GateConfig{})
+	retriever := &retrieval.Retriever{Store: st, Gate: gate, Embedder: newEmbedder(), ModelID: "fake-embedder-v1"}
+
+	tenantID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("nexus-agent-demo/tenant/"+*tenantName))
+	sessionID := uuid.New()
+
+	// cost_records.session_id and budget_decisions.session_id are both
+	// NOT NULL REFERENCES sessions(session_id) (migrations/0005_cost.sql)
+	// — every Reserve/Reconcile call, ingestion's own embedding calls
+	// included, needs a REAL session row to attribute cost to, even one
+	// with no kernel run behind it. This is the one place `nexusd ingest`
+	// differs from `nexusd erase`: erasure never reserves a model call, so
+	// it never hits this requirement.
+	err = st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+		return store.CreateSession(ctx, tx, store.Session{
+			SessionID: sessionID, SessionKey: sessionID.String(), TenantID: tenantID,
+			SurfaceID: "ingest-cli", UserID: uuid.Nil, AgentID: uuid.Nil, AgentVersion: 1,
+			HarnessDigest: []byte{0},
+		})
+	})
+	if err != nil {
+		return fmt.Errorf("create ingestion session: %w", err)
+	}
+
+	doc, err := retriever.IndexDocument(ctx, tenantID, sessionID, filepath.Base(*path), *mimeType, data)
+	if err != nil {
+		return fmt.Errorf("ingest %s: %w", *path, err)
+	}
+	fmt.Printf("ingested %q into tenant %q: doc_id=%s admission_status=%s chunk_count=%d\n",
+		doc.SourceName, *tenantName, doc.DocID, doc.AdmissionStatus, doc.ChunkCount)
+	if doc.AdmissionStatus != "clean" {
+		fmt.Printf("  fail-closed: nothing was indexed (findings: %v)\n", doc.AdmissionFindings)
+	}
+	return nil
 }
 
 func runSeed(ctx context.Context, args []string) error {
@@ -1742,6 +1885,7 @@ func seedPriceBook(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) error {
 		{cost.MeterInputCacheRead, 300_000},    // $0.30 / million cache-read tokens
 		{cost.MeterInputCacheWrite, 3_750_000}, // $3.75 / million cache-write tokens
 		{cost.MeterOutput, 15_000_000},         // $15 / million output tokens
+		{cost.MeterEmbeddingTokens, 100_000},   // $0.10 / million embedding tokens (Phase 12, task 12.4) — a small-embedding-model-class figure, equally illustrative
 	} {
 		if err := cost.InsertPriceBookEntry(ctx, tx, tenantID, cost.PriceBookEntry{
 			Meter: p.meter, Subject: cost.WildcardSubject, Version: 1,
