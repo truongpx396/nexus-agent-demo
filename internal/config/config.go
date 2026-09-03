@@ -28,6 +28,15 @@ type TenantConfig struct {
 	TenantID            uuid.UUID
 	AdmittedSkillIDs    []string
 	MemoryRetentionDays int
+
+	// AdmittedConnectorProviders is Phase 11's own admitted-set (README task
+	// 11.2, migrations/0018_oauth_connections.sql): the vetted, per-tenant
+	// OAuth provider allowlist docs/constitution.md requires ("Connectors
+	// MUST attach only through the vetted, per-tenant ... catalog"). A
+	// tenant with no row admits none — connectors are opt-in, the same
+	// "absent means defaults" rule AdmittedSkillIDs already follows, just
+	// with an empty default instead of a populated one.
+	AdmittedConnectorProviders []string
 }
 
 // defaultFor is what Load returns when tenantID has no row yet.
@@ -39,42 +48,50 @@ func defaultFor(tenantID uuid.UUID) TenantConfig {
 // Callers run this inside Store.InTenantTx like every other tenant-scoped
 // read in this codebase — tx is never a bare pool.
 func Load(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) (TenantConfig, error) {
-	var raw []byte
+	var rawSkills, rawProviders []byte
 	c := TenantConfig{TenantID: tenantID}
 	row := tx.QueryRow(ctx,
-		`SELECT admitted_skill_ids, memory_retention_days FROM tenant_configs WHERE tenant_id = $1`,
+		`SELECT admitted_skill_ids, memory_retention_days, admitted_connector_providers FROM tenant_configs WHERE tenant_id = $1`,
 		tenantID,
 	)
-	if err := row.Scan(&raw, &c.MemoryRetentionDays); err != nil {
+	if err := row.Scan(&rawSkills, &c.MemoryRetentionDays, &rawProviders); err != nil {
 		if err == pgx.ErrNoRows {
 			return defaultFor(tenantID), nil
 		}
 		return TenantConfig{}, fmt.Errorf("config: load %s: %w", tenantID, err)
 	}
-	if err := json.Unmarshal(raw, &c.AdmittedSkillIDs); err != nil {
+	if err := json.Unmarshal(rawSkills, &c.AdmittedSkillIDs); err != nil {
 		return TenantConfig{}, fmt.Errorf("config: unmarshal admitted_skill_ids for %s: %w", tenantID, err)
+	}
+	if err := json.Unmarshal(rawProviders, &c.AdmittedConnectorProviders); err != nil {
+		return TenantConfig{}, fmt.Errorf("config: unmarshal admitted_connector_providers for %s: %w", tenantID, err)
 	}
 	return c, nil
 }
 
 // Upsert writes cfg, creating the tenant's row on first use.
 func Upsert(ctx context.Context, tx pgx.Tx, cfg TenantConfig) error {
-	raw, err := json.Marshal(cfg.AdmittedSkillIDs)
+	rawSkills, err := json.Marshal(cfg.AdmittedSkillIDs)
 	if err != nil {
 		return fmt.Errorf("config: marshal admitted_skill_ids for %s: %w", cfg.TenantID, err)
+	}
+	rawProviders, err := json.Marshal(cfg.AdmittedConnectorProviders)
+	if err != nil {
+		return fmt.Errorf("config: marshal admitted_connector_providers for %s: %w", cfg.TenantID, err)
 	}
 	retention := cfg.MemoryRetentionDays
 	if retention <= 0 {
 		retention = DefaultMemoryRetentionDays
 	}
 	_, err = tx.Exec(ctx, `
-		INSERT INTO tenant_configs (tenant_id, admitted_skill_ids, memory_retention_days, updated_at)
-		VALUES ($1, $2, $3, now())
+		INSERT INTO tenant_configs (tenant_id, admitted_skill_ids, memory_retention_days, admitted_connector_providers, updated_at)
+		VALUES ($1, $2, $3, $4, now())
 		ON CONFLICT (tenant_id) DO UPDATE
 		SET admitted_skill_ids = EXCLUDED.admitted_skill_ids,
 		    memory_retention_days = EXCLUDED.memory_retention_days,
+		    admitted_connector_providers = EXCLUDED.admitted_connector_providers,
 		    updated_at = now()`,
-		cfg.TenantID, raw, retention,
+		cfg.TenantID, rawSkills, retention, rawProviders,
 	)
 	if err != nil {
 		return fmt.Errorf("config: upsert %s: %w", cfg.TenantID, err)
@@ -100,6 +117,20 @@ func LoadForTenant(ctx context.Context, st *store.Store, tenantID uuid.UUID) (Te
 func (c TenantConfig) HasSkill(skillID string) bool {
 	for _, id := range c.AdmittedSkillIDs {
 		if id == skillID {
+			return true
+		}
+	}
+	return false
+}
+
+// HasConnectorProvider reports whether provider is in cfg's admitted
+// connector-provider set (README task 11.2) — internal/connectors.BeginAuth
+// checks this before ever building an authorization-code redirect URL, the
+// same fail-closed shape HasSkill already gives task 7.4's intersection
+// check.
+func (c TenantConfig) HasConnectorProvider(provider string) bool {
+	for _, p := range c.AdmittedConnectorProviders {
+		if p == provider {
 			return true
 		}
 	}

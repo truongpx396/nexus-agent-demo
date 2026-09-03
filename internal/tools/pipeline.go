@@ -108,6 +108,32 @@ type PipelineConfig struct {
 	// in finishCall. Nil is valid and simply skips write-ahead tracking, the
 	// pre-Phase-6 behavior every existing test still gets.
 	Claims Claims
+
+	// Dynamic, if set, is consulted at step 1 only when the static Manifest
+	// doesn't resolve ref (README task 11.1) — Phase 11's per-tenant MCP
+	// tools can never live in the single process-wide Manifest/Registry
+	// pair (they vary per tenant; the resident catalog does not), so a miss
+	// against the pinned manifest falls through here instead of failing
+	// immediately. Nil is valid and simply skips this fallback, the
+	// pre-Phase-11 behavior every existing test still gets.
+	Dynamic DynamicResolver
+}
+
+// DynamicResolver resolves a ToolRef the static Manifest doesn't know about,
+// scoped to the calling tenant and session — internal/surfaces/mcp.Resolver
+// is the one implementation (README task 11.1). sessionID is threaded
+// through (not just tenantID) because a remote MCP server admitted with
+// auth_kind='oauth_connector' authenticates as the CALLING SESSION's own
+// user (internal/connectors.Vault is keyed by (tenant, user, provider)),
+// mirroring platform/connector_fetch's own re-derive-the-user-from-the-
+// session discipline one layer up. ok=false (with err=nil) means "not
+// resolvable for this tenant," which Execute/ExecuteApproved turn into the
+// same unknown_tool error a static-manifest miss already produces; there is
+// no separate "found but not admitted" signal because a tool this resolver
+// won't hand back is, from the pipeline's point of view, not resolvable at
+// all — indistinguishable from never having existed.
+type DynamicResolver interface {
+	Resolve(ctx context.Context, tenantID, sessionID uuid.UUID, ref ToolRef) (Tool, bool, error)
 }
 
 // sessionState is the per-session facilities the pipeline can't share
@@ -221,7 +247,7 @@ func (p *Pipeline) ResetTurn() {
 
 // Execute runs the 16-step pipeline (README task 3.4) for one invocation:
 //
-//  1. Resolve      — qualified ref lookup against the session's pinned catalog manifest
+//  1. Resolve      — qualified ref lookup against the session's pinned catalog manifest, falling through to cfg.Dynamic (Phase 11) on a miss
 //  2. Digest re-verify — the resolved descriptor must still match what the manifest pinned
 //  3. Admission gate   — refuse dispatch unless the descriptor's cached verdict is clean
 //  4. Input validation — Tool.ValidateInput against the tool's declared schema
@@ -243,25 +269,21 @@ func (p *Pipeline) Execute(ctx context.Context, inv Invocation) ExecuteResult {
 	if err != nil {
 		return errorResult("unknown_tool: " + err.Error())
 	}
-	entry, ok := p.cfg.Manifest.Resolve(ref)
-	if !ok {
-		return errorResult(fmt.Sprintf("unknown_tool: %q is not in this session's pinned catalog manifest", ref))
-	}
-	tool, ok := p.cfg.Registry.Lookup(ref)
-	if !ok {
-		return errorResult(fmt.Sprintf("unknown_tool: %q is pinned in the manifest but not registered in this process", ref))
+	tool, descriptor, dynamic, errRes := p.resolveTool(ctx, inv.TenantID, inv.SessionID, ref)
+	if errRes != nil {
+		return *errRes
 	}
 
-	// Step 2: digest re-verify — the live descriptor must match what was pinned.
-	descriptor := tool.Descriptor()
-	if liveDigest := descriptorDigest(descriptor); !bytes.Equal(liveDigest, entry.DescriptorDigest) {
-		return errorResult(fmt.Sprintf("descriptor_drift: %q no longer matches the digest pinned at session start", ref))
-	}
-
-	// Step 3: admission gate.
-	status, _ := p.cfg.Registry.AdmissionStatus(ref)
-	if status != AdmissionClean {
-		return errorResult(fmt.Sprintf("admission_%s: %q is not admitted clean", status, ref))
+	// Step 3: admission gate. A dynamically-resolved tool (Phase 11's
+	// per-tenant MCP tools) was never Registry.Register'd, so there is no
+	// cached admission verdict to look up here — resolveTool's own
+	// DynamicResolver call is where that tenant's admission decision
+	// (its mcp_servers row's status) was already enforced, fail-closed.
+	if !dynamic {
+		status, _ := p.cfg.Registry.AdmissionStatus(ref)
+		if status != AdmissionClean {
+			return errorResult(fmt.Sprintf("admission_%s: %q is not admitted clean", status, ref))
+		}
 	}
 
 	// Step 4: input validation.
@@ -393,25 +415,17 @@ func (p *Pipeline) ExecuteApproved(ctx context.Context, inv Invocation, approved
 	if err != nil {
 		return errorResult("unknown_tool: " + err.Error())
 	}
-	entry, ok := p.cfg.Manifest.Resolve(ref)
-	if !ok {
-		return errorResult(fmt.Sprintf("unknown_tool: %q is not in this session's pinned catalog manifest", ref))
-	}
-	tool, ok := p.cfg.Registry.Lookup(ref)
-	if !ok {
-		return errorResult(fmt.Sprintf("unknown_tool: %q is pinned in the manifest but not registered in this process", ref))
+	tool, descriptor, dynamic, errRes := p.resolveTool(ctx, inv.TenantID, inv.SessionID, ref)
+	if errRes != nil {
+		return *errRes
 	}
 
-	// Step 2: digest re-verify — the live descriptor must match what was pinned.
-	descriptor := tool.Descriptor()
-	if liveDigest := descriptorDigest(descriptor); !bytes.Equal(liveDigest, entry.DescriptorDigest) {
-		return errorResult(fmt.Sprintf("descriptor_drift: %q no longer matches the digest pinned at session start", ref))
-	}
-
-	// Step 3: admission gate.
-	status, _ := p.cfg.Registry.AdmissionStatus(ref)
-	if status != AdmissionClean {
-		return errorResult(fmt.Sprintf("admission_%s: %q is not admitted clean", status, ref))
+	// Step 3: admission gate — see Execute's identical comment.
+	if !dynamic {
+		status, _ := p.cfg.Registry.AdmissionStatus(ref)
+		if status != AdmissionClean {
+			return errorResult(fmt.Sprintf("admission_%s: %q is not admitted clean", status, ref))
+		}
 	}
 
 	// Step 4: input validation.
@@ -445,6 +459,54 @@ func (p *Pipeline) ExecuteApproved(ctx context.Context, inv Invocation, approved
 
 	state := p.stateFor(inv.SessionID, inv.AutonomyLevel)
 	return p.finishCall(ctx, tool, ref, descriptor, input, digest, rc, inv, state)
+}
+
+// resolveTool runs pipeline steps 1 (resolve) and 2 (digest re-verify),
+// shared by Execute and ExecuteApproved. A ref present in the static,
+// process-wide Manifest resolves against the Registry exactly as before —
+// dynamic==false, the only path every pre-Phase-11 caller and test
+// exercises. A ref the static Manifest doesn't know about falls through to
+// cfg.Dynamic (nil-valid): dynamic==true tells the caller to skip the
+// Registry-keyed admission check at step 3, since a dynamically-resolved
+// tool was never Registry.Register'd in the first place — its own
+// DynamicResolver.Resolve call is where admission was already decided.
+// descriptorDigest is recomputed fresh from what Resolve just returned
+// rather than compared against a separately-cached "pinned" value: for a
+// dynamic tool there is no session-start pin distinct from "what the
+// resolver just fetched," so step 2 here is a self-consistency check
+// (nothing mutated tool between the two Descriptor() calls), not a
+// staleness check — the real staleness guard for an MCP tool is its own
+// content-addressed Version (README task 11.1's #15 "digest re-verification
+// at use": a schema change produces a different qualified ref, which is a
+// different resolution attempt entirely, not a drifted one).
+func (p *Pipeline) resolveTool(ctx context.Context, tenantID, sessionID uuid.UUID, ref ToolRef) (tool Tool, descriptor Descriptor, dynamic bool, errRes *ExecuteResult) {
+	if entry, ok := p.cfg.Manifest.Resolve(ref); ok {
+		t, ok := p.cfg.Registry.Lookup(ref)
+		if !ok {
+			r := errorResult(fmt.Sprintf("unknown_tool: %q is pinned in the manifest but not registered in this process", ref))
+			return nil, Descriptor{}, false, &r
+		}
+		d := t.Descriptor()
+		if liveDigest := descriptorDigest(d); !bytes.Equal(liveDigest, entry.DescriptorDigest) {
+			r := errorResult(fmt.Sprintf("descriptor_drift: %q no longer matches the digest pinned at session start", ref))
+			return nil, Descriptor{}, false, &r
+		}
+		return t, d, false, nil
+	}
+
+	if p.cfg.Dynamic != nil {
+		t, ok, err := p.cfg.Dynamic.Resolve(ctx, tenantID, sessionID, ref)
+		if err != nil {
+			r := errorResult("dynamic_resolve_error: " + err.Error())
+			return nil, Descriptor{}, false, &r
+		}
+		if ok {
+			return t, t.Descriptor(), true, nil
+		}
+	}
+
+	r := errorResult(fmt.Sprintf("unknown_tool: %q is not in this session's pinned catalog manifest", ref))
+	return nil, Descriptor{}, false, &r
 }
 
 // finishCall runs steps 12-16 (concurrency gate, call, post-hooks, result

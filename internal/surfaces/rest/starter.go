@@ -5,6 +5,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
@@ -28,6 +29,18 @@ type RunRequest struct {
 	Input         string
 	ModelID       string
 	AutonomyLevel string
+
+	// ExtraCatalog/ExtraLoadedTools are this RUN's own addition to the
+	// process-wide static catalog (README task 11.1) — resolved once at
+	// handleCreateRun time via Server.MCP, from the SAME admitted-server
+	// listing whose digest is already folded into this session's
+	// harness_digest (server.go's own mcpCatalogDigest). cmd/nexusd's
+	// kernelRunStarter appends these to its base catalog/loadedTools
+	// before building kernel.RunConfig — additive, the same shape
+	// MemorySources already uses for a per-run addition to a base config.
+	// Every pre-Phase-11 caller leaves both nil, which is a no-op append.
+	ExtraCatalog     []provider.ToolSchema
+	ExtraLoadedTools []string
 }
 
 // RunEvent is one item from the channel StartRun returns — store.Event

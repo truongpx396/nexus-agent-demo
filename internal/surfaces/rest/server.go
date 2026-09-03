@@ -82,7 +82,23 @@ type Server struct {
 	Outbox       *surfaces.Outbox
 	OutboxSender surfaces.Sender
 
+	// MCP, if set, resolves one tenant's admitted MCP tool set at
+	// session-creation time (README task 11.1) — nil leaves it unmounted,
+	// which every pre-Phase-11 caller and test still gets. Unlike
+	// CatalogManifestDigest (process-wide, fixed at startup), a tenant's
+	// MCP catalog is per-tenant and per-user (an oauth_connector-authed
+	// server authenticates as the calling user), so it's resolved fresh
+	// per run the same way Skills already is.
+	MCP MCPPort
+
 	broker *broker
+}
+
+// MCPPort is the seam between this surface and internal/surfaces/mcp — the
+// same nil-valid-optional-interface idiom SkillSetPort/RunCtlPort/
+// OversightPort already use.
+type MCPPort interface {
+	Resolve(ctx context.Context, tenantID, userID uuid.UUID) (schemas []provider.ToolSchema, digest []byte, err error)
 }
 
 // SkillSetPort is the seam between this surface and internal/skills — the
@@ -223,12 +239,29 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Task 11.1: resolved as THIS request's own userID (an oauth_connector-
+	// authed MCP server authenticates as the calling user, never a service
+	// account) — one call gets both the extra model-visible catalog
+	// entries and the digest folded into harness_digest below, so the two
+	// can never silently disagree (mcp.Port.Resolve's own doc comment).
+	var mcpCatalog []provider.ToolSchema
+	var mcpCatalogDigest []byte
+	if s.MCP != nil {
+		var derr error
+		mcpCatalog, mcpCatalogDigest, derr = s.MCP.Resolve(r.Context(), tenantID, userID)
+		if derr != nil {
+			http.Error(w, "resolve MCP catalog: "+derr.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
 	sessionID := uuid.New()
 	digest := harness.Digest(harness.Config{
 		SystemPromptVersion:   "phase2-v1",
 		CatalogManifestDigest: s.CatalogManifestDigest,
 		SkillSetDigest:        skillSetDigest,
 		PromptMode:            "phase2-single-shot",
+		MCPCatalogDigest:      mcpCatalogDigest,
 	})
 
 	var dek crypto.DEK
@@ -271,13 +304,19 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	mcpLoadedTools := make([]string, len(mcpCatalog))
+	for i, c := range mcpCatalog {
+		mcpLoadedTools[i] = c.Name
+	}
 	req2 := RunRequest{
-		SessionID:     sessionID,
-		TenantID:      tenantID,
-		Seal:          sealFuncFor(dek, tenantID, sessionID),
-		Input:         req.Input,
-		ModelID:       route.ModelID,
-		AutonomyLevel: autonomy,
+		SessionID:        sessionID,
+		TenantID:         tenantID,
+		Seal:             sealFuncFor(dek, tenantID, sessionID),
+		Input:            req.Input,
+		ModelID:          route.ModelID,
+		AutonomyLevel:    autonomy,
+		ExtraCatalog:     mcpCatalog,
+		ExtraLoadedTools: mcpLoadedTools,
 	}
 	events, err := s.Starter.StartRun(context.Background(), req2) // a run outlives the HTTP request that started it
 	if err != nil {

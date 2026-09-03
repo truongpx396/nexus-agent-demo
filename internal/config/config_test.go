@@ -18,6 +18,27 @@ func TestDefaultFor_Unconfigured(t *testing.T) {
 	if len(c.AdmittedSkillIDs) != 0 {
 		t.Errorf("defaultFor(%s).AdmittedSkillIDs = %v, want empty", tenantID, c.AdmittedSkillIDs)
 	}
+	if len(c.AdmittedConnectorProviders) != 0 {
+		t.Errorf("defaultFor(%s).AdmittedConnectorProviders = %v, want empty", tenantID, c.AdmittedConnectorProviders)
+	}
+}
+
+func TestTenantConfig_HasConnectorProvider(t *testing.T) {
+	c := TenantConfig{AdmittedConnectorProviders: []string{"google", "github"}}
+	cases := []struct {
+		provider string
+		want     bool
+	}{
+		{"google", true},
+		{"github", true},
+		{"slack", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		if got := c.HasConnectorProvider(tc.provider); got != tc.want {
+			t.Errorf("HasConnectorProvider(%q) = %v, want %v", tc.provider, got, tc.want)
+		}
+	}
 }
 
 func TestTenantConfig_HasSkill(t *testing.T) {

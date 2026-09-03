@@ -28,10 +28,12 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
+	"golang.org/x/oauth2"
 
 	"github.com/truongpx396/nexus-agent-demo/evals"
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
 	"github.com/truongpx396/nexus-agent-demo/internal/config"
+	"github.com/truongpx396/nexus-agent-demo/internal/connectors"
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/delegate"
@@ -51,7 +53,12 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/skills"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces"
+	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/cron"
+	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/email"
+	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/mcp"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
+	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/telegram"
+	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/zalo"
 	"github.com/truongpx396/nexus-agent-demo/internal/teams"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools/builtin"
@@ -186,15 +193,22 @@ func serve(ctx context.Context) error {
 	signer := audit.NewSignerClient(envOr("NEXUS_SIGNERD_SOCKET", defaultSignerdSocket))
 	chain := audit.NewChain(signer)
 
+	// Moved ahead of newToolPipeline (Phase 2's own original ordering had
+	// this after) — Phase 11's connectors.Vault needs a live Redis client
+	// for its bounded-TTL OAuth state, and newToolPipeline needs the Vault
+	// itself to wire platform/connector_fetch and the MCP dynamic resolver.
+	redisClient := redis.NewClient(&redis.Options{Addr: envOr("NEXUS_REDIS_ADDR", defaultRedisAddr)})
+
+	vault := &connectors.Vault{Store: st, Keys: keyStore, Providers: newConnectorRegistry(), Redis: redisClient}
+
 	delegations := delegate.NewDelegations(st, keyStore, chain)
 	teamsSvc := teams.NewService(st, keyStore, chain)
-	pipeline, catalog, catalogManifestDigest, admittedSkillBundles := newToolPipeline(st, keyStore, chain, delegations, teamsSvc)
+	pipeline, catalog, catalogManifestDigest, admittedSkillBundles, mcpPort := newToolPipeline(st, keyStore, chain, delegations, teamsSvc, vault)
 	loadedTools := make([]string, len(catalog))
 	for i, c := range catalog {
 		loadedTools[i] = c.Name
 	}
 
-	redisClient := redis.NewClient(&redis.Options{Addr: envOr("NEXUS_REDIS_ADDR", defaultRedisAddr)})
 	gate := cost.NewGate(st, redisClient, cost.DefaultMeters(), cost.GateConfig{})
 
 	approvals := oversight.NewApprovals(st, keyStore, chain)
@@ -258,6 +272,7 @@ func serve(ctx context.Context) error {
 	srv.Grants = grants
 	srv.RunCtl = &nexusdRunCtlPort{ctl: ctl}
 	srv.Skills = &nexusdSkillSetPort{store: st, bundles: admittedSkillBundles}
+	srv.MCP = mcpPort
 	srv.Outbox = &surfaces.Outbox{Store: st, Keys: keyStore, Chain: chain}
 	srv.OutboxSender = slogSender{}
 
@@ -270,9 +285,43 @@ func serve(ctx context.Context) error {
 	stopWorkers := startQueueWorkers(ctx, st, redisClient, ctl, delegations, teamsSvc)
 	defer stopWorkers()
 
+	// Phase 11: four more thin surfaces over the same kernel (README §11) —
+	// each gets the SAME session-creation-then-StartRun sequence REST uses,
+	// via its own local *StarterAdapter wrapping the one starter every
+	// surface shares.
+	channels := &MessagingChannels{Store: st, Keys: keyStore}
+	outbox := &surfaces.Outbox{Store: st, Keys: keyStore, Chain: chain}
+
+	telegramSrv := &telegram.Server{
+		Store: st, KeyStore: keyStore, Starter: telegramStarterAdapter{k: starter}, Channels: channels,
+		CatalogManifestDigest: catalogManifestDigest, Outbox: outbox,
+		RateLimit: telegram.NewRateLimiter(20, time.Minute),
+	}
+	zaloSrv := &zalo.Server{
+		Store: st, KeyStore: keyStore, Starter: zaloStarterAdapter{k: starter}, Channels: channels,
+		CatalogManifestDigest: catalogManifestDigest, Outbox: outbox,
+		RateLimit: zalo.NewRateLimiter(20, time.Minute),
+	}
+	emailSrv := &email.Server{
+		Store: st, KeyStore: keyStore, Starter: emailStarterAdapter{k: starter}, Channels: channels,
+		CatalogManifestDigest: catalogManifestDigest, Outbox: outbox,
+		RateLimit: email.NewRateLimiter(20, time.Minute),
+	}
+	scheduler := &cron.Scheduler{
+		Store: st, KeyStore: keyStore, Starter: cronStarterAdapter{k: starter}, Tenants: adminTenantLister{},
+		CatalogManifestDigest: catalogManifestDigest,
+	}
+	go scheduler.Run(ctx)
+
+	mux := http.NewServeMux()
+	mux.Handle("/v1/webhooks/telegram/", telegramSrv.Handler())
+	mux.Handle("/v1/webhooks/zalo/", zaloSrv.Handler())
+	mux.Handle("/v1/webhooks/email/", emailSrv.Handler())
+	mux.Handle("/", srv.Handler())
+
 	addr := envOr("NEXUS_HTTP_ADDR", ":8080")
 	fmt.Printf("listening on %s (provider=%s)\n", addr, envOr("NEXUS_PROVIDER", "fake"))
-	return http.ListenAndServe(addr, srv.Handler()) //nolint:gosec // dev/demo server; timeouts are a hardening task, not a Phase 2 one
+	return http.ListenAndServe(addr, mux) //nolint:gosec // dev/demo server; timeouts are a hardening task, not a Phase 2 one
 }
 
 // stuckDetectionWindow is internal/reliability.NewRegistry's window (README
@@ -890,7 +939,7 @@ func newProvider() (provider.Provider, error) {
 // Ledger/Spawner fields are satisfied by delegations/nexusdDelegationSpawner
 // immediately — Wire only needs to land before the FIRST real dispatch,
 // which is well after serve() finishes wiring everything.
-func newToolPipeline(st *store.Store, keyStore *crypto.KeyStore, chain *audit.Chain, delegations *delegate.Delegations, teamsSvc *teams.Service) (*tools.Pipeline, []provider.ToolSchema, []byte, []skills.SkillBundle) {
+func newToolPipeline(st *store.Store, keyStore *crypto.KeyStore, chain *audit.Chain, delegations *delegate.Delegations, teamsSvc *teams.Service, vault *connectors.Vault) (*tools.Pipeline, []provider.ToolSchema, []byte, []skills.SkillBundle, *mcp.Port) {
 	reg := tools.NewRegistry()
 	if err := reg.DeclareNamespace("platform", "nexusd"); err != nil {
 		fatalf("declare platform namespace: %v", err)
@@ -898,7 +947,15 @@ func newToolPipeline(st *store.Store, keyStore *crypto.KeyStore, chain *audit.Ch
 
 	skillCatalog, admittedBundles, scriptTools := loadSkillCatalog(reg)
 
+	// NEXUS_WEB_FETCH_ALLOWLIST is the ONE egress allowlist README task
+	// 5.13 established, extended by task 11.9 to cover platform/
+	// connector_fetch's own outbound calls and every admitted MCP server's
+	// base_url — reusing hostAllowed's fail-closed semantics rather than a
+	// second allowlist mechanism per host class.
 	webFetchAllowlist := strings.Split(envOr("NEXUS_WEB_FETCH_ALLOWLIST", ""), ",")
+
+	mcpResolver := &mcp.Resolver{Store: st, Keys: keyStore, Tokens: vault, AllowedHosts: webFetchAllowlist}
+	mcpPort := &mcp.Port{Resolver: mcpResolver}
 
 	builtinTools := []tools.Tool{
 		builtin.FileRead{},
@@ -929,6 +986,7 @@ func newToolPipeline(st *store.Store, keyStore *crypto.KeyStore, chain *audit.Ch
 		builtin.ClaimCard{Resolver: nexusdBoardAdapter{teams: teamsSvc}, Claimer: nexusdBoardAdapter{teams: teamsSvc}},
 		builtin.WriteCard{Resolver: nexusdBoardAdapter{teams: teamsSvc}, Writer: nexusdBoardAdapter{teams: teamsSvc}},
 		builtin.UpdateCardStatus{Resolver: nexusdBoardAdapter{teams: teamsSvc}, Updater: nexusdBoardAdapter{teams: teamsSvc}},
+		builtin.ConnectorFetch{Tokens: vault, Sessions: nexusdSessionLookup{store: st}, AllowedHosts: webFetchAllowlist},
 	}
 	var toolRefs []string
 	var catalog []provider.ToolSchema
@@ -981,8 +1039,74 @@ func newToolPipeline(st *store.Store, keyStore *crypto.KeyStore, chain *audit.Ch
 		// before a Control (which needs the *kernel.Kernel this very
 		// pipeline feeds into) exists.
 		Claims: runctl.NewClaimTracker(st, keyStore, chain),
+		// Dynamic (README task 11.1): a ref the static Manifest above
+		// doesn't know about — every per-tenant MCP tool, by construction
+		// — falls through to mcpResolver instead of failing immediately.
+		Dynamic: mcpResolver,
 	})
-	return pipeline, catalog, manifest.Digest, admittedBundles
+	return pipeline, catalog, manifest.Digest, admittedBundles, mcpPort
+}
+
+// nexusdSessionLookup implements builtin.SessionUserLookup — the one place
+// platform/connector_fetch re-derives WHO is calling from the durable
+// session row rather than trusting a client-claimed identity.
+type nexusdSessionLookup struct{ store *store.Store }
+
+func (l nexusdSessionLookup) UserIDForSession(ctx context.Context, tenantID, sessionID uuid.UUID) (uuid.UUID, error) {
+	var userID uuid.UUID
+	err := l.store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+		sess, err := store.GetSession(ctx, tx, sessionID)
+		if err != nil {
+			return err
+		}
+		userID = sess.UserID
+		return nil
+	})
+	return userID, err
+}
+
+// newConnectorRegistry builds internal/connectors.Registry from
+// NEXUS_OAUTH_PROVIDERS (comma-separated provider names) and, per name,
+// NEXUS_OAUTH_<NAME>_{CLIENT_ID,CLIENT_SECRET,AUTH_URL,TOKEN_URL,
+// REDIRECT_URL,SCOPES} — fully generic rather than hardcoding any specific
+// provider's endpoint, the same "config, not forks" discipline
+// tenant_configs' own admitted-set columns already follow. Which
+// PROVIDERS EXIST is this process-wide config; which providers a given
+// TENANT may actually use is config.TenantConfig.AdmittedConnectorProviders
+// (internal/connectors.Vault.BeginAuth's own second check). An unset
+// NEXUS_OAUTH_PROVIDERS registers nothing — the honest empty default this
+// codebase's other optional integrations (skills signing, sandboxing) also
+// use.
+func newConnectorRegistry() *connectors.Registry {
+	names := strings.Split(envOr("NEXUS_OAUTH_PROVIDERS", ""), ",")
+	var providers []connectors.Provider
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		upper := strings.ToUpper(name)
+		clientID := envOr("NEXUS_OAUTH_"+upper+"_CLIENT_ID", "")
+		if clientID == "" {
+			continue // unconfigured — skip rather than register a provider that can never exchange a code
+		}
+		var scopes []string
+		if raw := envOr("NEXUS_OAUTH_"+upper+"_SCOPES", ""); raw != "" {
+			scopes = strings.Split(raw, ",")
+		}
+		providers = append(providers, connectors.Provider{
+			Name:         name,
+			ClientID:     clientID,
+			ClientSecret: envOr("NEXUS_OAUTH_"+upper+"_CLIENT_SECRET", ""),
+			RedirectURL:  envOr("NEXUS_OAUTH_"+upper+"_REDIRECT_URL", ""),
+			Scopes:       scopes,
+			Endpoint: oauth2.Endpoint{
+				AuthURL:  envOr("NEXUS_OAUTH_"+upper+"_AUTH_URL", ""),
+				TokenURL: envOr("NEXUS_OAUTH_"+upper+"_TOKEN_URL", ""),
+			},
+		})
+	}
+	return connectors.NewRegistry(providers...)
 }
 
 // loadSkillCatalog reads NEXUS_SKILLS_ROOT (default .dev/skills, same
@@ -1159,6 +1283,18 @@ func (a *kernelRunStarter) StartRun(ctx context.Context, req rest.RunRequest) (<
 		memorySources = snap.SourceIDs
 	}
 
+	// Task 11.1: a run's own MCP catalog addition (rest.RunRequest's own
+	// doc comment) is appended to the process-wide base catalog/loadedTools
+	// here — additive, the same shape memorySources already is for a
+	// per-run addition to a base config. Every pre-Phase-11 caller leaves
+	// both nil, so append is a no-op and this path is unchanged for them.
+	catalog := a.catalog
+	loadedTools := a.loadedTools
+	if len(req.ExtraCatalog) > 0 {
+		catalog = append(append([]provider.ToolSchema{}, a.catalog...), req.ExtraCatalog...)
+		loadedTools = append(append([]string{}, a.loadedTools...), req.ExtraLoadedTools...)
+	}
+
 	st := &kernel.RunState{
 		TenantID:  req.TenantID,
 		SessionID: req.SessionID,
@@ -1166,8 +1302,8 @@ func (a *kernelRunStarter) StartRun(ctx context.Context, req rest.RunRequest) (<
 	}
 	cfg := kernel.RunConfig{
 		System:        system,
-		Catalog:       a.catalog,
-		LoadedTools:   a.loadedTools,
+		Catalog:       catalog,
+		LoadedTools:   loadedTools,
 		MemorySources: memorySources,
 		ModelID:       req.ModelID,
 		MaxTurns:      a.maxTurns,
