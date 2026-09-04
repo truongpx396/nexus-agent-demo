@@ -102,6 +102,35 @@ type Provider interface {
 	Stream(ctx context.Context, p Prompt, tools []ToolSchema, rc RunContext) (Stream, error)
 }
 
+// Embedding is one text's dense vector representation. A fixed width per
+// Embedder implementation — internal/provider/fake's deterministic fake
+// (README task 12.5) documents its own width as
+// internal/retrieval.EmbeddingDimensions, and migrations/0022_retrieval.sql's
+// `vector(32)` column is sized to match it exactly.
+type Embedding []float32
+
+// EmbedUsage is an Embed call's metered usage — one dimension, unlike
+// Usage's four-way chat split, because an embedding call has no output
+// tokens and no cache to measure (README task 12.4: "embedding calls ...
+// are metered", not "metered identically to a chat call").
+type EmbedUsage struct {
+	Tokens int
+}
+
+// Embedder is the second model-call port this package exposes (README task
+// 12.4, pattern #64/#67's own "reuses the Provider port" framing): embedding
+// is a distinct capability from chat completion — no tool calling, no
+// streaming, a different usage shape — so it gets its own narrow interface
+// rather than an optional method bolted onto Provider. Every call is
+// metered through internal/cost.Gate exactly like Provider.Stream
+// (tests/contract's AST check, extended from task 4.8's original to cover
+// this call site too); internal/provider/fake ships the only implementation
+// this demo needs (task 12.5 — "no correctness test calls a live embedding
+// model").
+type Embedder interface {
+	Embed(ctx context.Context, texts []string, rc RunContext) ([]Embedding, EmbedUsage, error)
+}
+
 // ThrottleError is returned by Stream itself (never via the Stream it would
 // have returned) when the provider refuses the call outright — the
 // Phase-2 failover taxonomy classifies this as retryable.

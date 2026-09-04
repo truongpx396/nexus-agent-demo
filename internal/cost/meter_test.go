@@ -29,14 +29,14 @@ func TestRegistry_LookupKnownAndUnknown(t *testing.T) {
 func TestRegistry_All(t *testing.T) {
 	r := DefaultMeters()
 	all := r.All()
-	if len(all) != 6 {
-		t.Fatalf("All() returned %d meters, want 6", len(all))
+	if len(all) != 7 {
+		t.Fatalf("All() returned %d meters, want 7", len(all))
 	}
 	seen := map[MeterID]bool{}
 	for _, m := range all {
 		seen[m.ID] = true
 	}
-	for _, want := range []MeterID{MeterInputUncached, MeterInputCacheRead, MeterInputCacheWrite, MeterOutput, MeterSandboxSeconds, MeterToolInvocations} {
+	for _, want := range []MeterID{MeterInputUncached, MeterInputCacheRead, MeterInputCacheWrite, MeterOutput, MeterEmbeddingTokens, MeterSandboxSeconds, MeterToolInvocations} {
 		if !seen[want] {
 			t.Errorf("All() missing meter %q", want)
 		}

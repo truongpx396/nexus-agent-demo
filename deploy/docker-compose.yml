@@ -2,7 +2,12 @@ name: nexus-agent-demo
 
 services:
   postgres:
-    image: postgres:17
+    # pgvector/pgvector:pg17, not postgres:17: Phase 12 (README §5) adds the
+    # pgvector extension back in (migrations/0022_retrieval.sql's `CREATE
+    # EXTENSION vector`) — this image is a drop-in superset of the official
+    # postgres:17 image with that extension pre-built in, nothing else
+    # about the service changes.
+    image: pgvector/pgvector:pg17
     environment:
       POSTGRES_USER: nexus
       POSTGRES_PASSWORD: nexus

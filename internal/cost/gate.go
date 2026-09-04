@@ -42,6 +42,13 @@ const (
 	PurposeHookPrompt  Purpose = "hook_prompt"
 	PurposeJudge       Purpose = "judge"
 	PurposeTitle       Purpose = "title"
+
+	// PurposeEmbedding is README task 12.4's real call site: unlike the
+	// stub purposes above, internal/retrieval.Retriever.Search actually
+	// calls Reserve with this purpose before every provider.Embedder.Embed
+	// call — the embedding call site tests/contract's AST check (extended
+	// from task 4.8's original) verifies is never reachable unmetered.
+	PurposeEmbedding Purpose = "embedding"
 )
 
 // ReserveRequest is everything Reserve needs to estimate and check a
@@ -85,6 +92,15 @@ type GateConfig struct {
 	MaxInputTokenEstimate  int64
 	MaxOutputTokenEstimate int64
 
+	// MaxEmbeddingTokenEstimate is the same worst-case-ceiling idea applied
+	// to a PurposeEmbedding reservation (task 12.4): one fixed, documented
+	// per-call ceiling regardless of how many texts a given Embed call
+	// happens to batch — Reserve has never sized itself off the ACTUAL
+	// prompt either (MaxInputTokenEstimate above is fixed for the same
+	// reason), so embeddings inherit that same pre-call-not-post-call
+	// philosophy rather than inventing a new one.
+	MaxEmbeddingTokenEstimate int64
+
 	// DegradeThresholdPercent: a reservation that pushes either ceiling's
 	// spend to at least this percent (integer, e.g. 80) — without going
 	// over — resolves DecisionDegrade instead of DecisionAllow. Integer
@@ -103,6 +119,9 @@ func (c GateConfig) withDefaults() GateConfig {
 	}
 	if c.MaxOutputTokenEstimate <= 0 {
 		c.MaxOutputTokenEstimate = 4_096
+	}
+	if c.MaxEmbeddingTokenEstimate <= 0 {
+		c.MaxEmbeddingTokenEstimate = 8_000
 	}
 	if c.DegradeThresholdPercent <= 0 {
 		c.DegradeThresholdPercent = 80
@@ -178,7 +197,7 @@ func (g *Gate) Reserve(ctx context.Context, req ReserveRequest) (Reservation, er
 	if err != nil {
 		return g.refuse(ctx, res, nil, zero, "price book unavailable (fail closed): "+err.Error())
 	}
-	worst, err := g.worstCaseCost(pb, req.ModelID)
+	worst, err := g.worstCaseCost(pb, req.ModelID, req.Purpose)
 	if err != nil {
 		return g.refuse(ctx, res, nil, zero, "cannot price a worst-case reservation (fail closed): "+err.Error())
 	}
@@ -345,6 +364,68 @@ func (g *Gate) Reconcile(ctx context.Context, res Reservation, usage provider.Us
 		}
 	}
 
+	return g.finishReconcile(ctx, res, actual)
+}
+
+// ReconcileEmbedding is Reconcile's counterpart for a PurposeEmbedding
+// reservation (task 12.4): a single meter (MeterEmbeddingTokens) priced off
+// the real token count internal/provider.EmbedUsage reports, rather than
+// Reconcile's four-way chat split — an embedding call has nothing to split.
+// reported=false is the same UNREPORTED case Reconcile's own doc comment
+// describes: charge the full reserved worst case rather than assume a
+// failed call was free.
+func (g *Gate) ReconcileEmbedding(ctx context.Context, res Reservation, tokensUsed int, reported bool) error {
+	subject := res.ModelID
+	if subject == "" {
+		subject = WildcardSubject
+	}
+
+	var records []CostRecord
+	actual := Money{Currency: g.cfg.Currency}
+
+	if !reported {
+		actual = res.Decision.Reserved
+		if actual.Currency == "" {
+			actual.Currency = g.cfg.Currency
+		}
+		records = []CostRecord{{
+			Meter: MeterUnreportedReservation, Quantity: 1, Unit: "reservation",
+			ModelID: res.ModelID, Unreported: true, ReservationID: &res.ID, Cost: actual,
+		}}
+	} else if tokensUsed > 0 {
+		pb, err := g.priceBookFor(ctx, res.TenantID)
+		if err != nil {
+			return fmt.Errorf("cost: reconcile embedding: price book unavailable: %w", err)
+		}
+		c, err := pb.Cost(MeterEmbeddingTokens, subject, int64(tokensUsed), time.Now())
+		if err != nil {
+			return fmt.Errorf("cost: reconcile embedding: %w", err)
+		}
+		records = []CostRecord{{
+			Meter: MeterEmbeddingTokens, Quantity: int64(tokensUsed), Unit: "tokens",
+			ModelID: res.ModelID, ReservationID: &res.ID, Cost: c,
+		}}
+		actual = c
+	}
+
+	if len(records) > 0 {
+		if err := g.store.InTenantTx(ctx, res.TenantID, func(ctx context.Context, tx pgx.Tx) error {
+			return RecordUsage(ctx, tx, res.TenantID, res.SessionID, records)
+		}); err != nil {
+			return fmt.Errorf("cost: reconcile embedding: %w", err)
+		}
+	}
+
+	return g.finishReconcile(ctx, res, actual)
+}
+
+// finishReconcile is Reconcile and ReconcileEmbedding's shared tail: release
+// the unused portion of what Reserve reserved (worst case minus actual)
+// against whichever budget(s) backed the reservation. Both callers have
+// already durably recorded their own CostRecords before reaching here —
+// this only ever touches the reservation counters, never cost_records
+// again.
+func (g *Gate) finishReconcile(ctx context.Context, res Reservation, actual Money) error {
 	if res.Decision.Kind == DecisionSkip || res.Decision.Kind == DecisionRefuseCeiling {
 		return nil // nothing was reserved against a counter to release
 	}
@@ -405,12 +486,21 @@ func (g *Gate) Record(ctx context.Context, tenantID, sessionID uuid.UUID, meter 
 
 // --- internal helpers ---
 
-func (g *Gate) worstCaseCost(pb *PriceBook, modelID string) (Money, error) {
+func (g *Gate) worstCaseCost(pb *PriceBook, modelID string, purpose Purpose) (Money, error) {
 	subject := modelID
 	if subject == "" {
 		subject = WildcardSubject
 	}
 	now := time.Now()
+
+	// An embedding call has no output half and no cache to price around —
+	// task 12.4's worst case is just its one reservable meter, sized off
+	// MaxEmbeddingTokenEstimate exactly the way the chat path below is
+	// sized off MaxInputTokenEstimate/MaxOutputTokenEstimate.
+	if purpose == PurposeEmbedding {
+		return pb.Cost(MeterEmbeddingTokens, subject, g.cfg.MaxEmbeddingTokenEstimate, now)
+	}
+
 	// Worst case assumes NO cache benefit — the whole estimated input
 	// priced as MeterInputUncached, never InputCacheRead — because a
 	// reservation exists to bound the call BEFORE the provider tells us

@@ -30,6 +30,14 @@ const (
 	MeterSandboxSeconds  MeterID = "sandbox_seconds"
 	MeterToolInvocations MeterID = "tool_invocations"
 
+	// MeterEmbeddingTokens is README task 12.4's own meter: "embedding calls
+	// routed through the same Provider port and BudgetGate.Reserve —
+	// indexing is metered, never off the paying loop." Reservable, like the
+	// chat token family — an embedding call is priced and reserved BEFORE
+	// it happens, exactly like a chat call, just against a single meter
+	// instead of four (no cache, no output half).
+	MeterEmbeddingTokens MeterID = "embedding_tokens"
+
 	// MeterUnreportedReservation is not a real usage dimension — it is
 	// never Reserved against and never appears in DefaultMeters(). Reconcile
 	// (gate.go) uses it as the cost_records label for the one case task 4.7
@@ -67,6 +75,7 @@ func DefaultMeters() *Registry {
 		{ID: MeterInputCacheRead, Unit: "tokens", Reservable: true},
 		{ID: MeterInputCacheWrite, Unit: "tokens", Reservable: true},
 		{ID: MeterOutput, Unit: "tokens", Reservable: true},
+		{ID: MeterEmbeddingTokens, Unit: "tokens", Reservable: true},
 		{ID: MeterSandboxSeconds, Unit: "seconds", Reservable: false},
 		{ID: MeterToolInvocations, Unit: "count", Reservable: false},
 	} {
@@ -90,7 +99,7 @@ func (r *Registry) Lookup(id MeterID) (Meter, bool) {
 func (r *Registry) All() []Meter {
 	order := []MeterID{
 		MeterInputUncached, MeterInputCacheRead, MeterInputCacheWrite, MeterOutput,
-		MeterSandboxSeconds, MeterToolInvocations,
+		MeterEmbeddingTokens, MeterSandboxSeconds, MeterToolInvocations,
 	}
 	out := make([]Meter, 0, len(order))
 	for _, id := range order {
