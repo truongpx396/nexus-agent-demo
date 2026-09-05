@@ -67,17 +67,60 @@ func (p *Provider) maxTokens() int {
 // --- request shapes (the subset of the Messages API this adapter uses) ---
 
 type messagesRequest struct {
-	Model     string        `json:"model"`
-	MaxTokens int           `json:"max_tokens"`
-	System    string        `json:"system,omitempty"`
-	Messages  []anthMessage `json:"messages"`
-	Tools     []anthTool    `json:"tools,omitempty"`
-	Stream    bool          `json:"stream"`
+	Model     string          `json:"model"`
+	MaxTokens int             `json:"max_tokens"`
+	System    []anthTextBlock `json:"system,omitempty"`
+	Messages  []anthMessage   `json:"messages"`
+	Tools     []anthTool      `json:"tools,omitempty"`
+	Stream    bool            `json:"stream"`
+	Thinking  *anthThinking   `json:"thinking,omitempty"`
+}
+
+// anthTextBlock is System's element shape (README task 13.5, closing F4):
+// one block with an ephemeral cache_control breakpoint on it caches
+// everything before and including it — tools -> system -> messages is the
+// API's render order, and Tools is already deterministically sorted
+// (internal/tools/manifest.go), so one breakpoint here covers both the
+// stable tool catalog and the stable system prompt.
+type anthTextBlock struct {
+	Type         string            `json:"type"`
+	Text         string            `json:"text"`
+	CacheControl *anthCacheControl `json:"cache_control,omitempty"`
+}
+
+type anthCacheControl struct {
+	Type string `json:"type"`
+}
+
+// anthThinking requests extended/adaptive thinking (README task 13.7,
+// closing F7). Only {"type":"adaptive"} is ever sent by this adapter —
+// thinkingConfigFor decides which models get it.
+type anthThinking struct {
+	Type string `json:"type"`
 }
 
 type anthMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role    string             `json:"role"`
+	Content []anthContentBlock `json:"content"`
+}
+
+// anthContentBlock is the Anthropic Messages API's native content-block
+// shape (README task 13.4, closing F5) — which fields are populated depends
+// on Type, mirroring provider.ContentBlock one-for-one.
+type anthContentBlock struct {
+	Type string `json:"type"`
+
+	Text      string `json:"text,omitempty"`      // text
+	Thinking  string `json:"thinking,omitempty"`  // thinking
+	Signature string `json:"signature,omitempty"` // thinking — echoed back verbatim
+
+	ID    string          `json:"id,omitempty"`    // tool_use
+	Name  string          `json:"name,omitempty"`  // tool_use
+	Input json.RawMessage `json:"input,omitempty"` // tool_use
+
+	ToolUseID string `json:"tool_use_id,omitempty"` // tool_result
+	Content   string `json:"content,omitempty"`     // tool_result
+	IsError   bool   `json:"is_error,omitempty"`    // tool_result
 }
 
 type anthTool struct {
@@ -86,25 +129,63 @@ type anthTool struct {
 	InputSchema json.RawMessage `json:"input_schema,omitempty"`
 }
 
-// toAnthMessages projects the kernel's plain-text transcript onto the
-// Messages API's role-content shape. provider.Message has no structured
-// tool_result content block (internal/provider.Prompt is deliberately
-// minimal — see its doc comment); a "tool" role rides as a user-turn text
-// message with the pairing made explicit in the text itself. Native
-// structured tool_result blocks are a future adapter refinement, not a
-// Phase 2 task.
+// toAnthMessages projects provider.Message's typed content blocks onto the
+// Messages API's native role-content-blocks shape (README task 13.4,
+// closing F5) — a "tool" role always rides as a user-turn message carrying
+// tool_result blocks, exactly what the API expects; every other kind maps
+// 1:1 onto its Anthropic block type, preserving tool_use_id pairing and a
+// thinking block's signature all the way to the wire.
 func toAnthMessages(msgs []provider.Message) []anthMessage {
 	out := make([]anthMessage, 0, len(msgs))
 	for _, m := range msgs {
 		role := m.Role
-		text := m.Text
 		if role == "tool" {
 			role = "user"
-			text = "[tool_result] " + text
 		}
-		out = append(out, anthMessage{Role: role, Content: text})
+		blocks := make([]anthContentBlock, 0, len(m.Blocks))
+		for _, b := range m.Blocks {
+			switch b.Kind {
+			case provider.BlockText:
+				blocks = append(blocks, anthContentBlock{Type: "text", Text: b.Text})
+			case provider.BlockThinking:
+				blocks = append(blocks, anthContentBlock{Type: "thinking", Thinking: b.Text, Signature: b.Signature})
+			case provider.BlockToolUse:
+				blocks = append(blocks, anthContentBlock{Type: "tool_use", ID: b.ToolUseID, Name: b.ToolName, Input: b.Input})
+			case provider.BlockToolResult:
+				blocks = append(blocks, anthContentBlock{Type: "tool_result", ToolUseID: b.ToolUseID, Content: b.Text, IsError: b.IsError})
+			}
+		}
+		out = append(out, anthMessage{Role: role, Content: blocks})
 	}
 	return out
+}
+
+// toAnthSystem wraps the stable system prompt in a single block with an
+// ephemeral cache_control breakpoint (README task 13.5, closing F4) — the
+// wire-level half of the two-zone byte-stable prefix internal/promptctx
+// already builds; an empty system prompt sends no block at all (a
+// zero-length cached block is meaningless and some callers, e.g. the
+// condenser prompt, pass no system text).
+func toAnthSystem(system string) []anthTextBlock {
+	if system == "" {
+		return nil
+	}
+	return []anthTextBlock{{Type: "text", Text: system, CacheControl: &anthCacheControl{Type: "ephemeral"}}}
+}
+
+// thinkingConfigFor decides which models get adaptive thinking (README task
+// 13.7, closing F7). claude-sonnet-5 and claude-opus-5 both default to
+// adaptive thinking already and reject the legacy budget_tokens shape, so
+// this makes that explicit; claude-haiku-4-5 (and anything unrecognized)
+// gets no thinking config at all — the safe default, since Haiku still
+// requires a budget_tokens this adapter has no basis to guess.
+func thinkingConfigFor(model string) *anthThinking {
+	switch model {
+	case "claude-sonnet-5", "claude-opus-5":
+		return &anthThinking{Type: "adaptive"}
+	default:
+		return nil
+	}
 }
 
 func toAnthTools(schemas []provider.ToolSchema) []anthTool {
@@ -142,7 +223,12 @@ type sseEvent struct {
 		Type        string `json:"type"`
 		Text        string `json:"text"`
 		PartialJSON string `json:"partial_json"`
+		Thinking    string `json:"thinking"`
+		Signature   string `json:"signature"`
 		StopReason  string `json:"stop_reason"`
+		StopDetails struct {
+			Category string `json:"category"`
+		} `json:"stop_details"`
 	} `json:"delta"`
 	Usage sseUsage `json:"usage"`
 	Error struct {
@@ -186,10 +272,11 @@ func (p *Provider) Stream(ctx context.Context, prompt provider.Prompt, tools []p
 	reqBody := messagesRequest{
 		Model:     p.Model,
 		MaxTokens: p.maxTokens(),
-		System:    prompt.System,
+		System:    toAnthSystem(prompt.System),
 		Messages:  toAnthMessages(prompt.Messages),
 		Tools:     toAnthTools(tools),
 		Stream:    true,
+		Thinking:  thinkingConfigFor(p.Model),
 	}
 	raw, err := json.Marshal(reqBody)
 	if err != nil {
@@ -217,7 +304,10 @@ func (p *Provider) Stream(ctx context.Context, prompt provider.Prompt, tools []p
 		return nil, classifyAPIError(resp.StatusCode, eb)
 	}
 
-	return &stream{body: resp.Body, scanner: bufio.NewScanner(resp.Body), toolBlocks: map[int]*toolBlockState{}}, nil
+	return &stream{
+		body: resp.Body, scanner: bufio.NewScanner(resp.Body),
+		toolBlocks: map[int]*toolBlockState{}, thinkingBlocks: map[int]*thinkingBlockState{},
+	}, nil
 }
 
 type toolBlockState struct {
@@ -225,13 +315,30 @@ type toolBlockState struct {
 	json     bytes.Buffer
 }
 
+// thinkingBlockState accumulates one extended-thinking content block's
+// thinking_delta/signature_delta events (README task 13.7) — mirrors
+// toolBlockState's own per-index accumulate-until-content_block_stop shape.
+type thinkingBlockState struct {
+	thinking, signature strings.Builder
+}
+
+// thinkingOpaque is what a ChunkReasoning chunk's Opaque bytes decode as —
+// kernel/rehydrate.go's reasoningOpaque mirrors this field-for-field (same
+// JSON shape, independently defined per package, this codebase's usual
+// convention for a payload two packages agree on without sharing a type).
+type thinkingOpaque struct {
+	Thinking  string `json:"thinking"`
+	Signature string `json:"signature,omitempty"`
+}
+
 type stream struct {
-	body       io.ReadCloser
-	scanner    *bufio.Scanner
-	toolBlocks map[int]*toolBlockState
-	usage      provider.Usage
-	pending    []provider.Chunk // FIFO of chunks decoded from one SSE frame, drained before reading the next frame
-	closed     bool
+	body           io.ReadCloser
+	scanner        *bufio.Scanner
+	toolBlocks     map[int]*toolBlockState
+	thinkingBlocks map[int]*thinkingBlockState
+	usage          provider.Usage
+	pending        []provider.Chunk // FIFO of chunks decoded from one SSE frame, drained before reading the next frame
+	closed         bool
 }
 
 // Next decodes one SSE frame at a time from the response body, translating
@@ -276,8 +383,11 @@ func (s *stream) Next(ctx context.Context) (provider.Chunk, bool, error) {
 			s.usage.InputCacheWrite = evt.Message.Usage.CacheCreationInputTokens
 			s.usage.InputCacheRead = evt.Message.Usage.CacheReadInputTokens
 		case "content_block_start":
-			if evt.ContentBlock.Type == "tool_use" {
+			switch evt.ContentBlock.Type {
+			case "tool_use":
 				s.toolBlocks[evt.Index] = &toolBlockState{id: evt.ContentBlock.ID, name: evt.ContentBlock.Name}
+			case "thinking":
+				s.thinkingBlocks[evt.Index] = &thinkingBlockState{}
 			}
 		case "content_block_delta":
 			switch evt.Delta.Type {
@@ -286,6 +396,14 @@ func (s *stream) Next(ctx context.Context) (provider.Chunk, bool, error) {
 			case "input_json_delta":
 				if tb, ok := s.toolBlocks[evt.Index]; ok {
 					tb.json.WriteString(evt.Delta.PartialJSON)
+				}
+			case "thinking_delta":
+				if tb, ok := s.thinkingBlocks[evt.Index]; ok {
+					tb.thinking.WriteString(evt.Delta.Thinking)
+				}
+			case "signature_delta":
+				if tb, ok := s.thinkingBlocks[evt.Index]; ok {
+					tb.signature.WriteString(evt.Delta.Signature)
 				}
 			}
 		case "content_block_stop":
@@ -299,10 +417,20 @@ func (s *stream) Next(ctx context.Context) (provider.Chunk, bool, error) {
 				})
 				delete(s.toolBlocks, evt.Index)
 			}
+			if tb, ok := s.thinkingBlocks[evt.Index]; ok {
+				opaque, err := json.Marshal(thinkingOpaque{Thinking: tb.thinking.String(), Signature: tb.signature.String()})
+				if err != nil {
+					return provider.Chunk{}, false, fmt.Errorf("anthropic: marshal thinking block: %w", err)
+				}
+				s.pending = append(s.pending, provider.Chunk{Kind: provider.ChunkReasoning, Opaque: opaque})
+				delete(s.thinkingBlocks, evt.Index)
+			}
 		case "message_delta":
 			s.usage.OutputTokens = evt.Usage.OutputTokens
 			s.pending = append(s.pending, provider.Chunk{Kind: provider.ChunkUsage, Usage: s.usage})
-			s.pending = append(s.pending, provider.Chunk{Kind: provider.ChunkDone, Done: stopReasonToDone(evt.Delta.StopReason)})
+			s.pending = append(s.pending, provider.Chunk{
+				Kind: provider.ChunkDone, Done: stopReasonToDone(evt.Delta.StopReason), RefusalCategory: evt.Delta.StopDetails.Category,
+			})
 		case "message_stop":
 			s.closed = true
 			_ = s.body.Close()
@@ -319,6 +447,11 @@ func stopReasonToDone(reason string) provider.DoneReason {
 	switch reason {
 	case "max_tokens":
 		return provider.DoneMaxOutput
+	case "refusal":
+		// A policy decline (README task 13.7, closing F7) — never folded
+		// into DoneStop: a safety refusal must not read as a clean
+		// completion with empty content.
+		return provider.DoneRefusal
 	case "":
 		return provider.DoneStop
 	default: // "end_turn", "stop_sequence", "tool_use" all end this call normally

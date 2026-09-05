@@ -5,8 +5,7 @@ const STORAGE_KEY = "nexus-web-settings";
 
 const DEFAULT_SETTINGS: Settings = {
   baseUrl: "http://localhost:8080",
-  tenantId: "",
-  userId: "",
+  token: "",
 };
 
 function loadSettings(): Settings {
@@ -37,10 +36,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
   const setSettings = (next: Settings) => setSettingsState(next);
 
-  const isConfigured = useMemo(
-    () => Boolean(settings.baseUrl && settings.tenantId && settings.userId),
-    [settings],
-  );
+  const isConfigured = useMemo(() => Boolean(settings.baseUrl && settings.token), [settings]);
 
   return (
     <SettingsContext.Provider value={{ settings, setSettings, isConfigured }}>

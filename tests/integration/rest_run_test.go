@@ -33,6 +33,7 @@ import (
 	tcnetwork "github.com/testcontainers/testcontainers-go/network"
 	"github.com/testcontainers/testcontainers-go/wait"
 
+	"github.com/truongpx396/nexus-agent-demo/internal/authn"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
@@ -41,6 +42,19 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 	"github.com/truongpx396/nexus-agent-demo/migrations"
 )
+
+// mustIssueToken mints a bearer token authenticating (tenantID, userID)
+// against issuer — the same DevIssuer/DevVerifier pair README task 13.1
+// wires into cmd/nexusd's serve(), standing in here for the header pair
+// this test used to set directly before real AuthN existed.
+func mustIssueToken(t *testing.T, issuer *authn.DevIssuer, tenantID, userID uuid.UUID) string {
+	t.Helper()
+	tok, err := issuer.Issue(tenantID, userID, time.Hour)
+	if err != nil {
+		t.Fatalf("issue test token: %v", err)
+	}
+	return tok
+}
 
 // setupPostgresAndPgBouncer starts postgres + pgbouncer (transaction
 // pooling) on a shared Docker network and returns a pgxpool connected
@@ -59,7 +73,10 @@ func setupPostgresAndPgBouncer(t *testing.T) (appPool *pgxpool.Pool, cleanup fun
 	}
 
 	pgReq := testcontainers.ContainerRequest{
-		Image:        "postgres:17",
+		// pgvector/pgvector:pg17, not postgres:17: migrations/0022_retrieval.sql
+		// (Phase 12) needs `CREATE EXTENSION vector`, exactly like
+		// deploy/docker-compose.yml's own postgres service (see its comment).
+		Image:        "pgvector/pgvector:pg17",
 		ExposedPorts: []string{"5432/tcp"},
 		Env: map[string]string{
 			"POSTGRES_USER":     "nexus",
@@ -263,7 +280,17 @@ func TestRESTRunEndToEnd(t *testing.T) {
 		Store:    st,
 	}}
 
+	signingKey, err := authn.GeneratePrivateKey()
+	if err != nil {
+		t.Fatalf("generate test signing key: %v", err)
+	}
+	issuer := authn.NewDevIssuer(signingKey)
+	verifier := authn.NewDevVerifier(authn.PublicKey(signingKey))
+	token := mustIssueToken(t, issuer, tenantID, userID)
+	wrongUserToken := mustIssueToken(t, issuer, tenantID, uuid.New())
+
 	srv := rest.NewServer(starter, st, keyStore, nil)
+	srv.Verifier = verifier
 	httpSrv := httptest.NewServer(srv.Handler())
 	defer httpSrv.Close()
 
@@ -271,8 +298,7 @@ func TestRESTRunEndToEnd(t *testing.T) {
 
 	// POST /v1/runs
 	createReq, _ := http.NewRequest(http.MethodPost, httpSrv.URL+"/v1/runs", strings.NewReader(`{"input":"do the thing"}`))
-	createReq.Header.Set("X-Nexus-Tenant-ID", tenantID.String())
-	createReq.Header.Set("X-Nexus-User-ID", userID.String())
+	createReq.Header.Set("Authorization", "Bearer "+token)
 	createReq.Header.Set("content-type", "application/json")
 	createResp, err := client.Do(createReq)
 	if err != nil {
@@ -292,8 +318,7 @@ func TestRESTRunEndToEnd(t *testing.T) {
 	// GET /v1/runs/{id}/events (SSE) — audience check with the WRONG user
 	// must be refused before we even try the real one.
 	wrongReq, _ := http.NewRequest(http.MethodGet, httpSrv.URL+"/v1/runs/"+created.RunID+"/events", nil)
-	wrongReq.Header.Set("X-Nexus-Tenant-ID", tenantID.String())
-	wrongReq.Header.Set("X-Nexus-User-ID", uuid.New().String())
+	wrongReq.Header.Set("Authorization", "Bearer "+wrongUserToken)
 	wrongResp, err := client.Do(wrongReq)
 	if err != nil {
 		t.Fatalf("GET events (wrong user): %v", err)
@@ -304,8 +329,7 @@ func TestRESTRunEndToEnd(t *testing.T) {
 	}
 
 	eventsReq, _ := http.NewRequest(http.MethodGet, httpSrv.URL+"/v1/runs/"+created.RunID+"/events", nil)
-	eventsReq.Header.Set("X-Nexus-Tenant-ID", tenantID.String())
-	eventsReq.Header.Set("X-Nexus-User-ID", userID.String())
+	eventsReq.Header.Set("Authorization", "Bearer "+token)
 	eventsResp, err := client.Do(eventsReq)
 	if err != nil {
 		t.Fatalf("GET /v1/runs/{id}/events: %v", err)
@@ -390,8 +414,7 @@ func TestRESTRunEndToEnd(t *testing.T) {
 
 	// GET /v1/runs/{id} agrees with what SSE showed.
 	getReq, _ := http.NewRequest(http.MethodGet, httpSrv.URL+"/v1/runs/"+created.RunID, nil)
-	getReq.Header.Set("X-Nexus-Tenant-ID", tenantID.String())
-	getReq.Header.Set("X-Nexus-User-ID", userID.String())
+	getReq.Header.Set("Authorization", "Bearer "+token)
 	getResp, err := client.Do(getReq)
 	if err != nil {
 		t.Fatalf("GET /v1/runs/{id}: %v", err)

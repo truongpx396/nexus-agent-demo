@@ -58,7 +58,7 @@ func setupPhase6Env(t *testing.T) *phase6Env {
 	ctx := context.Background()
 
 	pgReq := testcontainers.ContainerRequest{
-		Image:        "postgres:17",
+		Image:        "pgvector/pgvector:pg17", // needs CREATE EXTENSION vector (migrations/0022_retrieval.sql)
 		ExposedPorts: []string{"5432/tcp"},
 		Env: map[string]string{
 			"POSTGRES_USER":     "nexus",

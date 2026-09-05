@@ -124,7 +124,7 @@ func (j *Judge) gradeOnce(ctx context.Context, c JudgeCase) (Verdict, string, er
 
 	prompt := provider.Prompt{
 		System:   fmt.Sprintf("You are a calibrated grading judge. Rubric: %s\nAnswer only PASS or FAIL, then a one-line reason.", c.Rubric),
-		Messages: []provider.Message{{Role: "user", Text: c.Prompt}},
+		Messages: []provider.Message{provider.TextMessage("user", c.Prompt)},
 	}
 	// PinnedModelID is this Judge's identity for the digest/audit trail, not
 	// a per-call routing knob — like internal/provider/anthropic, a

@@ -94,27 +94,28 @@ const usageText = `usage:
   nexusctl fork <session-id> --at=<seq> [--model=<model-id>]
 
 env: NEXUS_HTTP_ADDR (default http://localhost:8080),
-     NEXUS_TENANT_ID, NEXUS_USER_ID (dev-mode principal headers)`
+     NEXUS_TOKEN (bearer token — mint one with 'nexusd token --tenant=<name>')`
 
 func printUsage(w io.Writer) {
 	fmt.Fprintln(w, usageText) //nolint:errcheck // writing to the CLI's own stdout; nothing meaningful to do on failure
 }
 
-// client is the thin HTTP + dev-mode-principal wrapper every subcommand
-// shares — this package's only "control flow" beyond argument parsing, and
-// even that is just header plumbing, never a decision about what a run
-// should do (Principle I: surfaces translate I/O only).
+// client is the thin HTTP + bearer-token wrapper every subcommand shares —
+// this package's only "control flow" beyond argument parsing, and even that
+// is just header plumbing, never a decision about what a run should do
+// (Principle I: surfaces translate I/O only). README task 13.1: the
+// dev-mode X-Nexus-Tenant-ID/X-Nexus-User-ID headers are gone — the
+// principal now comes from a verified token minted out of band (`nexusd
+// token`).
 type client struct {
-	baseURL  string
-	tenantID string
-	userID   string
+	baseURL string
+	token   string
 }
 
 func newClient() *client {
 	return &client{
-		baseURL:  envOr("NEXUS_HTTP_ADDR", "http://localhost:8080"),
-		tenantID: envOr("NEXUS_TENANT_ID", ""),
-		userID:   envOr("NEXUS_USER_ID", ""),
+		baseURL: envOr("NEXUS_HTTP_ADDR", "http://localhost:8080"),
+		token:   envOr("NEXUS_TOKEN", ""),
 	}
 }
 
@@ -132,8 +133,7 @@ func (c *client) do(method, path string, body any) ([]byte, int, error) {
 		return nil, 0, err
 	}
 	req.Header.Set("content-type", "application/json")
-	req.Header.Set("X-Nexus-Tenant-ID", c.tenantID)
-	req.Header.Set("X-Nexus-User-ID", c.userID)
+	req.Header.Set("Authorization", "Bearer "+c.token)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

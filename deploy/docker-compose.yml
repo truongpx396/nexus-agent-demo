@@ -57,5 +57,64 @@ services:
       timeout: 3s
       retries: 10
 
+  # --- app (README task 13.3, F3) ---
+  #
+  # Not started by a bare `docker compose up` (the infra-only default this
+  # file has always provided) — `docker compose --profile app up` builds
+  # both binaries from the root Dockerfile and runs them against the same
+  # postgres/pgbouncer/redis services above. Migrations/seeding are still a
+  # separate step (`make migrate && make seed`, against the host-mapped
+  # ports this file already exposes) — this profile only proves the image
+  # builds and serves, not a full one-command bring-up.
+  signerd:
+    profiles: ["app"]
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: signerd
+    volumes:
+      - signerd-socket:/var/run/nexus
+      - signerd-dev:/app/.dev
+    environment:
+      NEXUS_SIGNERD_SOCKET: /var/run/nexus/signerd.sock
+
+  nexusd:
+    profiles: ["app"]
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: nexusd
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      signerd:
+        condition: service_started
+    volumes:
+      - signerd-socket:/var/run/nexus
+      - nexusd-dev:/app/.dev
+    environment:
+      # Direct to postgres for admin operations (migrate is still run
+      # separately, not by this service); through pgbouncer for the
+      # runtime path, exactly like the host-side defaults in cmd/nexusd's
+      # own consts, just naming the compose service instead of localhost.
+      NEXUS_DATABASE_URL: postgres://nexus_app:nexus_app@pgbouncer:5432/nexus
+      NEXUS_MIGRATE_DATABASE_URL: postgres://nexus:nexus@postgres:5432/nexus
+      NEXUS_ADMIN_DATABASE_URL: postgres://nexus:nexus@postgres:5432/nexus
+      NEXUS_REDIS_ADDR: redis:6379
+      NEXUS_SIGNERD_SOCKET: /var/run/nexus/signerd.sock
+      NEXUS_HTTP_ADDR: :8080
+    ports:
+      - "8080:8080"
+    # --dev keeps this profile a one-command demo (auto-generated KEK/AuthN
+    # keys, persisted in the nexusd-dev volume across restarts) — a real
+    # deployment omits it and mounts real secrets instead (README task
+    # 13.1/13.11).
+    command: ["--dev"]
+
 volumes:
   postgres-data:
+  signerd-socket:
+  signerd-dev:
+  nexusd-dev:

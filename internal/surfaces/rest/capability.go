@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/google/uuid"
-
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/capability"
 )
 
@@ -25,20 +23,16 @@ var Descriptor = capability.Descriptor{
 }
 
 // resolvePrincipal is task 7.13's per-turn principal resolution made a
-// first-class, typed step: read fresh off THIS request's headers, every
-// time — never cached from a prior request or inherited from whoever
+// first-class, typed step: read fresh off THIS request's verified context,
+// every time — never cached from a prior request or inherited from whoever
 // opened a long-lived connection. Functionally identical to principal()
-// above (same headers, same errors); this is the typed entry point new
-// Phase 7 call sites use, kept alongside principal() rather than replacing
-// it everywhere to avoid an unrelated churn across every existing handler.
+// (server.go) — both read what authMiddleware already verified — kept as a
+// separate typed entry point to avoid an unrelated rename churn across every
+// existing handler.
 func (s *Server) resolvePrincipal(r *http.Request) (capability.Principal, error) {
-	tenantID, err := uuid.Parse(r.Header.Get("X-Nexus-Tenant-ID"))
-	if err != nil {
-		return capability.Principal{}, fmt.Errorf("missing or invalid X-Nexus-Tenant-ID header")
-	}
-	userID, err := uuid.Parse(r.Header.Get("X-Nexus-User-ID"))
-	if err != nil {
-		return capability.Principal{}, fmt.Errorf("missing or invalid X-Nexus-User-ID header")
+	tenantID, userID, ok := principalFromContext(r.Context())
+	if !ok {
+		return capability.Principal{}, fmt.Errorf("no verified principal on request context")
 	}
 	return capability.Principal{Kind: capability.PrincipalUser, TenantID: tenantID, UserID: userID}, nil
 }

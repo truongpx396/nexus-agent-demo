@@ -48,7 +48,7 @@ func PrefixBytes(system string, catalog []provider.ToolSchema, transcript []prov
 	}
 	buf.WriteString("transcript:\n")
 	for _, m := range transcript {
-		fmt.Fprintf(&buf, "%s: %s\n", m.Role, m.Text)
+		fmt.Fprintf(&buf, "%s: %s\n", m.Role, m.PlainText())
 	}
 	return buf.Bytes()
 }

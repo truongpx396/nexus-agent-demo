@@ -5,10 +5,9 @@
 // Principle I) and never imports the kernel package directly
 // (tests/contract/boundaries_test.go).
 //
-// AuthN is a dev stand-in: the calling principal is read from
-// X-Nexus-Tenant-ID / X-Nexus-User-ID headers rather than verified via a
-// real per-tenant OIDC flow. Real control-plane AuthN isn't a task in
-// Phase 1 or Phase 2's list — this is documented scope, not an oversight.
+// AuthN (README task 13.1): every route Handler() mounts requires a verified
+// bearer token — the calling principal comes only from Verifier.Verify's
+// claims, never a client-supplied header. See authn.go.
 package rest
 
 import (
@@ -37,6 +36,12 @@ type Server struct {
 	Starter  RunStarter
 	Store    *store.Store
 	KeyStore *crypto.KeyStore
+
+	// Verifier resolves the bearer token on every request to the principal
+	// submitting it (README task 13.1) — mandatory, unlike every other Port
+	// on this struct: a nil Verifier fails every request closed (401/500),
+	// it never falls back to trusting a client-supplied header.
+	Verifier PrincipalVerifier
 
 	// CatalogManifestDigest is folded into every new session's
 	// harness_digest (internal/harness.Config.CatalogManifestDigest) — the
@@ -112,43 +117,43 @@ func NewServer(starter RunStarter, st *store.Store, ks *crypto.KeyStore, catalog
 	return &Server{Starter: starter, Store: st, KeyStore: ks, CatalogManifestDigest: catalogManifestDigest, broker: newBroker()}
 }
 
-// Handler returns the http.Handler cmd/nexusd mounts.
+// Handler returns the http.Handler cmd/nexusd mounts. Every route is
+// individually wrapped in authMiddleware (README task 13.1) — an
+// unregistered path still gets the mux's own native 404 without needing a
+// token first.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /v1/runs", s.handleCreateRun)
-	mux.HandleFunc("GET /v1/runs/{id}", s.handleGetRun)
-	mux.HandleFunc("GET /v1/runs/{id}/events", s.handleEvents)
+	mux.Handle("POST /v1/runs", s.authed(s.handleCreateRun))
+	mux.Handle("GET /v1/runs/{id}", s.authed(s.handleGetRun))
+	mux.Handle("GET /v1/runs/{id}/events", s.authed(s.handleEvents))
 	if s.Oversight != nil {
-		mux.HandleFunc("GET /v1/approvals", s.handleListApprovals)
-		mux.HandleFunc("GET /v1/approvals/{id}", s.handleGetApproval)
-		mux.HandleFunc("POST /v1/approvals/{id}/grant", s.handleGrantApproval)
-		mux.HandleFunc("POST /v1/approvals/{id}/deny", s.handleDenyApproval)
+		mux.Handle("GET /v1/approvals", s.authed(s.handleListApprovals))
+		mux.Handle("GET /v1/approvals/{id}", s.authed(s.handleGetApproval))
+		mux.Handle("POST /v1/approvals/{id}/grant", s.authed(s.handleGrantApproval))
+		mux.Handle("POST /v1/approvals/{id}/deny", s.authed(s.handleDenyApproval))
 	}
 	if s.Grants != nil {
-		mux.HandleFunc("POST /v1/sessions/{id}/content-access-grants", s.handleRequestContentAccessGrant)
-		mux.HandleFunc("GET /v1/sessions/{id}/content-access-grants/read", s.handleReadUnderGrant)
+		mux.Handle("POST /v1/sessions/{id}/content-access-grants", s.authed(s.handleRequestContentAccessGrant))
+		mux.Handle("GET /v1/sessions/{id}/content-access-grants/read", s.authed(s.handleReadUnderGrant))
 	}
 	if s.RunCtl != nil {
-		mux.HandleFunc("POST /v1/runs/{id}/cancel", s.handleCancelRun)
-		mux.HandleFunc("POST /v1/runs/{id}/steer", s.handleSteerRun)
-		mux.HandleFunc("POST /v1/runs/{id}/autonomy", s.handleTightenAutonomy)
-		mux.HandleFunc("POST /v1/runs/{id}/fork", s.handleForkRun)
+		mux.Handle("POST /v1/runs/{id}/cancel", s.authed(s.handleCancelRun))
+		mux.Handle("POST /v1/runs/{id}/steer", s.authed(s.handleSteerRun))
+		mux.Handle("POST /v1/runs/{id}/autonomy", s.authed(s.handleTightenAutonomy))
+		mux.Handle("POST /v1/runs/{id}/fork", s.authed(s.handleForkRun))
 	}
 	return mux
 }
 
-// principal reads the dev-mode calling identity off the request. It writes
-// the response itself on failure, mirroring the shape http.Error already
-// uses, so call sites just check ok.
+// principal reads the calling identity authMiddleware already verified and
+// stored on the request context. It writes the response itself on failure,
+// mirroring the shape http.Error already uses, so call sites just check ok
+// — in practice this only fails if authMiddleware somehow didn't run, since
+// every route Handler() mounts is wrapped by it.
 func (s *Server) principal(w http.ResponseWriter, r *http.Request) (tenantID, userID uuid.UUID, ok bool) {
-	tenantID, err := uuid.Parse(r.Header.Get("X-Nexus-Tenant-ID"))
-	if err != nil {
-		http.Error(w, "missing or invalid X-Nexus-Tenant-ID header", http.StatusUnauthorized)
-		return uuid.Nil, uuid.Nil, false
-	}
-	userID, err = uuid.Parse(r.Header.Get("X-Nexus-User-ID"))
-	if err != nil {
-		http.Error(w, "missing or invalid X-Nexus-User-ID header", http.StatusUnauthorized)
+	tenantID, userID, ok = principalFromContext(r.Context())
+	if !ok {
+		http.Error(w, "no verified principal on request context", http.StatusUnauthorized)
 		return uuid.Nil, uuid.Nil, false
 	}
 	return tenantID, userID, true

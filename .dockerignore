@@ -1,0 +1,6 @@
+.dev/
+bin/
+.git/
+web/node_modules/
+web/dist/
+*.log

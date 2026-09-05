@@ -19,8 +19,7 @@ func TestMain_Run_ReportsRunIDAndWatchURL(t *testing.T) {
 	}))
 	defer srv.Close()
 	t.Setenv("NEXUS_HTTP_ADDR", srv.URL)
-	t.Setenv("NEXUS_TENANT_ID", "t1")
-	t.Setenv("NEXUS_USER_ID", "u1")
+	t.Setenv("NEXUS_TOKEN", "test-token")
 
 	var out, errOut bytes.Buffer
 	code := Main([]string{"run", "do the thing"}, &out, &errOut)

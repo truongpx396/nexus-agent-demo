@@ -40,9 +40,10 @@ export function Header() {
       {open && (
         <div className="settings-panel">
           <p className="settings-note">
-            Dev auth: this backend has no real login yet — it trusts whatever tenant/user UUID
-            you paste here, read fresh from headers on every request. Paste any tenant/user
-            UUID (e.g. from <code>make seed</code> output or your own test fixtures).
+            Paste a bearer token minted with <code>nexusd token --tenant=&lt;name&gt;</code> (add{" "}
+            <code>--user=&lt;uuid&gt;</code> to pin a specific user). The backend verifies this
+            token and derives your tenant/user identity from its claims — it never trusts
+            anything else the client sends.
           </p>
           <div className="settings-fields">
             <label>
@@ -55,21 +56,12 @@ export function Header() {
               />
             </label>
             <label>
-              Tenant ID
+              Bearer token
               <input
-                type="text"
-                value={draft.tenantId}
-                placeholder="00000000-0000-0000-0000-000000000000"
-                onChange={(e) => setDraft({ ...draft, tenantId: e.target.value })}
-              />
-            </label>
-            <label>
-              User ID
-              <input
-                type="text"
-                value={draft.userId}
-                placeholder="00000000-0000-0000-0000-000000000000"
-                onChange={(e) => setDraft({ ...draft, userId: e.target.value })}
+                type="password"
+                value={draft.token}
+                placeholder="eyJhbGciOi..."
+                onChange={(e) => setDraft({ ...draft, token: e.target.value })}
               />
             </label>
           </div>

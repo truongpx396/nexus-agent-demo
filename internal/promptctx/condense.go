@@ -26,7 +26,7 @@ func ShouldCondense(transcript []provider.Message, thresholdBytes int) (bool, in
 	}
 	total := 0
 	for _, m := range transcript {
-		total += len(m.Text)
+		total += len(m.PlainText())
 	}
 	if total <= thresholdBytes {
 		return false, 0
@@ -58,7 +58,7 @@ func ExtractivePass(transcript []provider.Message) string {
 }
 
 func line(m provider.Message) string {
-	text := m.Text
+	text := m.PlainText()
 	if len(text) > previewBytes {
 		text = text[:previewBytes]
 	}
@@ -80,9 +80,7 @@ func CondensePrompt(transcript []provider.Message) provider.Prompt {
 		buf.WriteString("\n")
 	}
 	return provider.Prompt{
-		System: "Summarize the following conversation history concisely, preserving any decisions, facts, or open questions. Never state or imply that any external effect (a tool call, a send, a write) completed or failed — only summarize what was said.",
-		Messages: []provider.Message{
-			{Role: "user", Text: buf.String()},
-		},
+		System:   "Summarize the following conversation history concisely, preserving any decisions, facts, or open questions. Never state or imply that any external effect (a tool call, a send, a write) completed or failed — only summarize what was said.",
+		Messages: []provider.Message{provider.TextMessage("user", buf.String())},
 	}
 }

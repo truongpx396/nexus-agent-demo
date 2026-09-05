@@ -14,14 +14,17 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"iter"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -32,6 +35,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/evals"
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
+	"github.com/truongpx396/nexus-agent-demo/internal/authn"
 	"github.com/truongpx396/nexus-agent-demo/internal/config"
 	"github.com/truongpx396/nexus-agent-demo/internal/connectors"
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
@@ -102,42 +106,69 @@ const (
 	teamBackstopWindow        = 30 * time.Minute
 )
 
+// devMode is set once, at the top of main(), from a --dev flag scanned out
+// of os.Args before the subcommand switch (README task 13.1): with it, the
+// AuthN signing key keeps its zero-setup demo behavior (auto-generated,
+// persisted under .dev/); without it, loadOrGenerateSigningKey fails closed
+// rather than silently minting a fresh key nothing else in the fleet would
+// ever accept a token from. A package-level var (not threaded through every
+// subcommand's own flag set) because the signing-key loader is called from
+// both serve() and runToken — a single process-wide switch is simpler than
+// plumbing a bool through each.
+var devMode bool
+
 func main() {
 	ctx := context.Background()
 
-	if len(os.Args) < 2 {
+	args := os.Args[1:]
+	var filtered []string
+	for _, a := range args {
+		if a == "--dev" {
+			devMode = true
+			continue
+		}
+		filtered = append(filtered, a)
+	}
+
+	if len(filtered) < 1 {
 		runServe()
 		return
 	}
-	switch os.Args[1] {
+	switch filtered[0] {
 	case "migrate":
 		if err := runMigrate(ctx); err != nil {
 			fatalf("migrate: %v", err)
 		}
 	case "seed":
-		if err := runSeed(ctx, os.Args[2:]); err != nil {
+		if err := runSeed(ctx, filtered[1:]); err != nil {
 			fatalf("seed: %v", err)
 		}
 	case "verify-chain":
-		if err := runVerifyChain(ctx, os.Args[2:]); err != nil {
+		if err := runVerifyChain(ctx, filtered[1:]); err != nil {
 			fatalf("verify-chain: %v", err)
 		}
 	case "dashboard":
-		if err := runDashboard(ctx, os.Args[2:]); err != nil {
+		if err := runDashboard(ctx, filtered[1:]); err != nil {
 			fatalf("dashboard: %v", err)
 		}
 	case "go-live":
-		if err := runGoLive(ctx, os.Args[2:]); err != nil {
+		if err := runGoLive(ctx, filtered[1:]); err != nil {
 			fatalf("go-live: %v", err)
 		}
 	case "erase":
-		if err := runErase(ctx, os.Args[2:]); err != nil {
+		if err := runErase(ctx, filtered[1:]); err != nil {
 			fatalf("erase: %v", err)
 		}
 	case "ingest":
-		if err := runIngest(ctx, os.Args[2:]); err != nil {
+		if err := runIngest(ctx, filtered[1:]); err != nil {
 			fatalf("ingest: %v", err)
 		}
+	case "token":
+		if err := runToken(ctx, filtered[1:]); err != nil {
+			fatalf("token: %v", err)
+		}
+	case "serve":
+		runServe()
 	default:
 		runServe()
 	}
@@ -165,7 +196,14 @@ const defaultKEKPath = ".dev/kek.key"
 func runServe() {
 	fmt.Printf("nexusd %s (%s)\n", version.Version, version.GitCommit)
 
-	ctx := context.Background()
+	// signal.NotifyContext (README task 13.2, F2) — mirrors
+	// cmd/signerd/main.go's own pattern: SIGTERM/SIGINT cancel ctx, which is
+	// what unblocks the HTTP server's graceful Shutdown below and, in turn,
+	// every defer serve() registers (queue workers, cron scheduler,
+	// audit-anchor loop, team backstop) — none of those ran before this
+	// change, because the old bare ListenAndServe never returned.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	if err := serve(ctx); err != nil {
 		fatalf("serve: %v", err)
 	}
@@ -185,6 +223,12 @@ func serve(ctx context.Context) error {
 		return fmt.Errorf("load KEK: %w", err)
 	}
 	keyStore := crypto.NewKeyStore(kek)
+
+	signingKey, err := loadOrGenerateSigningKey(envOr("NEXUS_AUTHN_SIGNING_KEY_PATH", defaultAuthnSigningKeyPath), devMode)
+	if err != nil {
+		return fmt.Errorf("load AuthN signing key: %w", err)
+	}
+	verifier := authn.NewDevVerifier(authn.PublicKey(signingKey))
 
 	prov, err := newProvider()
 	if err != nil {
@@ -280,6 +324,7 @@ func serve(ctx context.Context) error {
 	})
 
 	srv := rest.NewServer(starter, st, keyStore, catalogManifestDigest)
+	srv.Verifier = verifier
 	srv.Oversight = &nexusdOversightPort{approvals: approvals, resumer: resumer, delegations: delegations, teams: teamsSvc}
 	srv.Grants = grants
 	srv.RunCtl = &nexusdRunCtlPort{ctl: ctl}
@@ -326,6 +371,12 @@ func serve(ctx context.Context) error {
 	go scheduler.Run(ctx)
 
 	mux := http.NewServeMux()
+	// /healthz (liveness) and /readyz (Postgres + Redis + signerd all
+	// reachable) are unauthenticated and mounted on this OUTER mux — never
+	// wrapped by rest.Server's auth middleware (README task 13.1/13.2):
+	// a load balancer or Kubernetes probe has no bearer token to send.
+	mux.HandleFunc("GET /healthz", handleHealthz)
+	mux.HandleFunc("GET /readyz", handleReadyz(pool, redisClient, signer))
 	mux.Handle("/v1/webhooks/telegram/", telegramSrv.Handler())
 	mux.Handle("/v1/webhooks/zalo/", zaloSrv.Handler())
 	mux.Handle("/v1/webhooks/email/", emailSrv.Handler())
@@ -333,7 +384,68 @@ func serve(ctx context.Context) error {
 
 	addr := envOr("NEXUS_HTTP_ADDR", ":8080")
 	fmt.Printf("listening on %s (provider=%s)\n", addr, envOr("NEXUS_PROVIDER", "fake"))
-	return http.ListenAndServe(addr, mux) //nolint:gosec // dev/demo server; timeouts are a hardening task, not a Phase 2 one
+
+	// README task 13.2 (F2): a real *http.Server with timeouts, driven to a
+	// graceful Shutdown by ctx's cancellation (runServe's signal.NotifyContext)
+	// instead of the old bare ListenAndServe that never returned.
+	httpSrv := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		// WriteTimeout is deliberately 0 (unbounded): it bounds the ENTIRE
+		// response write, including GET /v1/runs/{id}/events' long-lived
+		// SSE stream — any nonzero value here would sever a legitimate,
+		// still-active stream, not just a slow one. ReadHeaderTimeout/
+		// ReadTimeout still bound slowloris on the request side, and
+		// IdleTimeout still bounds a connection sitting idle between
+		// requests.
+		WriteTimeout: 0,
+		IdleTimeout:  120 * time.Second,
+	}
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := httpSrv.Shutdown(shutdownCtx); err != nil {
+			slog.Error("nexusd: graceful shutdown failed", "error", err)
+		}
+	}()
+	if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
+}
+
+func handleHealthz(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("ok"))
+}
+
+// handleReadyz reports ready only once every dependency this process
+// actually needs to serve a request is reachable: Postgres (through
+// PgBouncer, the same pool serve() itself uses), Redis (the cost gate's
+// counter store), and signerd (the audit chain's only path to a signature —
+// runGoLive's item 2b already performs this exact check, once, at CLI time;
+// this is the same check as a live HTTP probe).
+func handleReadyz(pool *pgxpool.Pool, redisClient *redis.Client, signer *audit.SignerClient) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		if err := pool.Ping(ctx); err != nil {
+			http.Error(w, "postgres not reachable: "+err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		if err := redisClient.Ping(ctx).Err(); err != nil {
+			http.Error(w, "redis not reachable: "+err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		if _, _, err := signer.PublicKey(ctx); err != nil {
+			http.Error(w, "signerd not reachable: "+err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}
 }
 
 // stuckDetectionWindow is internal/reliability.NewRegistry's window (README
@@ -1311,6 +1423,43 @@ func loadOrGenerateKEK(path string) (crypto.KEK, error) {
 	return kek, nil
 }
 
+// defaultAuthnSigningKeyPath mirrors defaultKEKPath's own local-gitignored-
+// dev-file convention (.gitignore's /.dev/ entry).
+const defaultAuthnSigningKeyPath = ".dev/authn_signing.key"
+
+// loadOrGenerateSigningKey loads the AuthN Ed25519 signing key from path,
+// following loadOrGenerateKEK's own load-or-generate shape but gated by dev
+// mode (README task 13.1, F1) — outside dev mode, a missing file is fatal
+// rather than a silently minted key nothing else in the fleet would ever
+// accept a token from. A real deployment must fail to start rather than run
+// with an AuthN key no other process trusts.
+func loadOrGenerateSigningKey(path string, dev bool) (ed25519.PrivateKey, error) {
+	f, err := os.Open(path) //nolint:gosec // path is an operator-controlled config value (NEXUS_AUTHN_SIGNING_KEY_PATH), never request input
+	if err == nil {
+		defer f.Close() //nolint:errcheck // read-only handle; nothing to flush
+		return authn.LoadPrivateKey(f)
+	}
+	if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("open AuthN signing key file %s: %w", path, err)
+	}
+	if !dev {
+		return nil, fmt.Errorf("AuthN signing key file %s does not exist (pass --dev to auto-generate one for local development)", path)
+	}
+
+	key, err := authn.GeneratePrivateKey()
+	if err != nil {
+		return nil, fmt.Errorf("generate AuthN signing key: %w", err)
+	}
+	if err := os.MkdirAll(".dev", 0o700); err != nil {
+		return nil, fmt.Errorf("create .dev: %w", err)
+	}
+	if err := os.WriteFile(path, key, 0o600); err != nil {
+		return nil, fmt.Errorf("write AuthN signing key file %s: %w", path, err)
+	}
+	slog.Info("generated a new dev AuthN signing key", "path", path)
+	return key, nil
+}
+
 // kernelRunStarter is the only implementation of rest.RunStarter this binary
 // ships, and the only place a kernel.RunState/kernel.RunConfig gets built —
 // internal/surfaces/rest never constructs either directly (starter.go's doc
@@ -1815,6 +1964,50 @@ func runIngest(ctx context.Context, args []string) error {
 	return nil
 }
 
+// runToken is `nexusd token --tenant=<name> [--user=<uuid>] [--ttl=1h]`
+// (README task 13.1): mints a bearer token against the same AuthN signing
+// key `serve()` verifies against, for a client (`nexusctl`, the web app,
+// curl) to send as `Authorization: Bearer <token>`. --tenant is hashed into
+// a deterministic tenant id the same way `nexusd seed`'s own --tenant is, so
+// a token minted before or after seeding names the same tenant either way.
+// A missing --user mints a fresh random user id — fine for a demo/dev
+// principal; a real per-user identity still comes from whatever a future
+// OIDC provider's own login flow issues.
+func runToken(_ context.Context, args []string) error {
+	fs := flag.NewFlagSet("token", flag.ExitOnError)
+	tenantName := fs.String("tenant", "", "tenant name to mint a token for (required)")
+	userArg := fs.String("user", "", "user id (uuid); a fresh random one is minted if omitted")
+	ttl := fs.Duration("ttl", 24*time.Hour, "token validity duration")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *tenantName == "" {
+		return fmt.Errorf("--tenant is required")
+	}
+	tenantID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("nexus-agent-demo/tenant/"+*tenantName))
+
+	userID := uuid.New()
+	if *userArg != "" {
+		parsed, err := uuid.Parse(*userArg)
+		if err != nil {
+			return fmt.Errorf("invalid --user: %w", err)
+		}
+		userID = parsed
+	}
+
+	signingKey, err := loadOrGenerateSigningKey(envOr("NEXUS_AUTHN_SIGNING_KEY_PATH", defaultAuthnSigningKeyPath), devMode)
+	if err != nil {
+		return fmt.Errorf("load AuthN signing key: %w", err)
+	}
+	issuer := authn.NewDevIssuer(signingKey)
+	tok, err := issuer.Issue(tenantID, userID, *ttl)
+	if err != nil {
+		return fmt.Errorf("issue token: %w", err)
+	}
+	fmt.Printf("tenant_id: %s\nuser_id:   %s\ntoken:     %s\n", tenantID, userID, tok)
+	return nil
+}
+
 func runSeed(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("seed", flag.ExitOnError)
 	tenantName := fs.String("tenant", "acme", "tenant name to seed")
@@ -1856,43 +2049,65 @@ func runSeed(ctx context.Context, args []string) error {
 	return nil
 }
 
-// seedPriceBook inserts one price book entry per token meter (README task
-// 4.3) the first time a tenant is seeded — cost governance is otherwise
-// inert (internal/cost.Gate fails closed with "no price book entry" on
-// every Reserve, on purpose: an unpriced meter must never look free).
-// Idempotent like the tenant insert above it: a second `make seed` for the
-// same tenant is a no-op once MeterOutput's wildcard entry already exists.
-// Prices are illustrative, Claude-Sonnet-class figures per million tokens;
-// every entry uses cost.WildcardSubject, so one price covers every model
-// this demo routes to — a real per-model override is a feature the price
-// book schema supports (internal/cost/pricebook.go) but this seed step
-// doesn't exercise.
+// seedPriceBook inserts one price book entry per (meter, model) pair the
+// first time a tenant is seeded — cost governance is otherwise inert
+// (internal/cost.Gate fails closed with "no price book entry" on every
+// Reserve, on purpose: an unpriced meter must never look free). Idempotent
+// like the tenant insert above it: a second `make seed` for the same
+// tenant is a no-op once claude-sonnet-5's entries already exist.
+//
+// README task 13.6 (closing production-readiness finding F8): every entry
+// used to share cost.WildcardSubject at one Sonnet-class rate, while
+// internal/provider/router.go actually routes across three models whose
+// real per-token rates differ by 5x — confidential/complex traffic routed
+// to Opus was billed at 60% of true cost, public/simple traffic routed to
+// Haiku at 3x. Real rates below (per README task 13.6's own note, confirmed
+// current Anthropic pricing): cache write priced at 1.25x that model's own
+// input rate, cache read at 0.1x — the standard Anthropic multipliers,
+// applied per model rather than carried over from one wildcard figure.
+// MeterEmbeddingTokens keeps its one WildcardSubject entry: this demo's
+// retrieval tier always embeds under "fake-embedder-v1" (README task 12.5),
+// never one of the three routed chat models, so there is no per-model tier
+// to seed for it.
 func seedPriceBook(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) error {
 	existing, err := cost.LoadPriceBook(ctx, tx)
 	if err != nil {
 		return err
 	}
-	if _, ok := existing.Lookup(cost.MeterOutput, cost.WildcardSubject, time.Now()); ok {
+	if _, ok := existing.Lookup(cost.MeterOutput, "claude-sonnet-5", time.Now()); ok {
 		return nil
 	}
 
 	now := time.Now()
-	for _, p := range []struct {
-		meter                 cost.MeterID
-		pricePerMillionMicros int64
+	for _, m := range []struct {
+		model                  string
+		inputPerMillionMicros  int64
+		outputPerMillionMicros int64
 	}{
-		{cost.MeterInputUncached, 3_000_000},   // $3 / million input tokens
-		{cost.MeterInputCacheRead, 300_000},    // $0.30 / million cache-read tokens
-		{cost.MeterInputCacheWrite, 3_750_000}, // $3.75 / million cache-write tokens
-		{cost.MeterOutput, 15_000_000},         // $15 / million output tokens
-		{cost.MeterEmbeddingTokens, 100_000},   // $0.10 / million embedding tokens (Phase 12, task 12.4) — a small-embedding-model-class figure, equally illustrative
+		{"claude-haiku-4-5", 1_000_000, 5_000_000}, // $1.00 in / $5.00 out per million tokens
+		{"claude-sonnet-5", 2_000_000, 10_000_000}, // $2.00 in / $10.00 out per million tokens
+		{"claude-opus-5", 5_000_000, 25_000_000},   // $5.00 in / $25.00 out per million tokens
 	} {
-		if err := cost.InsertPriceBookEntry(ctx, tx, tenantID, cost.PriceBookEntry{
-			Meter: p.meter, Subject: cost.WildcardSubject, Version: 1,
-			Currency: cost.DefaultCurrency, PricePerMillionMicros: p.pricePerMillionMicros, EffectiveFrom: now,
-		}); err != nil {
-			return err
+		for _, e := range []struct {
+			meter cost.MeterID
+			price int64
+		}{
+			{cost.MeterInputUncached, m.inputPerMillionMicros},
+			{cost.MeterInputCacheWrite, m.inputPerMillionMicros * 5 / 4}, // 1.25x the model's own input rate
+			{cost.MeterInputCacheRead, m.inputPerMillionMicros / 10},     // 0.1x the model's own input rate
+			{cost.MeterOutput, m.outputPerMillionMicros},
+		} {
+			if err := cost.InsertPriceBookEntry(ctx, tx, tenantID, cost.PriceBookEntry{
+				Meter: e.meter, Subject: m.model, Version: 1,
+				Currency: cost.DefaultCurrency, PricePerMillionMicros: e.price, EffectiveFrom: now,
+			}); err != nil {
+				return err
+			}
 		}
 	}
-	return nil
+
+	return cost.InsertPriceBookEntry(ctx, tx, tenantID, cost.PriceBookEntry{
+		Meter: cost.MeterEmbeddingTokens, Subject: cost.WildcardSubject, Version: 1,
+		Currency: cost.DefaultCurrency, PricePerMillionMicros: 100_000, EffectiveFrom: now, // $0.10 / million embedding tokens
+	})
 }

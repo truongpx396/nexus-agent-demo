@@ -93,6 +93,16 @@ type RunState struct {
 	Seal       SealFunc
 	History    []store.Event
 	Transcript []provider.Message
+
+	// ToolUseIDs maps a tool_use event's internal EventID to the
+	// PROVIDER-assigned tool_use_id Rehydrate reconstructed it under
+	// (kernel/rehydrate.go's second return value) — how Resume/
+	// ResumeDelegation below pair a resolved result back to the right
+	// wire-level tool_use block without trusting a caller-supplied claim.
+	// nil for a fresh Run/Continue, which never needs it: a live turn
+	// already has the provider's tool_use_id in hand via ToolUseRequest
+	// itself.
+	ToolUseIDs map[uuid.UUID]string
 }
 
 // Run is the generator (README task 2.1): hygiene -> reserve -> build prompt
@@ -146,7 +156,7 @@ func (k *Kernel) Run(ctx context.Context, st *RunState, cfg RunConfig) iter.Seq2
 				yield(store.Event{}, err)
 				return
 			}
-			st.Transcript = append(st.Transcript, provider.Message{Role: "user", Text: cfg.Input})
+			st.Transcript = append(st.Transcript, provider.TextMessage("user", cfg.Input))
 			if !yield(ev, nil) {
 				return
 			}
@@ -203,7 +213,7 @@ func (k *Kernel) Resume(ctx context.Context, st *RunState, cfg RunConfig, res Pe
 			yield(store.Event{}, err)
 			return
 		}
-		st.Transcript = append(st.Transcript, provider.Message{Role: "tool", Text: resultText(result)})
+		st.Transcript = append(st.Transcript, provider.ToolResultMessage(st.ToolUseIDs[res.ToolUseEventID], resultText(result), result.IsError))
 		if !yield(ev, nil) {
 			return
 		}
@@ -262,7 +272,7 @@ func (k *Kernel) ResumeDelegation(ctx context.Context, st *RunState, cfg RunConf
 			yield(store.Event{}, err)
 			return
 		}
-		st.Transcript = append(st.Transcript, provider.Message{Role: "tool", Text: resultText(result)})
+		st.Transcript = append(st.Transcript, provider.ToolResultMessage(st.ToolUseIDs[res.ToolUseEventID], resultText(result), result.IsError))
 		if !yield(ev, nil) {
 			return
 		}
@@ -327,16 +337,23 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 
 		kept, synth := Hygiene(st.History)
 		st.History = kept
+		var synthBlocks []provider.ContentBlock
 		for _, s := range synth {
 			ev, err := k.appendToolResult(ctx, st, s.PairRef, s.ToolID, ToolResult{IsError: true, Synthetic: true, Reason: s.Reason})
 			if err != nil {
 				yield(store.Event{}, err)
 				return
 			}
-			st.Transcript = append(st.Transcript, provider.Message{Role: "tool", Text: "[synthetic error] " + s.Reason})
+			synthBlocks = append(synthBlocks, provider.ContentBlock{
+				Kind: provider.BlockToolResult, ToolUseID: st.ToolUseIDs[s.PairRef],
+				Text: "[synthetic error] " + s.Reason, IsError: true,
+			})
 			if !yield(ev, nil) {
 				return
 			}
+		}
+		if len(synthBlocks) > 0 {
+			st.Transcript = append(st.Transcript, provider.Message{Role: "tool", Blocks: synthBlocks})
 		}
 
 		reservation, reserveErr := k.Budget.Reserve(ctx, cost.ReserveRequest{
@@ -426,7 +443,7 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 			// view[covered:]) so the retained tail keeps its ORIGINAL text,
 			// never a pruned preview/marker baked in permanently.
 			newTranscript := make([]provider.Message, 0, 1+len(st.Transcript)-covered)
-			newTranscript = append(newTranscript, provider.Message{Role: "assistant", Text: "[condensed summary] " + summary})
+			newTranscript = append(newTranscript, provider.TextMessage("assistant", "[condensed summary] "+summary))
 			newTranscript = append(newTranscript, st.Transcript[covered:]...)
 			st.Transcript = newTranscript
 			view = newTranscript
@@ -447,6 +464,7 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 		var usage provider.Usage
 		var usageReported bool
 		var done provider.DoneReason
+		var refusalCategory string
 		var streamErr error
 		for {
 			chunk, ok, nerr := stream.Next(ctx)
@@ -469,6 +487,7 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 				usageReported = true
 			case provider.ChunkDone:
 				done = chunk.Done
+				refusalCategory = chunk.RefusalCategory
 			}
 		}
 		// Reconcile unconditionally, success or failure: task 4.7's
@@ -486,15 +505,31 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 			return
 		}
 
+		// One model turn's thinking/text/tool_use blocks are consolidated
+		// into a SINGLE assistant Message (README task 13.4, closing F5) —
+		// never split across several transcript entries, which is exactly
+		// what used to erase tool_use/tool_result pairing at the wire and
+		// (per the Anthropic API's own documented guidance) silently trains
+		// a model to stop making parallel tool calls. Durable events are
+		// still appended one row per thought/content/tool_use, unchanged —
+		// only this in-memory Transcript view is consolidated.
+		var assistantBlocks []provider.ContentBlock
 		for _, r := range reasoningChunks {
 			ev, err := k.appendThought(ctx, st, cfg.ModelID, r)
 			if err != nil {
 				yield(store.Event{}, err)
 				return
 			}
-			// Reasoning is round-tripped, never shown (internal/provider's
-			// doc comment) — logged, but never added to the plaintext
-			// transcript a client or the next prompt sees.
+			// Reasoning is never shown to a client (internal/provider's doc
+			// comment), but IS folded into the assistant turn's own
+			// Transcript entry, ahead of any text/tool_use block — required
+			// by the API when a thinking block precedes a tool_use in the
+			// same turn (task 13.7). A pre-13.7/non-thinking provider's
+			// Opaque bytes simply fail this decode, adding no block.
+			var ro reasoningOpaque
+			if err := json.Unmarshal(r, &ro); err == nil && (ro.Thinking != "" || ro.Signature != "") {
+				assistantBlocks = append(assistantBlocks, provider.ContentBlock{Kind: provider.BlockThinking, Text: ro.Thinking, Signature: ro.Signature})
+			}
 			if !yield(ev, nil) {
 				return
 			}
@@ -504,6 +539,10 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 			k.terminate(ctx, st, yield, TerminalError(fmt.Errorf("provider truncated output at max_output without a natural stop")))
 			return
 		}
+		if done == provider.DoneRefusal {
+			k.terminate(ctx, st, yield, TerminalRefused(refusalCategory))
+			return
+		}
 
 		if contentText.Len() > 0 {
 			ev, err := k.appendContent(ctx, st, cfg.ModelID, contentText.String())
@@ -511,7 +550,7 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 				yield(store.Event{}, err)
 				return
 			}
-			st.Transcript = append(st.Transcript, provider.Message{Role: "assistant", Text: contentText.String()})
+			assistantBlocks = append(assistantBlocks, provider.ContentBlock{Kind: provider.BlockText, Text: contentText.String()})
 			if !yield(ev, nil) {
 				return
 			}
@@ -525,18 +564,28 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 				return
 			}
 			toolUseEvents = append(toolUseEvents, ev)
-			st.Transcript = append(st.Transcript, provider.Message{
-				Role: "assistant",
-				Text: fmt.Sprintf("[tool_use %s] %s(%s)", ev.EventID, tu.ToolName, string(tu.Input)),
-			})
+			assistantBlocks = append(assistantBlocks, provider.ContentBlock{Kind: provider.BlockToolUse, ToolUseID: tu.ToolUseID, ToolName: tu.ToolName, Input: tu.Input})
 			if !yield(ev, nil) {
 				return
 			}
 		}
 
+		if len(assistantBlocks) > 0 {
+			st.Transcript = append(st.Transcript, provider.Message{Role: "assistant", Blocks: assistantBlocks})
+		}
+
 		switch Classify(toolUses, contentText.String()) {
 		case ClassificationToolCalls:
 			execCtx := ExecContext{TenantID: st.TenantID, SessionID: st.SessionID, AutonomyLevel: cfg.AutonomyLevel}
+			// Every tool_result this turn produces before any suspend/
+			// terminate below is grouped into ONE "tool" role Message,
+			// appended once after the loop — the mirror image of
+			// assistantBlocks above, and for the same reason (README task
+			// 13.4). An early return (permission denied, awaiting
+			// approval/delegation, stuck) skips this append harmlessly:
+			// Resume/Continue always rebuild Transcript fresh from durable
+			// history via Rehydrate, never from this in-memory value.
+			var resultBlocks []provider.ContentBlock
 			for i, tu := range toolUses {
 				result := k.Tools.Execute(ctx, tu, execCtx)
 				ev, err := k.appendToolResult(ctx, st, toolUseEvents[i].EventID, toolUseEvents[i].ToolID, result)
@@ -544,7 +593,7 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 					yield(store.Event{}, err)
 					return
 				}
-				st.Transcript = append(st.Transcript, provider.Message{Role: "tool", Text: resultText(result)})
+				resultBlocks = append(resultBlocks, provider.ContentBlock{Kind: provider.BlockToolResult, ToolUseID: tu.ToolUseID, Text: resultText(result), IsError: result.IsError})
 				if !yield(ev, nil) {
 					return
 				}
@@ -583,6 +632,9 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 						}
 					}
 				}
+			}
+			if len(resultBlocks) > 0 {
+				st.Transcript = append(st.Transcript, provider.Message{Role: "tool", Blocks: resultBlocks})
 			}
 			// A dispatched tool call always continues to the next turn:
 			// the run isn't done until every tool_use has a paired
@@ -840,6 +892,12 @@ type condensationPayload struct {
 type toolUsePayload struct {
 	ToolName string          `json:"tool_name"`
 	Input    json.RawMessage `json:"input"`
+	// ToolUseID is the PROVIDER-assigned tool_use id (README task 13.4,
+	// closing F5) — additive field, omitted on rows written before this
+	// change (they simply decode with an empty string; no upcast needed).
+	// kernel/rehydrate.go relies on this to rebuild a correctly-paired
+	// tool_use block, and to derive RunState.ToolUseIDs for Resume.
+	ToolUseID string `json:"tool_use_id,omitempty"`
 }
 
 type toolResultPayload struct {
@@ -931,7 +989,7 @@ func (k *Kernel) appendThought(ctx context.Context, st *RunState, modelID string
 
 func (k *Kernel) appendToolUseEvent(ctx context.Context, st *RunState, modelID string, tu ToolUseRequest) (store.Event, error) {
 	toolID := tu.ToolName
-	return k.appendEvent(ctx, st, store.EventToolUse, store.ActorModel, &toolID, nil, &modelID, toolUsePayload{ToolName: tu.ToolName, Input: tu.Input})
+	return k.appendEvent(ctx, st, store.EventToolUse, store.ActorModel, &toolID, nil, &modelID, toolUsePayload{ToolName: tu.ToolName, Input: tu.Input, ToolUseID: tu.ToolUseID})
 }
 
 func (k *Kernel) appendToolResult(ctx context.Context, st *RunState, pairRef uuid.UUID, toolID *string, result ToolResult) (store.Event, error) {

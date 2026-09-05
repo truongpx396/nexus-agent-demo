@@ -38,7 +38,7 @@ func (c *Control) loadRunState(ctx context.Context, tenantID, sessionID uuid.UUI
 
 	decrypt := c.decryptFuncFor(tenantID, sessionID)
 
-	transcript, err := kernel.Rehydrate(ctx, history, decrypt)
+	transcript, toolUseIDs, err := kernel.Rehydrate(ctx, history, decrypt)
 	if err != nil {
 		return nil, store.Session{}, err
 	}
@@ -64,7 +64,7 @@ func (c *Control) loadRunState(ctx context.Context, tenantID, sessionID uuid.UUI
 		return sealed, crypto.Digest(plaintext), dek.KeyID, nil
 	}
 
-	return &kernel.RunState{TenantID: tenantID, SessionID: sessionID, Seal: seal, History: history, Transcript: transcript}, sess, nil
+	return &kernel.RunState{TenantID: tenantID, SessionID: sessionID, Seal: seal, History: history, Transcript: transcript, ToolUseIDs: toolUseIDs}, sess, nil
 }
 
 // decryptFuncFor returns a kernel.DecryptFunc bound to (tenantID,
