@@ -107,8 +107,8 @@ const (
 )
 
 // devMode is set once, at the top of main(), from a --dev flag scanned out
-// of os.Args before the subcommand switch (README tasks 13.1/14.4): with
-// it, every zero-setup default this demo has always had keeps working
+// of os.Args before the subcommand switch (README task 13.11/F12): with it,
+// every zero-setup default this demo has always had keeps working
 // (auto-generated KEK and AuthN signing key, localhost DSNs); without it,
 // serve() fails closed on anything security/connectivity-critical left
 // unset rather than silently minting a fresh key or dialing a
@@ -217,7 +217,7 @@ func serve(ctx context.Context) error {
 		return fmt.Errorf("config: %w", err)
 	}
 
-	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
+	pool, err := newAppPool(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return fmt.Errorf("connect: %w", err)
 	}
@@ -333,11 +333,19 @@ func serve(ctx context.Context) error {
 	srv.Verifier = verifier
 	srv.Oversight = &nexusdOversightPort{approvals: approvals, resumer: resumer, delegations: delegations, teams: teamsSvc}
 	srv.Grants = grants
+	srv.ControlPlane = newControlPlane(st, gate, chain, approvals, grants)
 	srv.RunCtl = &nexusdRunCtlPort{ctl: ctl}
 	srv.Skills = &nexusdSkillSetPort{store: st, bundles: admittedSkillBundles}
 	srv.MCP = mcpPort
 	srv.Outbox = &surfaces.Outbox{Store: st, Keys: keyStore, Chain: chain}
 	srv.OutboxSender = slogSender{}
+
+	spanExporter, shutdownExporter, err := newSpanExporter(ctx)
+	if err != nil {
+		return fmt.Errorf("configure span exporter: %w", err)
+	}
+	defer shutdownExporter()
+	srv.Exporter = spanExporter
 
 	stopAnchor := startAnchorLoop(ctx, st, chain)
 	defer stopAnchor()
@@ -383,6 +391,7 @@ func serve(ctx context.Context) error {
 	// a load balancer or Kubernetes probe has no bearer token to send.
 	mux.HandleFunc("GET /healthz", handleHealthz)
 	mux.HandleFunc("GET /readyz", handleReadyz(pool, redisClient, signer))
+	mux.HandleFunc("GET /metrics", handleMetrics(st))
 	mux.Handle("/v1/webhooks/telegram/", telegramSrv.Handler())
 	mux.Handle("/v1/webhooks/zalo/", zaloSrv.Handler())
 	mux.Handle("/v1/webhooks/email/", emailSrv.Handler())
@@ -421,6 +430,104 @@ func serve(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+
+// appPoolMaxConns/appPoolMinConns are README task 13.14's explicit sizing
+// (closing production-readiness finding F14: "the connection pool is
+// constructed with no config at all"), reconciled against
+// deploy/docker-compose.yml's own PgBouncer service (DEFAULT_POOL_SIZE=20,
+// MAX_CLIENT_CONN=200) — this is the only client pool that dials THROUGH
+// PgBouncer (the admin pools startQueueWorkers/listTenantIDs/etc. construct
+// connect directly to Postgres, bypassing it entirely), so its own ceiling
+// is what actually has to fit under that budget alongside every other
+// process sharing the same PgBouncer instance.
+const (
+	appPoolMaxConns = 20
+	appPoolMinConns = 2
+)
+
+// newAppPool builds the one pgxpool.Pool that dials through PgBouncer for
+// the life of the process — explicit sizing plus lifecycle knobs, replacing
+// the zero-config pgxpool.New serve() used before (README task 13.14).
+func newAppPool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
+	pcfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("parse pool config: %w", err)
+	}
+	pcfg.MaxConns = appPoolMaxConns
+	pcfg.MinConns = appPoolMinConns
+	pcfg.MaxConnLifetime = 30 * time.Minute
+	pcfg.MaxConnIdleTime = 5 * time.Minute
+	pcfg.HealthCheckPeriod = time.Minute
+	return pgxpool.NewWithConfig(ctx, pcfg)
+}
+
+// metricsStaleClaimAfter mirrors runDashboard's own default — how old an
+// in_flight claim must be before /metrics counts it as unresolved (README
+// task 6.6).
+const metricsStaleClaimAfter = 15 * time.Minute
+
+// handleMetrics exposes internal/obs.ComputeGoldenSignals' own per-tenant
+// signals in Prometheus text exposition format (README task 13.12, closing
+// production-readiness finding F13: "nothing scrapes, alerts, or pages" —
+// this is what a scrape target actually needs). Hand-rolled rather than a
+// client library: the format is a handful of "# TYPE"/metric lines, not
+// worth a new dependency for. Like `nexusd dashboard`'s own CLI
+// presentation, no DropTracker is threaded through here, so
+// nexus_telemetry_attr_drop_rate always reports 0 from this endpoint
+// specifically — the same "not measured here, never measured zero"
+// documented limitation.
+func handleMetrics(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		tenantIDs, err := listTenantIDs(r.Context())
+		if err != nil {
+			http.Error(w, "list tenants: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		signalsByTenant := make(map[uuid.UUID]obs.GoldenSignals, len(tenantIDs))
+		for _, tenantID := range tenantIDs {
+			signals, err := obs.ComputeGoldenSignals(r.Context(), st, tenantID, metricsStaleClaimAfter, nil, nil)
+			if err != nil {
+				slog.Error("nexusd: /metrics: compute golden signals", "tenant_id", tenantID, "error", err)
+				continue
+			}
+			signalsByTenant[tenantID] = signals
+		}
+
+		w.Header().Set("content-type", "text/plain; version=0.0.4")
+
+		writeGaugeHeader(w, "nexus_completion_rate", "Fraction of terminal sessions ending under a given terminal_reason.")
+		for tenantID, signals := range signalsByTenant {
+			for reason, rate := range signals.CompletionRateByReason {
+				fmt.Fprintf(w, "nexus_completion_rate{tenant_id=%q,reason=%q} %f\n", tenantID, reason, rate) //nolint:errcheck // best-effort write to a scrape response
+			}
+		}
+
+		for _, m := range []struct {
+			name, help string
+			value      func(obs.GoldenSignals) float64
+		}{
+			{"nexus_stuck_rate", "Fraction of terminal sessions ending stuck_terminated.", func(s obs.GoldenSignals) float64 { return s.StuckRate }},
+			{"nexus_cost_ceiling_breach_rate", "Fraction of budget_decisions resolved refuse_ceiling.", func(s obs.GoldenSignals) float64 { return s.CostCeilingBreachRate }},
+			{"nexus_cache_read_rate", "Fraction of input tokens served from cache.", func(s obs.GoldenSignals) float64 { return s.CacheReadRate }},
+			{"nexus_approval_p50_decision_ms", "Median approval decision latency in milliseconds.", func(s obs.GoldenSignals) float64 { return float64(s.ApprovalP50DecisionMS) }},
+			{"nexus_approval_p95_decision_ms", "P95 approval decision latency in milliseconds.", func(s obs.GoldenSignals) float64 { return float64(s.ApprovalP95DecisionMS) }},
+			{"nexus_approval_mismatch_rate", "Fraction of decided approvals that resolved approval_mismatch.", func(s obs.GoldenSignals) float64 { return s.ApprovalMismatchRate }},
+			{"nexus_unresolved_inflight_claims", "In-flight claims older than the staleness window.", func(s obs.GoldenSignals) float64 { return float64(s.UnresolvedInFlightClaims) }},
+			{"nexus_telemetry_attr_drop_rate", "Fraction of telemetry attribute keys dropped by the allowlist (not measured by this endpoint; see internal/obs.DropTracker).", func(s obs.GoldenSignals) float64 { return s.TelemetryAttrDropRate }},
+		} {
+			writeGaugeHeader(w, m.name, m.help)
+			for tenantID, signals := range signalsByTenant {
+				fmt.Fprintf(w, "%s{tenant_id=%q} %f\n", m.name, tenantID, m.value(signals)) //nolint:errcheck // best-effort write to a scrape response
+			}
+		}
+	}
+}
+
+func writeGaugeHeader(w http.ResponseWriter, name, help string) {
+	fmt.Fprintf(w, "# HELP %s %s\n", name, help) //nolint:errcheck // best-effort write to a scrape response
+	fmt.Fprintf(w, "# TYPE %s gauge\n", name)    //nolint:errcheck // best-effort write to a scrape response
 }
 
 func handleHealthz(w http.ResponseWriter, _ *http.Request) {
@@ -1075,6 +1182,32 @@ func newProvider() (provider.Provider, error) {
 	}
 }
 
+// newSpanExporter builds whichever obs Exporter this process emits spans
+// through (README task 13.12, closing production-readiness finding F13):
+// NEXUS_OTLP_ENDPOINT set means a real collector (obs.OTLPExporter, over
+// OTLP/HTTP); unset falls back to the stdout obs.Exporter every earlier
+// phase already had — the filtering guarantee (internal/obs's allowlist) is
+// identical either way, only the sink changes. The returned shutdown func
+// flushes an OTLP exporter's buffered spans; it's a no-op for the stdout
+// one, which has nothing to flush.
+func newSpanExporter(ctx context.Context) (rest.SpanEmitter, func(), error) {
+	endpoint := envOr("NEXUS_OTLP_ENDPOINT", "")
+	if endpoint == "" {
+		return obs.NewExporter(os.Stdout), func() {}, nil
+	}
+	exp, err := obs.NewOTLPExporter(ctx, endpoint, envOr("NEXUS_OTLP_INSECURE", "true") == "true")
+	if err != nil {
+		return nil, nil, err
+	}
+	return exp, func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := exp.Shutdown(shutdownCtx); err != nil {
+			slog.Error("nexusd: shutdown OTLP span exporter", "error", err)
+		}
+	}, nil
+}
+
 // newEmbedder returns this demo's one Embedder: internal/provider/fake's
 // deterministic fake (README task 12.5 — "no correctness test calls a live
 // embedding model"). Unlike newProvider, there is no real-adapter branch
@@ -1406,9 +1539,9 @@ func (demoSafetyModel) Classify(context.Context, string, string) (safety.Verdict
 }
 
 // loadOrGenerateKEK loads the KEK from path. Outside dev mode (README task
-// 14.4), a missing file is fatal — a deploy that forgot to mount its KEK
-// must never start "successfully" holding a brand-new key that can't unwrap
-// any existing tenant's DEK. Only inside dev mode does a missing file
+// 13.11/F12), a missing file is fatal — a deploy that forgot to mount its
+// KEK must never start "successfully" holding a brand-new key that can't
+// unwrap any existing tenant's DEK. Only inside dev mode does a missing file
 // bootstrap a fresh one, exactly as this always behaved before F12.
 func loadOrGenerateKEK(path string, dev bool) (crypto.KEK, error) {
 	f, err := os.Open(path) //nolint:gosec // path is an operator-controlled config value (NEXUS_KEK_PATH), never request input
@@ -1442,11 +1575,10 @@ func loadOrGenerateKEK(path string, dev bool) (crypto.KEK, error) {
 const defaultAuthnSigningKeyPath = ".dev/authn_signing.key"
 
 // loadOrGenerateSigningKey loads the AuthN Ed25519 signing key from path,
-// following loadOrGenerateKEK's own load-or-generate shape but gated by dev
-// mode (README task 13.1, F1) — outside dev mode, a missing file is fatal
-// rather than a silently minted key nothing else in the fleet would ever
-// accept a token from. A real deployment must fail to start rather than run
-// with an AuthN key no other process trusts.
+// following loadOrGenerateKEK's identical load-or-generate-gated-by-dev
+// shape (README task 13.1/13.11, F1/F12) — outside dev mode, a missing file
+// is fatal rather than a silently minted key nothing else in the fleet
+// would ever accept a token from.
 func loadOrGenerateSigningKey(path string, dev bool) (ed25519.PrivateKey, error) {
 	f, err := os.Open(path) //nolint:gosec // path is an operator-controlled config value (NEXUS_AUTHN_SIGNING_KEY_PATH), never request input
 	if err == nil {

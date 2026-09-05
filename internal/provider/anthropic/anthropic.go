@@ -304,8 +304,17 @@ func (p *Provider) Stream(ctx context.Context, prompt provider.Prompt, tools []p
 		return nil, classifyAPIError(resp.StatusCode, eb)
 	}
 
+	// README task 13.14 (closing production-readiness finding F14): the
+	// default bufio.Scanner line cap is 64KB, which hard-errors (rather than
+	// degrading) on an oversized SSE line — a single content_block_delta or
+	// input_json_delta frame carrying a large chunk of text/partial JSON can
+	// exceed that. 1MB covers any realistic single-line SSE frame this API
+	// sends.
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
+
 	return &stream{
-		body: resp.Body, scanner: bufio.NewScanner(resp.Body),
+		body: resp.Body, scanner: scanner,
 		toolBlocks: map[int]*toolBlockState{}, thinkingBlocks: map[int]*thinkingBlockState{},
 	}, nil
 }
