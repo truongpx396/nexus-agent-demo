@@ -1,0 +1,18 @@
+# README task 13.10, closing production-readiness finding F11: no
+# dependency/supply-chain scanning existed at all — this is the other half
+# of that fix (govulncheck in .github/workflows/ci.yml is the scanning job;
+# this is what keeps the tree from drifting stale between scans).
+version: 2
+updates:
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "npm"
+    directory: "/web"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

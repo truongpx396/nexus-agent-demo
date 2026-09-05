@@ -367,6 +367,21 @@ func (g *Gate) Reconcile(ctx context.Context, res Reservation, usage provider.Us
 	return g.finishReconcile(ctx, res, actual)
 }
 
+// ReconcileUsage is Reconcile with the four token counts passed as
+// primitives instead of a provider.Usage value (README task 13.15): a
+// caller that must not import internal/provider — internal/controlplane's
+// LocalPort, closing production-readiness finding F15 — has no other way
+// to report usage back through this Gate. internal/cost already imports
+// internal/provider for Reconcile's own signature, so building the
+// provider.Usage value here, instead of at the caller, is what keeps that
+// dependency from leaking to a caller that isn't allowed to have it.
+func (g *Gate) ReconcileUsage(ctx context.Context, res Reservation, inputUncached, inputCacheRead, inputCacheWrite, outputTokens int, reported bool) error {
+	return g.Reconcile(ctx, res, provider.Usage{
+		InputUncached: inputUncached, InputCacheRead: inputCacheRead,
+		InputCacheWrite: inputCacheWrite, OutputTokens: outputTokens,
+	}, reported)
+}
+
 // ReconcileEmbedding is Reconcile's counterpart for a PurposeEmbedding
 // reservation (task 12.4): a single meter (MeterEmbeddingTokens) priced off
 // the real token count internal/provider.EmbedUsage reports, rather than

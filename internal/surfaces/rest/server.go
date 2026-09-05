@@ -21,7 +21,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/cost"
+	"github.com/truongpx396/nexus-agent-demo/internal/controlplane"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/harness"
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
@@ -42,6 +42,16 @@ type Server struct {
 	// on this struct: a nil Verifier fails every request closed (401/500),
 	// it never falls back to trusting a client-supplied header.
 	Verifier PrincipalVerifier
+
+	// ControlPlane admits a new run (README task 13.15) — the session row
+	// plus an optional session-scoped budget, through
+	// internal/controlplane.Port, the versioned control-plane boundary
+	// README §2 has always described. Mandatory, like Verifier: a nil
+	// ControlPlane fails handleCreateRun closed (500) rather than panic.
+	// internal/controlplane imports nothing this package doesn't already
+	// (it's a deliberately dependency-light contract package), so — like
+	// Grants — this is a direct import, no translation seam needed.
+	ControlPlane controlplane.Port
 
 	// CatalogManifestDigest is folded into every new session's
 	// harness_digest (internal/harness.Config.CatalogManifestDigest) — the
@@ -96,6 +106,13 @@ type Server struct {
 	// per run the same way Skills already is.
 	MCP MCPPort
 
+	// Exporter, if set, emits one content-free span per completed run
+	// (README task 13.12) — session.id/tenant.id/terminal_reason only, the
+	// same allowlist-filtered shape internal/obs's stdout Exporter and
+	// OTLPExporter both already enforce; nil leaves this unmounted, which
+	// every pre-Phase-13 caller and test still gets.
+	Exporter SpanEmitter
+
 	broker *broker
 }
 
@@ -104,6 +121,16 @@ type Server struct {
 // OversightPort already use.
 type MCPPort interface {
 	Resolve(ctx context.Context, tenantID, userID uuid.UUID) (schemas []provider.ToolSchema, digest []byte, err error)
+}
+
+// SpanEmitter is the seam between this surface and internal/obs's two
+// Exporter implementations (stdout, OTLPExporter) — structurally identical
+// to obs.Exporter/obs.OTLPExporter's own Emit method, declared locally so
+// this package depends on the shape, not a concrete exporter type (this
+// package already imports internal/obs directly for Grants, so this is a
+// convenience seam, not a boundary-rule requirement).
+type SpanEmitter interface {
+	Emit(name string, attrs obs.Attrs) error
 }
 
 // SkillSetPort is the seam between this surface and internal/skills — the
@@ -224,16 +251,6 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var budgetCeiling *cost.Money
-	if req.BudgetUSD != "" {
-		amount, perr := cost.ParseDecimal(req.BudgetUSD, cost.DefaultCurrency)
-		if perr != nil {
-			http.Error(w, `"budget_usd" is invalid: `+perr.Error(), http.StatusBadRequest)
-			return
-		}
-		budgetCeiling = &amount
-	}
-
 	var skillSetDigest []byte
 	if s.Skills != nil {
 		var derr error
@@ -269,40 +286,38 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		MCPCatalogDigest:      mcpCatalogDigest,
 	})
 
+	if s.ControlPlane == nil {
+		http.Error(w, "server misconfigured: no control plane wired", http.StatusInternalServerError)
+		return
+	}
+
+	// README task 13.15: session admission (the session row, plus an
+	// optional session-scoped budget — internal/cost, Phase 4 task 4.5,
+	// created together since budgets.scope_ref has an FK to sessions) goes
+	// through internal/controlplane.Port — the versioned control-plane
+	// boundary README §2 has always described. Encryption stays entirely
+	// on this side of that boundary: the DEK is minted next, exactly as it
+	// always has been, never inside AdmitRun (that package's own doc
+	// comment on why).
+	admitResult, err := s.ControlPlane.AdmitRun(r.Context(), controlplane.AdmitRunV1{
+		TenantID: tenantID, UserID: userID, SessionID: sessionID, SurfaceID: "rest",
+		DataLabel: string(dataLabel), RouteModelID: route.ModelID, RouteReason: route.Reason,
+		Autonomy: autonomy, BudgetUSD: req.BudgetUSD, HarnessDigest: digest,
+	})
+	if err != nil {
+		http.Error(w, "create run: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !admitResult.Admitted {
+		http.Error(w, "create run: "+admitResult.Reason, http.StatusBadRequest)
+		return
+	}
+
 	var dek crypto.DEK
-	err := s.Store.InTenantTx(r.Context(), tenantID, func(ctx context.Context, tx pgx.Tx) error {
+	err = s.Store.InTenantTx(r.Context(), tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var derr error
 		dek, derr = s.KeyStore.NewDEK(ctx, tx, tenantID)
-		if derr != nil {
-			return derr
-		}
-		if err := store.CreateSession(ctx, tx, store.Session{
-			SessionID:     sessionID,
-			SessionKey:    sessionID.String(),
-			TenantID:      tenantID,
-			SurfaceID:     "rest",
-			UserID:        userID,
-			AgentID:       uuid.Nil, // no agent registry yet (Phase 3+); a fresh run has no config row to pin to
-			AgentVersion:  1,
-			HarnessDigest: digest,
-			DataLabel:     string(dataLabel),
-			RouteModelID:  route.ModelID,
-			RouteReason:   route.Reason,
-			AutonomyLevel: autonomy,
-		}); err != nil {
-			return err
-		}
-		if budgetCeiling != nil {
-			// A session-scoped budget (internal/cost, Phase 4 task 4.5) —
-			// created in the SAME transaction as the session row it
-			// references (budgets.scope_ref has an FK to sessions), so a
-			// caller never observes a session with no way to enforce the
-			// ceiling it asked for.
-			if _, err := cost.CreateBudget(ctx, tx, tenantID, cost.BudgetScopeSession, &sessionID, *budgetCeiling); err != nil {
-				return err
-			}
-		}
-		return nil
+		return derr
 	})
 	if err != nil {
 		http.Error(w, "create run: "+err.Error(), http.StatusInternalServerError)
@@ -328,7 +343,7 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "start run: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	go s.publishUntilDone(sessionID, events)
+	go s.publishUntilDone(tenantID, sessionID, events)
 
 	w.Header().Set("content-type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
@@ -351,13 +366,39 @@ func sealFuncFor(dek crypto.DEK, tenantID, sessionID uuid.UUID) SealFunc {
 // closing the session's subscribers once the channel closes (the run has
 // ended, normally or not) — this is the only place StartRun's result is
 // consumed, so the broker's bookkeeping stays entirely inside this package.
-func (s *Server) publishUntilDone(sessionID uuid.UUID, events <-chan RunEvent) {
+func (s *Server) publishUntilDone(tenantID, sessionID uuid.UUID, events <-chan RunEvent) {
 	defer s.broker.closeSession(sessionID)
 	for re := range events {
 		s.broker.publish(sessionID, published(re))
 		if s.Outbox != nil && s.OutboxSender != nil && re.Err == nil && re.Event.Type == store.EventApprovalRequested {
 			s.deliverApprovalNotification(sessionID, re.Event)
 		}
+		if s.Exporter != nil && re.Err == nil && re.Event.Type == store.EventTerminal {
+			s.emitTerminalSpan(tenantID, sessionID)
+		}
+	}
+}
+
+// emitTerminalSpan is README task 13.12's one concrete span-emission call
+// site: one content-free "run.terminal" span per completed run —
+// session.id/tenant.id/terminal_reason, the same three fields
+// getRunResponse already exposes over plain HTTP, now also reaching
+// whichever Exporter (stdout or OTLPExporter, internal/obs) cmd/nexusd
+// wired in. TerminalReason is read from the session row (a plaintext
+// column, store.Session's own field — never the sealed event payload), so
+// this needs no decrypt path of its own.
+func (s *Server) emitTerminalSpan(tenantID, sessionID uuid.UUID) {
+	sess, err := s.getSession(context.Background(), tenantID, sessionID)
+	if err != nil {
+		slog.Error("rest: emit terminal span: load session", "error", err, "session_id", sessionID)
+		return
+	}
+	attrs := obs.Attrs{"session.id": sessionID.String(), "tenant.id": tenantID.String()}
+	if sess.TerminalReason != nil {
+		attrs["terminal_reason"] = *sess.TerminalReason
+	}
+	if err := s.Exporter.Emit("run.terminal", attrs); err != nil {
+		slog.Error("rest: emit terminal span", "error", err, "session_id", sessionID)
 	}
 }
 
