@@ -107,14 +107,16 @@ const (
 )
 
 // devMode is set once, at the top of main(), from a --dev flag scanned out
-// of os.Args before the subcommand switch (README task 13.1): with it, the
-// AuthN signing key keeps its zero-setup demo behavior (auto-generated,
-// persisted under .dev/); without it, loadOrGenerateSigningKey fails closed
-// rather than silently minting a fresh key nothing else in the fleet would
-// ever accept a token from. A package-level var (not threaded through every
-// subcommand's own flag set) because the signing-key loader is called from
-// both serve() and runToken — a single process-wide switch is simpler than
-// plumbing a bool through each.
+// of os.Args before the subcommand switch (README tasks 13.1/14.4): with
+// it, every zero-setup default this demo has always had keeps working
+// (auto-generated KEK and AuthN signing key, localhost DSNs); without it,
+// serve() fails closed on anything security/connectivity-critical left
+// unset rather than silently minting a fresh key or dialing a
+// developer-convenience default in what's presumed to be a real deployment.
+// A package-level var (not threaded through every subcommand's own flag
+// set) because loadOrGenerateKEK is called from both serve() and runErase,
+// and the signing-key equivalent only from serve() and runToken — a single
+// process-wide switch is simpler than plumbing a bool through each.
 var devMode bool
 
 func main() {
@@ -210,21 +212,25 @@ func runServe() {
 }
 
 func serve(ctx context.Context) error {
-	dsn := envOr("NEXUS_DATABASE_URL", defaultAppDSN)
-	pool, err := pgxpool.New(ctx, dsn)
+	cfg, err := loadServerConfig(devMode)
+	if err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
+
+	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return fmt.Errorf("connect: %w", err)
 	}
 	defer pool.Close()
 	st := store.New(pool)
 
-	kek, err := loadOrGenerateKEK(envOr("NEXUS_KEK_PATH", defaultKEKPath))
+	kek, err := loadOrGenerateKEK(cfg.KEKPath, devMode)
 	if err != nil {
 		return fmt.Errorf("load KEK: %w", err)
 	}
 	keyStore := crypto.NewKeyStore(kek)
 
-	signingKey, err := loadOrGenerateSigningKey(envOr("NEXUS_AUTHN_SIGNING_KEY_PATH", defaultAuthnSigningKeyPath), devMode)
+	signingKey, err := loadOrGenerateSigningKey(cfg.AuthnSigningKeyPath, devMode)
 	if err != nil {
 		return fmt.Errorf("load AuthN signing key: %w", err)
 	}
@@ -240,14 +246,14 @@ func serve(ctx context.Context) error {
 	// itself — internal/audit/signerkey (the package that CAN read it) is
 	// imported only by cmd/signerd, enforced by
 	// tests/contract/boundaries_test.go.
-	signer := audit.NewSignerClient(envOr("NEXUS_SIGNERD_SOCKET", defaultSignerdSocket))
+	signer := audit.NewSignerClient(cfg.SignerdSocket)
 	chain := audit.NewChain(signer)
 
 	// Moved ahead of newToolPipeline (Phase 2's own original ordering had
 	// this after) — Phase 11's connectors.Vault needs a live Redis client
 	// for its bounded-TTL OAuth state, and newToolPipeline needs the Vault
 	// itself to wire platform/connector_fetch and the MCP dynamic resolver.
-	redisClient := redis.NewClient(&redis.Options{Addr: envOr("NEXUS_REDIS_ADDR", defaultRedisAddr)})
+	redisClient := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
 
 	vault := &connectors.Vault{Store: st, Keys: keyStore, Providers: newConnectorRegistry(), Redis: redisClient}
 
@@ -382,7 +388,7 @@ func serve(ctx context.Context) error {
 	mux.Handle("/v1/webhooks/email/", emailSrv.Handler())
 	mux.Handle("/", srv.Handler())
 
-	addr := envOr("NEXUS_HTTP_ADDR", ":8080")
+	addr := cfg.HTTPAddr
 	fmt.Printf("listening on %s (provider=%s)\n", addr, envOr("NEXUS_PROVIDER", "fake"))
 
 	// README task 13.2 (F2): a real *http.Server with timeouts, driven to a
@@ -1399,7 +1405,12 @@ func (demoSafetyModel) Classify(context.Context, string, string) (safety.Verdict
 	return safety.VerdictDefer, "no real safety model configured (Phase 3 demo default)", nil
 }
 
-func loadOrGenerateKEK(path string) (crypto.KEK, error) {
+// loadOrGenerateKEK loads the KEK from path. Outside dev mode (README task
+// 14.4), a missing file is fatal — a deploy that forgot to mount its KEK
+// must never start "successfully" holding a brand-new key that can't unwrap
+// any existing tenant's DEK. Only inside dev mode does a missing file
+// bootstrap a fresh one, exactly as this always behaved before F12.
+func loadOrGenerateKEK(path string, dev bool) (crypto.KEK, error) {
 	f, err := os.Open(path) //nolint:gosec // path is an operator-controlled config value (NEXUS_KEK_PATH), never request input
 	if err == nil {
 		defer f.Close() //nolint:errcheck // read-only handle; nothing to flush
@@ -1407,6 +1418,9 @@ func loadOrGenerateKEK(path string) (crypto.KEK, error) {
 	}
 	if !os.IsNotExist(err) {
 		return crypto.KEK{}, fmt.Errorf("open KEK file %s: %w", path, err)
+	}
+	if !dev {
+		return crypto.KEK{}, fmt.Errorf("KEK file %s does not exist (pass --dev to auto-generate one for local development; a production deployment must source it from a real vault/HSM)", path)
 	}
 
 	kek, err := crypto.GenerateKEK()
@@ -1809,7 +1823,7 @@ func runErase(ctx context.Context, args []string) error {
 	defer pool.Close()
 	st := store.New(pool)
 
-	kek, err := loadOrGenerateKEK(envOr("NEXUS_KEK_PATH", defaultKEKPath))
+	kek, err := loadOrGenerateKEK(envOr("NEXUS_KEK_PATH", defaultKEKPath), devMode)
 	if err != nil {
 		return fmt.Errorf("load KEK: %w", err)
 	}
