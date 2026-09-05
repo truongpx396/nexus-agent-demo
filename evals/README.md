@@ -1,4 +1,4 @@
-The release gate (README.md §9, docs/constitution.md Principle IX): it
+The release gate (README.md §4, docs/constitution.md Principle IX): it
 shipped before the first behavior-bearing slice, not after, and hardened
 into the full gate in Phase 10 — nothing here got rewritten to get there,
 only added to.

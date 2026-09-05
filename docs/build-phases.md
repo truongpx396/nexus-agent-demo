@@ -1,9 +1,10 @@
 # Build phases and pattern coverage
 
 Split out of [`README.md`](../README.md) — the architecture narrative lives there; this file is
-the fidelity ledger (§1) and the task-by-task build plan (§2), including Phases 13–15, added
+the fidelity ledger (§1), the task-by-task build plan (§2), including Phases 13–15, added
 2026-09-04 after [`docs/production-readiness-review.md`](production-readiness-review.md) found
-that several patterns rated **F** below were not actually at full fidelity in the shipped code.
+that several patterns rated **F** below were not actually at full fidelity in the shipped code,
+the effort estimate (§3), and the risk register (§4).
 
 ---
 
@@ -390,7 +391,7 @@ a green check."
 
 Not derived from new architecture — pattern #64 is already proven by REST + CLI (Phase 2, 7). This
 phase is six more instances of the same capability-descriptor seam (#49), built once a concrete
-integration need exists rather than deferred indefinitely (README.md §6's trigger for this row has fired).
+integration need exists rather than deferred indefinitely (README.md §5's trigger for this row has fired).
 Nothing here changes `kernel/`; 7.15's "empty kernel diff" proof extends to every surface added below.
 
 | # | Task | Proves |
@@ -418,7 +419,7 @@ telemetry, aimed at a new secret class).
 ### Phase 12 — Retrieval tier (pgvector) + document conversion (5–6 days)
 
 Ships once file-first memory (#46) is actually exhausted (~1M tokens of durable per-tenant
-knowledge, README.md §6's original trigger) rather than pre-built speculatively. Retrieval sits **beside**
+knowledge, README.md §5's original trigger) rather than pre-built speculatively. Retrieval sits **beside**
 memory, not instead of it — the same injection-screening and tenant-scoping discipline just
 applies to a second store.
 
@@ -511,4 +512,48 @@ no content-bearing attribute ever leaving the process.
 **Acceptance**: the load test in 15.3 reports a measured req/s number (not an assumed one);
 `tests/contract/boundaries_test.go`'s two previously-`t.Skipf`'d rules for `internal/controlplane`
 now run and pass.
+
+---
+
+## 3. Effort summary
+
+| Phase | Days | Cumulative | Ships |
+|---|---|---|---|
+| 0 · Setup | 1 | 1 | — |
+| 1 · Foundational seams | 6 | 7 | Schema you never have to migrate |
+| 2 · Kernel loop | 5 | 12 | **A working agent over REST** |
+| 3 · Pipeline + permission chain + hooks | 8 | 20 | A *governed* agent |
+| 4 · Cost governance | 5 | 25 | An agent that cannot run away |
+| 5 · Trust surface | 9 | 34 | An agent a security review survives |
+| 6 · Reliability | 6 | 40 | An agent that survives `kill -9` |
+| 7 · Memory, skills, surfaces | 6 | 46 | An agent that grows and multiplies surfaces |
+| 8 · Orchestration + delegation | 7 | 53 | Processes, not just conversations |
+| 9 · Peer agent teams | 7 | 60 | Peers, not just a tree |
+| 10 · Eval gate + go-live | 5 | 65 | An agent you can safely **change** |
+| 11 · Additional surfaces (MCP, OAuth, Telegram/Zalo/email/cron, web) | 9 | 74 | Every surface the original names, not just the two that prove the pattern |
+| 12 · Retrieval tier (pgvector) + document conversion | 6 | 80 | Durable knowledge beyond what file-first memory can carry |
+| 13 · Production hardening | 18 | 98 | An agent that is actually deployable, not just architecturally sound |
+
+≈ **98 working days** solo. Phases 2 and 3 alone (12 days after setup + seams, i.e. day 20) give
+you a demonstrable, governed, single-surface agent — that is the natural first public milestone.
+Phases 11–12 are additive and ship last, on a trigger (README §5), not on a fixed schedule — the
+65-day core plan through Phase 10 is a complete, governed agent on its own. Phase 13 is not gated
+on a trigger — it runs once, after whichever phase is current when it is scheduled, and before this
+binary is exposed to anything but a developer's laptop.
+
+## 4. Risks and how the plan absorbs them
+
+| Risk | Mitigation built into the plan |
+|---|---|
+| **Phase 3 is huge and blocks everything downstream** | Split at the natural seam: 3.1–3.5 (pipeline) can ship and be tested before 3.6–3.11 (chain + hooks). The pipeline with a stub chain is still a shippable increment. |
+| **The permission chain becomes untestable combinatorics** | It is a *total order* of 10 layers with ≤4 outcomes each — a table-driven test enumerating layer × outcome is ~200 rows, and that exhaustiveness is what makes an undefined interaction impossible. |
+| **RLS + PgBouncer setup eats days** | Do it on day 1 of Phase 1 and let 1.4 be the phase's gate. Discovering the transaction-local rule in Phase 6 is the expensive version. |
+| **The eval gate feels premature in Phase 1** | Ship it with 5 cases and code graders only; grow to 20 with the judge in Phase 10. The point is that the harness and the CI wiring exist before behavior does. |
+| **A shared task board reopens the taint-laundering hole delegation just closed** | It doesn't get its own rules: 9.6 is the same fold-on-boundary-crossing idea as 8.11, just triggered by a read instead of a return, and 9.7 requires the same injection scan (7.1) before a card is ever surfaced. No board content reaches another peer's context unscanned or untainted. |
+| **Cost metering gets bolted onto foreground turns only** | 4.8 is a task, and a test asserts every `Provider.Stream` caller in the codebase passes through `BudgetGate.Reserve` — enforced by an AST check, not by review. |
+| **Scope creep back toward all 191 FRs** | README §5 has a named trigger per deferral. If the trigger has not fired, the answer is no. |
+| **"Simplified" quietly becomes "weakened"** | §1's fidelity column is the contract. Anything marked **F** that ships as **S** is a plan change requiring a note here — the same discipline the source constitution applies to itself. |
+| **Six new surfaces (Phase 11) each grow their own bespoke auth/permission logic** | They don't get any: every new surface reuses the capability descriptor (#49) and the unmodified permission chain (#17); 11.8's conformance suite is what catches a surface that quietly special-cases itself. |
+| **Retrieval (Phase 12) becomes a second, unscoped copy of tenant knowledge that erasure can't reach** | 12.8 makes this the phase's gate, the same way 1.4 gates Phase 1: erasure must empty the retrieval index in the same transaction, not on a best-effort follow-up job. |
+| **A pattern rated F on paper isn't at full fidelity in the shipped adapter** | [`docs/production-readiness-review.md`](production-readiness-review.md) exists precisely to audit shipped code against §1's claims independently of this plan; Phase 13 closes what it found (F4/F5/F7/F8/F13/F15) before any new pattern work resumes. |
 
