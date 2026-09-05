@@ -12,6 +12,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"time"
 
 	cerrdefs "github.com/containerd/errdefs"
@@ -118,6 +119,22 @@ func NewDocker() (*Docker, error) {
 func (d *Docker) Exec(ctx context.Context, cfg Config, cmd string) (Result, error) {
 	cfg = cfg.withDefaults()
 
+	// README task 13.13: createContainer now runs the command as a non-root
+	// User (65534:65534), but internal/tools/builtin.FileWrite creates this
+	// same per-session directory 0o700 — owner-only, correct for the
+	// UNSANDBOXED path where the host process itself writes here directly,
+	// but unwritable by a different container UID once one is bind-mounting
+	// it. Ensuring it exists and is world-writable here is scoped to this
+	// package's own responsibility (the sandboxed process's working
+	// directory), not a loosening of file_write.go's own default for the
+	// unsandboxed case.
+	if err := os.MkdirAll(cfg.WorkspaceDir, 0o777); err != nil { //nolint:gosec // world-writable is intentional: any container UID must be able to use its own bind-mounted workspace
+		return Result{}, fmt.Errorf("sandbox: create workspace dir %s: %w", cfg.WorkspaceDir, err)
+	}
+	if err := os.Chmod(cfg.WorkspaceDir, 0o777); err != nil { //nolint:gosec // see MkdirAll above — explicit chmod because MkdirAll's mode is subject to umask
+		return Result{}, fmt.Errorf("sandbox: chmod workspace dir %s: %w", cfg.WorkspaceDir, err)
+	}
+
 	created, err := d.createContainer(ctx, cfg, cmd)
 	if err != nil {
 		return Result{}, err
@@ -183,6 +200,10 @@ func (d *Docker) createContainer(ctx context.Context, cfg Config, cmd string) (c
 			// non-tty container's logs otherwise use — matching
 			// builtin.Shell's own CombinedOutput() behavior exactly.
 			Tty: true,
+			// User (README task 13.13, closing production-readiness finding
+			// F10): nobody:nogroup — a builtin.Shell command never needs to
+			// be root inside its own throwaway container.
+			User: "65534:65534",
 		},
 		HostConfig: &container.HostConfig{
 			NetworkMode: "none", // README tasks 5.12/5.13: default-deny network from inside the sandbox
@@ -192,6 +213,17 @@ func (d *Docker) createContainer(ctx context.Context, cfg Config, cmd string) (c
 				Memory:    cfg.Limits.MemoryBytes,
 				PidsLimit: &cfg.Limits.PIDs,
 			},
+			// README task 13.13 (closing F10): the four settings that
+			// actually resist a container escape, alongside --network none
+			// and the resource limits above — CapDrop/ReadonlyRootfs/
+			// SecurityOpt were simply absent before, on an otherwise
+			// correctly hardened baseline. The workspace bind mount stays
+			// read-write (builtin.Shell commands routinely need to write
+			// there); ReadonlyRootfs still locks down everything else in
+			// the container.
+			CapDrop:        []string{"ALL"},
+			ReadonlyRootfs: true,
+			SecurityOpt:    []string{"no-new-privileges"},
 		},
 	}
 
