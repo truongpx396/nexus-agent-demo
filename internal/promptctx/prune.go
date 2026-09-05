@@ -55,16 +55,17 @@ func Prune(transcript []provider.Message, policy PrunePolicy) ([]provider.Messag
 		if m.Role != "tool" {
 			continue
 		}
+		text := m.PlainText()
 		switch {
-		case policy.HardClearAt > 0 && len(m.Text) > policy.HardClearAt:
-			out[i] = provider.Message{Role: m.Role, Text: pruneMarker(m.Text)}
+		case policy.HardClearAt > 0 && len(text) > policy.HardClearAt:
+			out[i] = provider.TextMessage(m.Role, pruneMarker(text))
 			prunedCount++
-		case policy.SoftTrimAt > 0 && len(m.Text) > policy.SoftTrimAt:
-			preview := m.Text
+		case policy.SoftTrimAt > 0 && len(text) > policy.SoftTrimAt:
+			preview := text
 			if len(preview) > previewBytes {
 				preview = preview[:previewBytes]
 			}
-			out[i] = provider.Message{Role: m.Role, Text: preview + "\n" + pruneMarker(m.Text)}
+			out[i] = provider.TextMessage(m.Role, preview+"\n"+pruneMarker(text))
 			prunedCount++
 		}
 	}

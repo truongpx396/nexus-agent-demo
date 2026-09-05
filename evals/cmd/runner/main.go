@@ -120,12 +120,46 @@ func main() {
 	}
 
 	printReport(result)
+	runLiveEval()
 
 	if !result.OverallPass {
 		fmt.Println("FAIL")
 		os.Exit(1)
 	}
 	fmt.Println("PASS")
+}
+
+// runLiveEval is README task 13.9 (closing production-readiness finding
+// F6): under the default build (no -tags=liveeval), newLiveProvider always
+// returns a nil provider and this prints one line and returns — the
+// scripted gate above is the only thing that can fail the build. Built
+// with -tags=liveeval AND a configured ANTHROPIC_API_KEY, it additionally
+// runs evals.LiveTaskCorpus() against a real model and prints its own
+// report — deliberately NOT folded into result.OverallPass or this
+// process's exit code: a live-model run has genuine variance a scripted
+// suite doesn't, so it's reported for a human to read, not wired to block
+// merges the way the harness suite is.
+func runLiveEval() {
+	fmt.Println()
+	if !liveEvalBuilt {
+		fmt.Println("live eval: not built (pass -tags=liveeval to include evals.LiveTaskCorpus against a real model)")
+		return
+	}
+	prov, modelID, err := newLiveProvider()
+	if err != nil {
+		fmt.Printf("live eval: %v\n", err)
+		return
+	}
+	report := evals.RunLiveTaskCases(context.Background(), prov, modelID, nil, evals.LiveTaskCorpus())
+	fmt.Printf("live eval (model=%s):\n", modelID)
+	passed := 0
+	for _, trial := range report.Trials {
+		fmt.Printf("  %-55s %-13s %s\n", trial.CaseID, trial.Verdict, trial.Detail)
+		if trial.Verdict == evals.VerdictPass {
+			passed++
+		}
+	}
+	fmt.Printf("live eval: %d/%d passed (informational — not part of the merge-blocking gate)\n", passed, len(report.Trials))
 }
 
 func printReport(result evals.GateResult) {

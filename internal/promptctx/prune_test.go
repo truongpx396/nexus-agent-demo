@@ -2,6 +2,7 @@ package promptctx
 
 import (
 	"math/rand/v2"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -9,12 +10,12 @@ import (
 )
 
 func TestPrune_ZeroValuePolicyPrunesNothing(t *testing.T) {
-	transcript := []provider.Message{{Role: "tool", Text: strings.Repeat("x", 100000)}}
+	transcript := []provider.Message{provider.TextMessage("tool", strings.Repeat("x", 100000))}
 	out, n := Prune(transcript, PrunePolicy{})
 	if n != 0 {
 		t.Errorf("prunedCount = %d, want 0 for a zero-value policy", n)
 	}
-	if out[0].Text != transcript[0].Text {
+	if out[0].PlainText() != transcript[0].PlainText() {
 		t.Error("Prune modified the message under a zero-value policy")
 	}
 }
@@ -22,16 +23,16 @@ func TestPrune_ZeroValuePolicyPrunesNothing(t *testing.T) {
 func TestPrune_NeverTouchesLastKeepLastMessages(t *testing.T) {
 	transcript := make([]provider.Message, 10)
 	for i := range transcript {
-		transcript[i] = provider.Message{Role: "tool", Text: strings.Repeat("x", 5000)}
+		transcript[i] = provider.TextMessage("tool", strings.Repeat("x", 5000))
 	}
 	out, _ := Prune(transcript, PrunePolicy{KeepLast: 3, SoftTrimAt: 10, HardClearAt: 20})
 	for i := 7; i < 10; i++ {
-		if out[i].Text != transcript[i].Text {
-			t.Errorf("message %d within KeepLast was modified: got %q", i, out[i].Text)
+		if out[i].PlainText() != transcript[i].PlainText() {
+			t.Errorf("message %d within KeepLast was modified: got %q", i, out[i].PlainText())
 		}
 	}
 	for i := 0; i < 7; i++ {
-		if out[i].Text == transcript[i].Text {
+		if out[i].PlainText() == transcript[i].PlainText() {
 			t.Errorf("message %d beyond KeepLast was NOT pruned", i)
 		}
 	}
@@ -39,15 +40,15 @@ func TestPrune_NeverTouchesLastKeepLastMessages(t *testing.T) {
 
 func TestPrune_NonToolMessagesAreNeverPruned(t *testing.T) {
 	transcript := []provider.Message{
-		{Role: "user", Text: strings.Repeat("x", 100000)},
-		{Role: "assistant", Text: strings.Repeat("y", 100000)},
+		provider.TextMessage("user", strings.Repeat("x", 100000)),
+		provider.TextMessage("assistant", strings.Repeat("y", 100000)),
 	}
 	out, n := Prune(transcript, PrunePolicy{KeepLast: 0, SoftTrimAt: 10, HardClearAt: 20})
 	if n != 0 {
 		t.Errorf("prunedCount = %d, want 0 — only \"tool\" messages are ever pruned", n)
 	}
 	for i := range transcript {
-		if out[i].Text != transcript[i].Text {
+		if out[i].PlainText() != transcript[i].PlainText() {
 			t.Errorf("message %d was pruned despite role=%q", i, transcript[i].Role)
 		}
 	}
@@ -55,19 +56,19 @@ func TestPrune_NonToolMessagesAreNeverPruned(t *testing.T) {
 
 func TestPrune_HardClearDropsThePreviewSoftTrimKeeps(t *testing.T) {
 	big := strings.Repeat("z", 1000)
-	transcript := []provider.Message{{Role: "tool", Text: big}}
+	transcript := []provider.Message{provider.TextMessage("tool", big)}
 
 	softOut, _ := Prune(transcript, PrunePolicy{KeepLast: 0, SoftTrimAt: 10, HardClearAt: 100000})
-	if !strings.Contains(softOut[0].Text, "pruned:") || !strings.HasPrefix(softOut[0].Text, "zzz") {
-		t.Errorf("soft trim output = %q, want a kept preview plus a pruned marker", softOut[0].Text)
+	if !strings.Contains(softOut[0].PlainText(), "pruned:") || !strings.HasPrefix(softOut[0].PlainText(), "zzz") {
+		t.Errorf("soft trim output = %q, want a kept preview plus a pruned marker", softOut[0].PlainText())
 	}
 
 	hardOut, _ := Prune(transcript, PrunePolicy{KeepLast: 0, SoftTrimAt: 10, HardClearAt: 100})
-	if strings.HasPrefix(hardOut[0].Text, "zzz") {
-		t.Errorf("hard clear output = %q, want no preview at all", hardOut[0].Text)
+	if strings.HasPrefix(hardOut[0].PlainText(), "zzz") {
+		t.Errorf("hard clear output = %q, want no preview at all", hardOut[0].PlainText())
 	}
-	if !strings.Contains(hardOut[0].Text, "pruned:") {
-		t.Errorf("hard clear output = %q, want a pruned marker", hardOut[0].Text)
+	if !strings.Contains(hardOut[0].PlainText(), "pruned:") {
+		t.Errorf("hard clear output = %q, want a pruned marker", hardOut[0].PlainText())
 	}
 }
 
@@ -92,7 +93,7 @@ func TestPrune_NeverMutatesInput(t *testing.T) {
 			case 2:
 				role = "assistant"
 			}
-			transcript[i] = provider.Message{Role: role, Text: strings.Repeat("a", rng.IntN(20000))}
+			transcript[i] = provider.TextMessage(role, strings.Repeat("a", rng.IntN(20000)))
 		}
 		original := make([]provider.Message, len(transcript))
 		copy(original, transcript)
@@ -101,7 +102,7 @@ func TestPrune_NeverMutatesInput(t *testing.T) {
 		out, prunedCount := Prune(transcript, policy)
 
 		for i := range transcript {
-			if transcript[i] != original[i] {
+			if !reflect.DeepEqual(transcript[i], original[i]) {
 				t.Fatalf("trial %d: Prune mutated its input transcript at index %d", trial, i)
 			}
 		}

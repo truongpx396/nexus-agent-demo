@@ -33,7 +33,7 @@ export function Approvals() {
     const t = setInterval(refresh, POLL_INTERVAL_MS);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings.baseUrl, settings.tenantId, settings.userId]);
+  }, [settings.baseUrl, settings.token]);
 
   const pending = approvals.filter((a) => a.status === "pending");
   const rest = approvals.filter((a) => a.status !== "pending");

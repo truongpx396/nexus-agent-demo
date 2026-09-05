@@ -284,7 +284,7 @@ func (d *Delegations) loadRunState(ctx context.Context, tenantID, sessionID uuid
 		return crypto.Open(dek, e.Payload, tenantID.String(), sessionID.String())
 	}
 
-	transcript, err := kernel.Rehydrate(ctx, history, decrypt)
+	transcript, toolUseIDs, err := kernel.Rehydrate(ctx, history, decrypt)
 	if err != nil {
 		return nil, store.Session{}, err
 	}
@@ -308,7 +308,7 @@ func (d *Delegations) loadRunState(ctx context.Context, tenantID, sessionID uuid
 		return nil, store.Session{}, err
 	}
 
-	return &kernel.RunState{TenantID: tenantID, SessionID: sessionID, Seal: sealFuncFor(dek, tenantID, sessionID), History: history, Transcript: transcript}, sess, nil
+	return &kernel.RunState{TenantID: tenantID, SessionID: sessionID, Seal: sealFuncFor(dek, tenantID, sessionID), History: history, Transcript: transcript, ToolUseIDs: toolUseIDs}, sess, nil
 }
 
 type taintTransitionPayload struct {

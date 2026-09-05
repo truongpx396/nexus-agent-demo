@@ -1,4 +1,4 @@
-.PHONY: up down build run signerd test lint migrate seed eval eval-baseline verify-chain erase dashboard go-live web-build
+.PHONY: up down build run signerd token test lint migrate seed eval eval-baseline verify-chain erase dashboard go-live web-build docker-build docker-up
 
 TENANT ?= acme
 
@@ -11,6 +11,13 @@ up: ## start postgres, pgbouncer, redis
 down: ## stop and remove infrastructure containers (volumes kept)
 	docker compose -f deploy/docker-compose.yml down
 
+docker-build: ## build the nexusd and signerd images (README task 13.3)
+	docker build --target nexusd  -t nexus-agent-demo/nexusd:latest  .
+	docker build --target signerd -t nexus-agent-demo/signerd:latest .
+
+docker-up: docker-build ## start nexusd + signerd (built images) against the existing infra services
+	docker compose -f deploy/docker-compose.yml --profile app up -d
+
 # --- Go build / test / lint ---
 
 build: ## build all three binaries into ./bin
@@ -18,13 +25,16 @@ build: ## build all three binaries into ./bin
 	go build -o bin/nexusctl ./cmd/nexusctl
 	go build -o bin/signerd ./cmd/signerd
 
-run: build ## run signerd in the background + nexusd in the foreground (Ctrl-C stops both)
+run: build ## run signerd in the background + nexusd in the foreground (Ctrl-C stops both) -- --dev keeps the zero-setup path (auto KEK/AuthN key, fake provider); a real deployment omits it (README task 13.1/13.11)
 	./bin/signerd & echo $$! > .dev/signerd.pid
 	@trap 'kill `cat .dev/signerd.pid` 2>/dev/null; rm -f .dev/signerd.pid' EXIT INT TERM; \
-	./bin/nexusd
+	./bin/nexusd --dev
 
 signerd: build ## run signerd alone in the foreground — nexusd's Kernel.Receipts (README task 5.2) needs it reachable at NEXUS_SIGNERD_SOCKET (default .dev/signerd.sock) before any event can append
 	./bin/signerd
+
+token: build ## mint a dev bearer token (TENANT=name, default acme) for curl/nexusctl/the web app -- nexusctl run "..." NEXUS_TOKEN=$$(make -s token)
+	./bin/nexusd --dev token --tenant=$(TENANT)
 
 test: ## unit + property tests (no external services required)
 	go test ./...

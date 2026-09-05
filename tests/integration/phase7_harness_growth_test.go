@@ -28,6 +28,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/truongpx396/nexus-agent-demo/internal/authn"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/memory"
 	"github.com/truongpx396/nexus-agent-demo/internal/permissions"
@@ -365,16 +366,24 @@ func TestRESTAndCLI_ProduceIdenticalEventSequencesAndTerminalReason(t *testing.T
 		Budget:   kernel.NoopBudgetGate{},
 		Store:    st,
 	}}
+	signingKey, err := authn.GeneratePrivateKey()
+	if err != nil {
+		t.Fatalf("generate test signing key: %v", err)
+	}
+	issuer := authn.NewDevIssuer(signingKey)
+	token := mustIssueToken(t, issuer, tenantID, userID)
+
 	srv := rest.NewServer(starter, st, keyStore, nil)
+	srv.Verifier = authn.NewDevVerifier(authn.PublicKey(signingKey))
+	srv.ControlPlane = newTestControlPlane(st)
 	httpSrv := httptest.NewServer(srv.Handler())
 	defer httpSrv.Close()
 
-	restRunID := postRunViaREST(t, httpSrv, tenantID, userID, "do the thing")
+	restRunID := postRunViaREST(t, httpSrv, token, "do the thing")
 	restTypes := waitForTerminalEventTypes(t, ctx, st, tenantID, restRunID)
 
 	t.Setenv("NEXUS_HTTP_ADDR", httpSrv.URL)
-	t.Setenv("NEXUS_TENANT_ID", tenantID.String())
-	t.Setenv("NEXUS_USER_ID", userID.String())
+	t.Setenv("NEXUS_TOKEN", token)
 	var out, errOut bytes.Buffer
 	if code := cli.Main([]string{"run", "do the thing"}, &out, &errOut); code != 0 {
 		t.Fatalf("cli.Main exit code = %d (stderr: %s)", code, errOut.String())
@@ -392,7 +401,7 @@ func TestRESTAndCLI_ProduceIdenticalEventSequencesAndTerminalReason(t *testing.T
 	}
 }
 
-func postRunViaREST(t *testing.T, httpSrv *httptest.Server, tenantID, userID uuid.UUID, input string) uuid.UUID {
+func postRunViaREST(t *testing.T, httpSrv *httptest.Server, token, input string) uuid.UUID {
 	t.Helper()
 	body, err := json.Marshal(map[string]string{"input": input})
 	if err != nil {
@@ -403,8 +412,7 @@ func postRunViaREST(t *testing.T, httpSrv *httptest.Server, tenantID, userID uui
 		t.Fatalf("build request: %v", err)
 	}
 	req.Header.Set("content-type", "application/json")
-	req.Header.Set("X-Nexus-Tenant-ID", tenantID.String())
-	req.Header.Set("X-Nexus-User-ID", userID.String())
+	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := httpSrv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("POST /v1/runs: %v", err)

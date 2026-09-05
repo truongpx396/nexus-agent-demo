@@ -33,7 +33,7 @@ func (e *Executor) loadRunState(ctx context.Context, tenantID, sessionID uuid.UU
 	}
 
 	decrypt := e.decryptWith(tenantID, sessionID)
-	transcript, err := kernel.Rehydrate(ctx, history, decrypt)
+	transcript, toolUseIDs, err := kernel.Rehydrate(ctx, history, decrypt)
 	if err != nil {
 		return nil, store.Session{}, err
 	}
@@ -65,7 +65,7 @@ func (e *Executor) loadRunState(ctx context.Context, tenantID, sessionID uuid.UU
 		return sealed, crypto.Digest(plaintext), dek.KeyID, nil
 	}
 
-	return &kernel.RunState{TenantID: tenantID, SessionID: sessionID, Seal: seal, History: history, Transcript: transcript}, sess, nil
+	return &kernel.RunState{TenantID: tenantID, SessionID: sessionID, Seal: seal, History: history, Transcript: transcript, ToolUseIDs: toolUseIDs}, sess, nil
 }
 
 // lastContentText decrypts the session's own final EventContent — an

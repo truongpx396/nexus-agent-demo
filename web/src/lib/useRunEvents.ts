@@ -31,7 +31,7 @@ export function useRunEvents(settings: Settings, runId: string | undefined): Use
   }, []);
 
   useEffect(() => {
-    if (!runId || !settings.baseUrl || !settings.tenantId || !settings.userId) {
+    if (!runId || !settings.baseUrl || !settings.token) {
       setState("closed");
       return;
     }
@@ -44,8 +44,7 @@ export function useRunEvents(settings: Settings, runId: string | undefined): Use
       try {
         const res = await fetch(eventsURL(settings, runId), {
           headers: {
-            "X-Nexus-Tenant-ID": settings.tenantId,
-            "X-Nexus-User-ID": settings.userId,
+            Authorization: `Bearer ${settings.token}`,
           },
           signal: controller.signal,
         });
@@ -89,7 +88,7 @@ export function useRunEvents(settings: Settings, runId: string | undefined): Use
 
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings.baseUrl, settings.tenantId, settings.userId, runId, generation]);
+  }, [settings.baseUrl, settings.token, runId, generation]);
 
   return { events, state, error, reconnect };
 }

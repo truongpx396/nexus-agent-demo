@@ -2,6 +2,8 @@ package anthropic
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -57,7 +59,7 @@ func TestStreamParsesTextToolUseUsageAndDone(t *testing.T) {
 	defer srv.Close()
 
 	p := &Provider{APIKey: "test-key", Model: "claude-test", BaseURL: srv.URL}
-	stream, err := p.Stream(context.Background(), provider.Prompt{System: "sys", Messages: []provider.Message{{Role: "user", Text: "hi"}}}, nil, provider.RunContext{})
+	stream, err := p.Stream(context.Background(), provider.Prompt{System: "sys", Messages: []provider.Message{provider.TextMessage("user", "hi")}}, nil, provider.RunContext{})
 	if err != nil {
 		t.Fatalf("Stream: %v", err)
 	}
@@ -181,6 +183,149 @@ func TestStreamContextOverflowIsClassified(t *testing.T) {
 	}
 	if provider.ClassifyTrigger(err) != provider.TriggerContextOverflow {
 		t.Fatalf("ClassifyTrigger(%v) = %v, want context_overflow", err, provider.ClassifyTrigger(err))
+	}
+}
+
+// TestStreamRequestBody_CachesSystemAndSetsThinking is README task 13.5/13.7
+// (closing F4/F7): the request body actually sent on the wire must carry an
+// ephemeral cache_control breakpoint on the system block, and an adaptive
+// thinking config for a model that supports it.
+func TestStreamRequestBody_CachesSystemAndSetsThinking(t *testing.T) {
+	var gotBody []byte
+	srv := newTestServer(t, http.StatusOK, canned, func(r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+	})
+	defer srv.Close()
+
+	p := &Provider{APIKey: "k", Model: "claude-sonnet-5", BaseURL: srv.URL}
+	_, err := p.Stream(context.Background(), provider.Prompt{System: "be helpful"}, nil, provider.RunContext{})
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+
+	var req messagesRequest
+	if err := json.Unmarshal(gotBody, &req); err != nil {
+		t.Fatalf("unmarshal sent request body: %v (body=%s)", err, gotBody)
+	}
+	if len(req.System) != 1 || req.System[0].Text != "be helpful" {
+		t.Fatalf("System = %+v, want one block with the system text", req.System)
+	}
+	if req.System[0].CacheControl == nil || req.System[0].CacheControl.Type != "ephemeral" {
+		t.Fatalf("System[0].CacheControl = %+v, want an ephemeral breakpoint", req.System[0].CacheControl)
+	}
+	if req.Thinking == nil || req.Thinking.Type != "adaptive" {
+		t.Fatalf("Thinking = %+v, want adaptive for claude-sonnet-5", req.Thinking)
+	}
+}
+
+func TestThinkingConfigFor(t *testing.T) {
+	cases := map[string]bool{
+		"claude-sonnet-5":  true,
+		"claude-opus-5":    true,
+		"claude-haiku-4-5": false,
+		"unknown-model":    false,
+	}
+	for model, wantThinking := range cases {
+		got := thinkingConfigFor(model)
+		if wantThinking && (got == nil || got.Type != "adaptive") {
+			t.Errorf("thinkingConfigFor(%q) = %+v, want adaptive", model, got)
+		}
+		if !wantThinking && got != nil {
+			t.Errorf("thinkingConfigFor(%q) = %+v, want nil", model, got)
+		}
+	}
+}
+
+// TestStreamThinkingBlockRoundTrips is README task 13.7: thinking_delta and
+// signature_delta accumulate per content-block index and are emitted as one
+// ChunkReasoning whose Opaque decodes back to the same thinking/signature —
+// what kernel/rehydrate.go's reasoningOpaque later reconstructs from.
+func TestStreamThinkingBlockRoundTrips(t *testing.T) {
+	body := "event: message_start\n" +
+		`data: {"type":"message_start","message":{"usage":{"input_tokens":10}}}` + "\n\n" +
+		"event: content_block_start\n" +
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking"}}` + "\n\n" +
+		"event: content_block_delta\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"let me think"}}` + "\n\n" +
+		"event: content_block_delta\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig-abc"}}` + "\n\n" +
+		"event: content_block_stop\n" +
+		`data: {"type":"content_block_stop","index":0}` + "\n\n" +
+		"event: message_delta\n" +
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}` + "\n\n" +
+		"event: message_stop\n" +
+		`data: {"type":"message_stop"}` + "\n\n"
+	srv := newTestServer(t, http.StatusOK, body, nil)
+	defer srv.Close()
+
+	p := &Provider{APIKey: "k", Model: "m", BaseURL: srv.URL}
+	stream, err := p.Stream(context.Background(), provider.Prompt{}, nil, provider.RunContext{})
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	var gotOpaque []byte
+	for {
+		c, ok, err := stream.Next(context.Background())
+		if err != nil {
+			t.Fatalf("Next: %v", err)
+		}
+		if !ok {
+			break
+		}
+		if c.Kind == provider.ChunkReasoning {
+			gotOpaque = c.Opaque
+		}
+	}
+	if gotOpaque == nil {
+		t.Fatal("no ChunkReasoning chunk was emitted")
+	}
+	var decoded thinkingOpaque
+	if err := json.Unmarshal(gotOpaque, &decoded); err != nil {
+		t.Fatalf("unmarshal thinking opaque: %v", err)
+	}
+	if decoded.Thinking != "let me think" || decoded.Signature != "sig-abc" {
+		t.Fatalf("decoded thinking opaque = %+v, want {let me think, sig-abc}", decoded)
+	}
+}
+
+// TestStreamRefusalMapsToDoneRefusal is README task 13.7 (closing F7): a
+// refusal stop_reason must never fold into DoneStop, and stop_details.category
+// must survive onto the ChunkDone chunk.
+func TestStreamRefusalMapsToDoneRefusal(t *testing.T) {
+	body := "event: message_start\n" +
+		`data: {"type":"message_start","message":{"usage":{"input_tokens":10}}}` + "\n\n" +
+		"event: message_delta\n" +
+		`data: {"type":"message_delta","delta":{"stop_reason":"refusal","stop_details":{"category":"cyber"}},"usage":{"output_tokens":0}}` + "\n\n" +
+		"event: message_stop\n" +
+		`data: {"type":"message_stop"}` + "\n\n"
+	srv := newTestServer(t, http.StatusOK, body, nil)
+	defer srv.Close()
+
+	p := &Provider{APIKey: "k", Model: "m", BaseURL: srv.URL}
+	stream, err := p.Stream(context.Background(), provider.Prompt{}, nil, provider.RunContext{})
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	var done provider.DoneReason
+	var category string
+	for {
+		c, ok, err := stream.Next(context.Background())
+		if err != nil {
+			t.Fatalf("Next: %v", err)
+		}
+		if !ok {
+			break
+		}
+		if c.Kind == provider.ChunkDone {
+			done = c.Done
+			category = c.RefusalCategory
+		}
+	}
+	if done != provider.DoneRefusal {
+		t.Fatalf("done = %q, want refusal", done)
+	}
+	if category != "cyber" {
+		t.Fatalf("RefusalCategory = %q, want cyber", category)
 	}
 }
 

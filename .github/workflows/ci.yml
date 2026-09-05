@@ -27,6 +27,18 @@ jobs:
           version: v2.5.0
           args: --build-tags=integration
 
+  # README task 13.10 (closing production-readiness finding F11): the
+  # dependency tree (Docker client, pgx, OAuth libraries, ...) was entirely
+  # unscanned — govulncheck is the Go-specific case, three lines to add.
+  govulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
   unit:
     runs-on: ubuntu-latest
     needs: [build, lint]

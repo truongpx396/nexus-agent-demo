@@ -131,7 +131,7 @@ func (r *Resumer) loadRunState(ctx context.Context, tenantID, sessionID uuid.UUI
 		return crypto.Open(dek, e.Payload, tenantID.String(), sessionID.String())
 	}
 
-	transcript, err := kernel.Rehydrate(ctx, history, decrypt)
+	transcript, toolUseIDs, err := kernel.Rehydrate(ctx, history, decrypt)
 	if err != nil {
 		return nil, store.Session{}, err
 	}
@@ -157,7 +157,7 @@ func (r *Resumer) loadRunState(ctx context.Context, tenantID, sessionID uuid.UUI
 		return sealed, crypto.Digest(plaintext), dek.KeyID, nil
 	}
 
-	return &kernel.RunState{TenantID: tenantID, SessionID: sessionID, Seal: seal, History: history, Transcript: transcript}, sess, nil
+	return &kernel.RunState{TenantID: tenantID, SessionID: sessionID, Seal: seal, History: history, Transcript: transcript, ToolUseIDs: toolUseIDs}, sess, nil
 }
 
 func currentActiveKeyID(history []store.Event) (string, error) {

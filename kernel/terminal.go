@@ -21,6 +21,11 @@ const (
 	ReasonPermissionDenied TerminalReason = "permission_denied"
 	ReasonContextOverflow  TerminalReason = "context_overflow"
 	ReasonError            TerminalReason = "error"
+	// ReasonRefused is the run-terminal reason for a provider policy decline
+	// (README task 13.7, closing F7) — added after the original 8, deliberately
+	// distinct from ReasonError: a refusal is a policy signal, not a failure
+	// of the harness itself.
+	ReasonRefused TerminalReason = "refused"
 )
 
 // Terminal pairs a typed reason with a human-readable detail — the shape an
@@ -82,18 +87,30 @@ func TerminalError(err error) Terminal {
 	return Terminal{Reason: ReasonError, Detail: err.Error()}
 }
 
+// TerminalRefused is the loop's own producer (README task 13.7) for a
+// provider policy decline (stop_reason "refusal") — category is the
+// provider's stop_details.category when one was reported (e.g. "cyber",
+// "bio"), empty if not.
+func TerminalRefused(category string) Terminal {
+	detail := "refused"
+	if category != "" {
+		detail = "refused: " + category
+	}
+	return Terminal{Reason: ReasonRefused, Detail: detail}
+}
+
 // terminalEventPayload is the JSON shape sealed into an EventTerminal.
 type terminalEventPayload struct {
 	Reason TerminalReason `json:"reason"`
 	Detail string         `json:"detail,omitempty"`
 }
 
-// buildTerminalPayload is the exhaustive switch over all 8 TerminalReason
+// buildTerminalPayload is the exhaustive switch over all 9 TerminalReason
 // values (README task 2.3's "exhaustive linter on every switch").
 func buildTerminalPayload(t Terminal) (terminalEventPayload, error) {
 	switch t.Reason {
 	case ReasonCompleted, ReasonMaxTurnsExceeded, ReasonCostExhausted, ReasonAborted,
-		ReasonStuckTerminated, ReasonPermissionDenied, ReasonContextOverflow, ReasonError:
+		ReasonStuckTerminated, ReasonPermissionDenied, ReasonContextOverflow, ReasonError, ReasonRefused:
 		return terminalEventPayload(t), nil
 	default:
 		return terminalEventPayload{}, fmt.Errorf("kernel: unknown terminal reason %q", t.Reason)

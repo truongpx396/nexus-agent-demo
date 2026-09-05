@@ -22,8 +22,8 @@ func TestPrefixBytesEquality(t *testing.T) {
 	var prev []byte
 	for turn := 1; turn <= 5; turn++ {
 		transcript = append(transcript,
-			provider.Message{Role: "user", Text: fmt.Sprintf("turn %d input", turn)},
-			provider.Message{Role: "assistant", Text: fmt.Sprintf("turn %d output", turn)},
+			provider.TextMessage("user", fmt.Sprintf("turn %d input", turn)),
+			provider.TextMessage("assistant", fmt.Sprintf("turn %d output", turn)),
 		)
 		cur := PrefixBytes(system, catalog, transcript)
 		if prev != nil && !bytes.HasPrefix(cur, prev) {

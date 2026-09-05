@@ -88,7 +88,11 @@ func (c *Control) Fork(ctx context.Context, tenantID, parentSessionID uuid.UUID,
 		return ForkResult{}, fmt.Errorf("runctl: fork: session %s has no events at or before seq %d", parentSessionID, atSeq)
 	}
 
-	transcript, err := kernel.Rehydrate(ctx, trimmed, c.decryptFuncFor(tenantID, parentSessionID))
+	// The second return value (tool_use EventID -> provider tool_use_id) is
+	// only needed by Resume/ResumeDelegation continuing a rehydrated
+	// RunState — InheritedTranscript below seeds a brand-NEW child session's
+	// first turn, never a Resume, so it's discarded here.
+	transcript, _, err := kernel.Rehydrate(ctx, trimmed, c.decryptFuncFor(tenantID, parentSessionID))
 	if err != nil {
 		return ForkResult{}, fmt.Errorf("runctl: fork: rehydrate parent transcript: %w", err)
 	}

@@ -1,6 +1,7 @@
-// Thin REST client for internal/surfaces/rest. Every request attaches the
-// two dev-auth headers the backend reads fresh per-request
-// (X-Nexus-Tenant-ID / X-Nexus-User-ID) -- no cookies, no bearer tokens.
+// Thin REST client for internal/surfaces/rest. Every request attaches a
+// bearer token (Settings.token, minted out of band via `nexusd token`) --
+// the backend verifies it and derives tenant/user identity from its claims
+// (README task 13.1).
 //
 // Every non-2xx response is a plain-text body (Go's http.Error), never a
 // JSON error envelope -- ApiError below carries that text verbatim.
@@ -25,8 +26,7 @@ export class ApiError extends Error {
 
 function authHeaders(s: Settings): Record<string, string> {
   return {
-    "X-Nexus-Tenant-ID": s.tenantId,
-    "X-Nexus-User-ID": s.userId,
+    Authorization: `Bearer ${s.token}`,
   };
 }
 

@@ -4,8 +4,11 @@
 
 export interface Settings {
   baseUrl: string;
-  tenantId: string;
-  userId: string;
+  // Bearer token minted out of band (`nexusd token --tenant=<name>`) --
+  // replaces the old dev-mode tenantId/userId header pair (README task
+  // 13.1). The backend derives tenant/user identity from this token's
+  // verified claims, never from anything the client asserts directly.
+  token: string;
 }
 
 export type Autonomy = "read_only" | "supervised" | "autonomous";

@@ -7,6 +7,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"github.com/google/uuid"
 )
@@ -30,6 +31,12 @@ const (
 	DoneStop      DoneReason = "stop"
 	DoneMaxOutput DoneReason = "max_output"
 	DoneError     DoneReason = "error"
+	// DoneRefusal is a policy decline (README task 13.7, closing F7) —
+	// distinct from DoneStop so a safety refusal is never indistinguishable
+	// from a successful empty completion, the exact failure mode
+	// kernel/classify.go's typed classification exists to prevent one layer
+	// up.
+	DoneRefusal DoneReason = "refusal"
 )
 
 // Usage is split by token class — an undifferentiated total makes the
@@ -54,13 +61,81 @@ type Chunk struct {
 
 	Usage Usage // ChunkUsage
 
-	Done DoneReason // ChunkDone
+	Done            DoneReason // ChunkDone
+	RefusalCategory string     // ChunkDone, only meaningful when Done == DoneRefusal (README task 13.7)
 }
 
-// Message is one turn of the transcript sent to the provider.
+// ContentBlockKind classifies one block within a Message (README task 13.4,
+// closing production-readiness finding F5): a Message widened from a flat
+// Role/Text pair to typed content blocks so tool_use/tool_result pairing —
+// and, on the same turn, a preceding thinking block — survives all the way
+// to the wire, not just inside the kernel's own event log.
+type ContentBlockKind string
+
+const (
+	BlockText       ContentBlockKind = "text"
+	BlockThinking   ContentBlockKind = "thinking"
+	BlockToolUse    ContentBlockKind = "tool_use"
+	BlockToolResult ContentBlockKind = "tool_result"
+)
+
+// ContentBlock is one typed unit of a Message's content — which fields are
+// meaningful depends on Kind (documented per field below), the same
+// discriminated-union shape Chunk already uses for a provider's OUTPUT
+// stream, now mirrored for the transcript sent as INPUT.
+type ContentBlock struct {
+	Kind ContentBlockKind
+
+	Text      string // BlockText; BlockThinking (the visible reasoning text); BlockToolResult (the result text)
+	Signature string // BlockThinking only — echoed back verbatim on the next turn, required when a thinking block precedes a tool_use in the same turn
+
+	ToolUseID string          // BlockToolUse, BlockToolResult — pairs a result to the call that produced it
+	ToolName  string          // BlockToolUse only
+	Input     json.RawMessage // BlockToolUse only
+
+	IsError bool // BlockToolResult only
+}
+
+// Message is one turn of the transcript sent to the provider — one role,
+// one or more typed content blocks (an assistant turn may carry a thinking
+// block, text, and one or more tool_use blocks together; a tool-result turn
+// may carry several tool_result blocks together, one per call the prior
+// turn made — never split across multiple messages, which silently trains
+// a model to stop making parallel tool calls).
 type Message struct {
-	Role string // "user" | "assistant" | "tool"
-	Text string
+	Role   string // "user" | "assistant" | "tool"
+	Blocks []ContentBlock
+}
+
+// TextMessage builds a single-block plain-text Message — the common case
+// (a user's input, a content-only assistant turn, a condensed summary) that
+// doesn't need multiple blocks.
+func TextMessage(role, text string) Message {
+	return Message{Role: role, Blocks: []ContentBlock{{Kind: BlockText, Text: text}}}
+}
+
+// ToolResultMessage builds a single-block "tool" role Message pairing one
+// result to the tool_use_id that produced it.
+func ToolResultMessage(toolUseID, text string, isError bool) Message {
+	return Message{Role: "tool", Blocks: []ContentBlock{{Kind: BlockToolResult, ToolUseID: toolUseID, Text: text, IsError: isError}}}
+}
+
+// PlainText concatenates every block's Text, newline-separated — what
+// internal/promptctx's size/byte-stability logic and evals/judge.go's
+// text-only judge prompts operate on; neither package cares about block
+// structure, only the text a message carries.
+func (m Message) PlainText() string {
+	if len(m.Blocks) == 0 {
+		return ""
+	}
+	var buf strings.Builder
+	for i, b := range m.Blocks {
+		if i > 0 {
+			buf.WriteByte('\n')
+		}
+		buf.WriteString(b.Text)
+	}
+	return buf.String()
 }
 
 // Prompt is the two-zone shape internal/promptctx builds (Phase 2): a

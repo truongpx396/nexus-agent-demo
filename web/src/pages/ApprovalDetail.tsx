@@ -42,7 +42,7 @@ export function ApprovalDetail() {
   useEffect(() => {
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, settings.baseUrl, settings.tenantId, settings.userId]);
+  }, [id, settings.baseUrl, settings.token]);
 
   const doGrant = async (withModifiedInput: boolean) => {
     if (!id) return;
