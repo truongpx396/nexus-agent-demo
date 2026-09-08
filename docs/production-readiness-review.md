@@ -48,7 +48,7 @@ tenantID, err := uuid.Parse(r.Header.Get("X-Nexus-Tenant-ID"))
 userID,   err := uuid.Parse(r.Header.Get("X-Nexus-User-ID"))
 ```
 
-The package doc calls this "a dev stand-in… documented scope, not an oversight," and README §4's diagram
+The package doc calls this "a dev stand-in… documented scope, not an oversight," and README §3's diagram
 promises `AuthN: static JWT / dev issuer`. There is no JWT anywhere in the repository. Meanwhile the pattern
 map rates #49 (surfaces, per-turn principal) at **F — full fidelity**. It isn't; it's the one surface concern
 never built.
@@ -182,7 +182,7 @@ regression_multi_chunk_content...     regression_usage_accounting_stable
 
 The statistical machinery around the corpus is genuinely strong — k-trial Wilson intervals, a three-valued
 verdict where `inconclusive` never resolves to pass, held-out gap measurement, efficiency banding, baseline
-regression. It's aimed at nothing. README §9 says any prompt/tool/model/skill/plan change must clear this
+regression. It's aimed at nothing. README §4 says any prompt/tool/model/skill/plan change must clear this
 gate; none of those changes can move a single case, because no case's outcome depends on a model.
 
 **Fix** — Ten to fifteen task-completion cases against the live API behind a `-tags=liveeval` guard, graded

@@ -1,5 +1,5 @@
 The Phase 1 tenant-isolation test — through PgBouncer in transaction-pooling
-mode, the load-bearing test named in README.md §5 (task 1.4) — lives at
+mode, the load-bearing test named in README.md §4 (task 1.4) — lives at
 `internal/store/isolation_integration_test.go` instead of here: it needs to
 call an unexported helper (`scopeTenant`) to construct the session-level
 scoping variant Principle VI forbids, which only a white-box test inside
