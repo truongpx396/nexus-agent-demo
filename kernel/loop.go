@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
+	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 	"github.com/truongpx396/nexus-agent-demo/internal/promptctx"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/reliability"
@@ -77,6 +79,76 @@ type Kernel struct {
 	// promptctx.ExtractivePass — "degrade-capable," never skipped). <=0
 	// disables condensation entirely, the pre-Phase-7 default.
 	CondenseThresholdBytes int
+
+	// Tracer, if set, gives an agent's run genuine per-step observability
+	// (docs/local-llm.md) — one root span per Run/Resume/ResumeDelegation/
+	// Continue call, a generation span per model call, a tool span per
+	// dispatched tool_use, all through k.startSpan below. Nil is valid, the
+	// same "this control isn't wired" convention Receipts/OnSuspend/Stuck
+	// already use — every pre-this-change test constructing a bare
+	// Kernel{...} is unaffected.
+	Tracer obs.Tracer
+
+	// TraceContent, if true, additionally attaches each generation/tool
+	// span's actual input/output payload (obs.Span.SetContent) — a
+	// deliberate, explicit content-egress decision (NEXUS_TRACE_CONTENT,
+	// docs/local-llm.md), analogous to but distinct from the audited,
+	// expiring Content Access Grant that is otherwise the only sanctioned
+	// way content leaves the event log (constitution Principle VI). False
+	// (the default, and every pre-this-change test's zero value) means
+	// every span stays exactly as content-free as Tracer's own doc comment
+	// above already promises — this field does not change that promise, it
+	// is what an operator has to explicitly set to step outside it.
+	TraceContent bool
+}
+
+// startSpan opens a span through k.Tracer if one is wired, or a no-op if
+// not — every instrumentation call site below goes through this so none of
+// them need their own nil check (mirrors how k.reconcile/k.terminate already
+// centralize a repeated concern instead of leaving it to each call site).
+func (k *Kernel) startSpan(ctx context.Context, name string, kind obs.ObservationType, attrs obs.Attrs) (context.Context, obs.Span) {
+	if k.Tracer == nil {
+		return ctx, noopSpan{}
+	}
+	return k.Tracer.StartSpan(ctx, name, kind, attrs)
+}
+
+type noopSpan struct{}
+
+func (noopSpan) End(obs.Attrs)             {}
+func (noopSpan) SetContent(string, string) {}
+
+// terminalSpanAttrs is what each of Run/Resume/ResumeDelegation/Continue's
+// deferred root-span End passes: st.terminalReason if terminate() set one
+// this call, or no attribute at all if this call ended by suspending
+// instead (an approval or delegation is still pending) — never a
+// misleading empty-string terminal_reason.
+func terminalSpanAttrs(st *RunState) obs.Attrs {
+	if st.terminalReason == "" {
+		return obs.Attrs{}
+	}
+	return obs.Attrs{"terminal_reason": st.terminalReason}
+}
+
+// generationOutput is a model turn's Span.SetContent output payload — text
+// plus any tool calls it requested, since a turn that only calls tools may
+// have no text at all.
+type generationOutput struct {
+	Text     string           `json:"text,omitempty"`
+	ToolUses []ToolUseRequest `json:"tool_uses,omitempty"`
+}
+
+// marshalContent is Span.SetContent's own marshaling helper: best-effort,
+// never called unless k.TraceContent is true (every call site above already
+// checks), and an encode failure just means no content for this one span —
+// never a reason to fail the turn a content-free run would otherwise
+// complete normally.
+func marshalContent(v any) string {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
 }
 
 // RunState is the mutable state one Run call owns: TenantID/SessionID
@@ -103,6 +175,14 @@ type RunState struct {
 	// already has the provider's tool_use_id in hand via ToolUseRequest
 	// itself.
 	ToolUseIDs map[uuid.UUID]string
+
+	// terminalReason carries the reason terminate() records (below) out to
+	// the deferred root span each of Run/Resume/ResumeDelegation/Continue
+	// opens — set once, in terminate(), read once, by that defer. Empty
+	// when a call ends by suspending rather than terminating (Resume is
+	// still pending, a delegation is still pending) — the root span's own
+	// End simply omits the attribute rather than record something untrue.
+	terminalReason string
 }
 
 // Run is the generator (README task 2.1): hygiene -> reserve -> build prompt
@@ -112,6 +192,11 @@ type RunState struct {
 // never shows a client something that isn't already in the log.
 func (k *Kernel) Run(ctx context.Context, st *RunState, cfg RunConfig) iter.Seq2[store.Event, error] {
 	return func(yield func(store.Event, error) bool) {
+		ctx, rootSpan := k.startSpan(ctx, "kernel.run", obs.ObservationAgent, obs.Attrs{
+			"session.id": st.SessionID.String(), "tenant.id": st.TenantID.String(),
+		})
+		defer func() { rootSpan.End(terminalSpanAttrs(st)) }()
+
 		if err := k.updateStatus(ctx, st, store.SessionStatusRunning, nil); err != nil {
 			yield(store.Event{}, err)
 			return
@@ -181,6 +266,11 @@ func (k *Kernel) Run(ctx context.Context, st *RunState, cfg RunConfig) iter.Seq2
 // is for the sandbox.
 func (k *Kernel) Resume(ctx context.Context, st *RunState, cfg RunConfig, res PendingResolution) iter.Seq2[store.Event, error] {
 	return func(yield func(store.Event, error) bool) {
+		ctx, rootSpan := k.startSpan(ctx, "kernel.resume", obs.ObservationAgent, obs.Attrs{
+			"session.id": st.SessionID.String(), "tenant.id": st.TenantID.String(),
+		})
+		defer func() { rootSpan.End(terminalSpanAttrs(st)) }()
+
 		if err := k.updateStatus(ctx, st, store.SessionStatusRunning, nil); err != nil {
 			yield(store.Event{}, err)
 			return
@@ -251,6 +341,11 @@ func (k *Kernel) Resume(ctx context.Context, st *RunState, cfg RunConfig, res Pe
 // tool_result.
 func (k *Kernel) ResumeDelegation(ctx context.Context, st *RunState, cfg RunConfig, res DelegationResolution) iter.Seq2[store.Event, error] {
 	return func(yield func(store.Event, error) bool) {
+		ctx, rootSpan := k.startSpan(ctx, "kernel.resume_delegation", obs.ObservationAgent, obs.Attrs{
+			"session.id": st.SessionID.String(), "tenant.id": st.TenantID.String(),
+		})
+		defer func() { rootSpan.End(terminalSpanAttrs(st)) }()
+
 		if err := k.updateStatus(ctx, st, store.SessionStatusRunning, nil); err != nil {
 			yield(store.Event{}, err)
 			return
@@ -297,6 +392,11 @@ func (k *Kernel) ResumeDelegation(ctx context.Context, st *RunState, cfg RunConf
 // names Phase 6's queue+checkpoint as the trigger this method is.
 func (k *Kernel) Continue(ctx context.Context, st *RunState, cfg RunConfig) iter.Seq2[store.Event, error] {
 	return func(yield func(store.Event, error) bool) {
+		ctx, rootSpan := k.startSpan(ctx, "kernel.continue", obs.ObservationAgent, obs.Attrs{
+			"session.id": st.SessionID.String(), "tenant.id": st.TenantID.String(),
+		})
+		defer func() { rootSpan.End(terminalSpanAttrs(st)) }()
+
 		if err := k.updateStatus(ctx, st, store.SessionStatusRunning, nil); err != nil {
 			yield(store.Event{}, err)
 			return
@@ -451,8 +551,16 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 
 		prompt, _ := promptctx.Build(cfg.System, cfg.Catalog, view)
 
-		stream, err := k.Provider.Stream(ctx, prompt, cfg.Catalog, provider.RunContext{TenantID: st.TenantID, SessionID: st.SessionID})
+		// turnCtx carries this turn's own generation span as parent — reused
+		// below, in the same iteration, as the parent for that turn's tool
+		// spans too (a fresh child context per turn, never leaked across
+		// iterations), so a Langfuse trace reads as root -> this turn's
+		// model call -> the tool calls it made, not a flat list of siblings.
+		turnCtx, genSpan := k.startSpan(ctx, "model.call", obs.ObservationGeneration, obs.Attrs{"model.id": cfg.ModelID})
+
+		stream, err := k.Provider.Stream(turnCtx, prompt, cfg.Catalog, provider.RunContext{TenantID: st.TenantID, SessionID: st.SessionID})
 		if err != nil {
+			genSpan.End(obs.Attrs{"outcome": "error"})
 			k.reconcile(ctx, st, reservation, provider.Usage{}, false)
 			k.terminateFromStreamError(ctx, st, yield, err)
 			return
@@ -499,6 +607,21 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 		// Reconcile charges the full reserved worst case instead of a
 		// partial/zero usage figure from a stream that failed
 		// ("an unreliable provider must not look free").
+		outcome := string(done)
+		if streamErr != nil {
+			outcome = "error"
+		}
+		if k.TraceContent {
+			genSpan.SetContent(marshalContent(prompt), marshalContent(generationOutput{Text: contentText.String(), ToolUses: toolUses}))
+		}
+		genSpan.End(obs.Attrs{
+			"model.id":                cfg.ModelID,
+			"usage.input_uncached":    strconv.Itoa(usage.InputUncached),
+			"usage.input_cache_read":  strconv.Itoa(usage.InputCacheRead),
+			"usage.input_cache_write": strconv.Itoa(usage.InputCacheWrite),
+			"usage.output":            strconv.Itoa(usage.OutputTokens),
+			"outcome":                 outcome,
+		})
 		k.reconcile(ctx, st, reservation, usage, usageReported && streamErr == nil)
 		if streamErr != nil {
 			k.terminateFromStreamError(ctx, st, yield, streamErr)
@@ -587,7 +710,22 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 			// history via Rehydrate, never from this in-memory value.
 			var resultBlocks []provider.ContentBlock
 			for i, tu := range toolUses {
-				result := k.Tools.Execute(ctx, tu, execCtx)
+				// Parented on turnCtx (this turn's own generation span,
+				// started above), not the outer ctx — so this trace's tool
+				// nodes nest under the model turn that requested them,
+				// rather than sitting as flat siblings of every other turn's
+				// own tool calls.
+				toolCtx, toolSpan := k.startSpan(turnCtx, "tool.call", obs.ObservationTool, obs.Attrs{"tool.id": tu.ToolName})
+				result := k.Tools.Execute(toolCtx, tu, execCtx)
+				outcome := "ok"
+				if result.IsError {
+					outcome = "error"
+				}
+				if k.TraceContent {
+					toolSpan.SetContent(string(tu.Input), resultText(result))
+				}
+				toolSpan.End(obs.Attrs{"outcome": outcome})
+
 				ev, err := k.appendToolResult(ctx, st, toolUseEvents[i].EventID, toolUseEvents[i].ToolID, result)
 				if err != nil {
 					yield(store.Event{}, err)
@@ -680,8 +818,10 @@ func (k *Kernel) condense(ctx context.Context, st *RunState, cfg RunConfig, cove
 	}
 
 	prompt := promptctx.CondensePrompt(covered)
-	stream, serr := k.Provider.Stream(ctx, prompt, nil, provider.RunContext{TenantID: st.TenantID, SessionID: st.SessionID})
+	spanCtx, genSpan := k.startSpan(ctx, "model.condense", obs.ObservationGeneration, obs.Attrs{"model.id": cfg.CondenserModelID})
+	stream, serr := k.Provider.Stream(spanCtx, prompt, nil, provider.RunContext{TenantID: st.TenantID, SessionID: st.SessionID})
 	if serr != nil {
+		genSpan.End(obs.Attrs{"outcome": "error"})
 		k.reconcile(ctx, st, reservation, provider.Usage{}, false)
 		return "", true, reservation, nil
 	}
@@ -707,6 +847,19 @@ func (k *Kernel) condense(ctx context.Context, st *RunState, cfg RunConfig, cove
 			usageReported = true
 		}
 	}
+	outcome := "stop"
+	if streamErr != nil {
+		outcome = "error"
+	}
+	if k.TraceContent {
+		genSpan.SetContent(marshalContent(prompt), text.String())
+	}
+	genSpan.End(obs.Attrs{
+		"model.id":             cfg.CondenserModelID,
+		"usage.input_uncached": strconv.Itoa(usage.InputUncached),
+		"usage.output":         strconv.Itoa(usage.OutputTokens),
+		"outcome":              outcome,
+	})
 	k.reconcile(ctx, st, reservation, usage, usageReported && streamErr == nil)
 
 	if streamErr != nil || text.Len() == 0 {
@@ -725,6 +878,12 @@ func resultText(r ToolResult) string {
 // --- terminal helpers ---
 
 func (k *Kernel) terminate(ctx context.Context, st *RunState, yield func(store.Event, error) bool, t Terminal) {
+	// Set before anything below can fail, so the root span's deferred End
+	// (terminalSpanAttrs) still reflects why this call is ending even on an
+	// early return here — a best-effort observability signal, never the
+	// source of truth (the durable EventTerminal appended below is that).
+	st.terminalReason = string(t.Reason)
+
 	payload, err := buildTerminalPayload(t)
 	if err != nil {
 		yield(store.Event{}, err)

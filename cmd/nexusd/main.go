@@ -51,6 +51,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/anthropic"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
+	"github.com/truongpx396/nexus-agent-demo/internal/provider/litellm"
 	"github.com/truongpx396/nexus-agent-demo/internal/queue"
 	"github.com/truongpx396/nexus-agent-demo/internal/reliability"
 	"github.com/truongpx396/nexus-agent-demo/internal/retrieval"
@@ -241,6 +242,16 @@ func serve(ctx context.Context) error {
 		return fmt.Errorf("configure provider: %w", err)
 	}
 
+	// Built ahead of kernel.Kernel below (moved up from its original
+	// pre-Tracer position further down this function) — Kernel.Tracer needs
+	// this same exporter, not just rest.Server.Exporter, so it has to exist
+	// before the Kernel literal does.
+	spanExp, shutdownSpanExp, err := newSpanExporter(ctx)
+	if err != nil {
+		return fmt.Errorf("configure span exporter: %w", err)
+	}
+	defer shutdownSpanExp()
+
 	// Sign-only audit key custody (README task 5.1): nexusd dials
 	// signerd's unix socket and can ask it to sign, never read the key
 	// itself — internal/audit/signerkey (the package that CAN read it) is
@@ -276,14 +287,16 @@ func serve(ctx context.Context) error {
 	approvals := oversight.NewApprovals(st, keyStore, chain)
 	inputs := oversight.NewInputs(st, keyStore, chain)
 	k := &kernel.Kernel{
-		Provider:   provider.Wrap([]provider.Provider{prov}),
-		Tools:      kernel.PipelineExecutor{Pipeline: pipeline}, // real tool pipeline, Phase 3
-		Budget:     gate,                                        // real reserve-then-reconcile cost gate, Phase 4
-		Store:      st,
-		Receipts:   chainReceiptFunc(chain),                       // hash-chained audit receipts, Phase 5 task 5.2
-		OnSuspend:  onSuspendFunc(approvals),                      // durably record an approval on every suspend, Phase 5 task 5.6
-		OnDelegate: onDelegateFunc(delegations),                   // bind a delegation to its gating tool_use, Phase 8 task 8.10
-		Stuck:      reliability.NewRegistry(stuckDetectionWindow), // README task 6.8
+		Provider:     provider.Wrap([]provider.Provider{prov}),
+		Tools:        kernel.PipelineExecutor{Pipeline: pipeline}, // real tool pipeline, Phase 3
+		Budget:       gate,                                        // real reserve-then-reconcile cost gate, Phase 4
+		Store:        st,
+		Receipts:     chainReceiptFunc(chain),                         // hash-chained audit receipts, Phase 5 task 5.2
+		OnSuspend:    onSuspendFunc(approvals),                        // durably record an approval on every suspend, Phase 5 task 5.6
+		OnDelegate:   onDelegateFunc(delegations),                     // bind a delegation to its gating tool_use, Phase 8 task 8.10
+		Stuck:        reliability.NewRegistry(stuckDetectionWindow),   // README task 6.8
+		Tracer:       spanExp,                                         // per-run/per-turn/per-tool-call spans, docs/local-llm.md
+		TraceContent: envOr("NEXUS_TRACE_CONTENT", "false") == "true", // opt-in prompt/tool content in traces, docs/local-llm.md — off by default, keeps every span content-free unless explicitly requested
 	}
 
 	memStore := &memory.Store{RootDir: envOr("NEXUS_MEMORY_ROOT", ".dev/memory")}
@@ -340,12 +353,7 @@ func serve(ctx context.Context) error {
 	srv.Outbox = &surfaces.Outbox{Store: st, Keys: keyStore, Chain: chain}
 	srv.OutboxSender = slogSender{}
 
-	spanExporter, shutdownExporter, err := newSpanExporter(ctx)
-	if err != nil {
-		return fmt.Errorf("configure span exporter: %w", err)
-	}
-	defer shutdownExporter()
-	srv.Exporter = spanExporter
+	srv.Exporter = spanExp
 
 	stopAnchor := startAnchorLoop(ctx, st, chain)
 	defer stopAnchor()
@@ -1154,10 +1162,13 @@ func drainResume(events iter.Seq2[store.Event, error]) rest.ResumeOutcome {
 }
 
 // newProvider picks the fake (default, no credentials needed — the demo
-// command in README.md §5 must work with zero setup) or the real Anthropic
-// adapter, never both: correctness tests always run against
-// internal/provider/fake regardless of this switch (constitution Principle
-// IX) — this only controls what a live `nexusd run` talks to.
+// command in README.md §5 must work with zero setup), the real Anthropic
+// adapter, or a local model reached through LiteLLM (docs/local-llm.md —
+// Ollama running natively on the host, LiteLLM as the OpenAI-compatible
+// gateway in front of it), never more than one: correctness tests always
+// run against internal/provider/fake regardless of this switch
+// (constitution Principle IX) — this only controls what a live `nexusd run`
+// talks to.
 func newProvider() (provider.Provider, error) {
 	switch envOr("NEXUS_PROVIDER", "fake") {
 	case "anthropic":
@@ -1167,6 +1178,11 @@ func newProvider() (provider.Provider, error) {
 		}
 		model := envOr("NEXUS_ANTHROPIC_MODEL", "claude-sonnet-5")
 		return anthropic.New(apiKey, model), nil
+	case "litellm":
+		baseURL := envOr("NEXUS_LITELLM_BASE_URL", "http://localhost:4100")
+		model := envOr("NEXUS_LITELLM_MODEL", "qwen2.5-local")
+		apiKey := os.Getenv("NEXUS_LITELLM_API_KEY") // optional; empty is fine for a local, unauthenticated proxy
+		return litellm.New(baseURL, model, apiKey), nil
 	case "fake":
 		// An echo-style script: enough to drive a real turn through the
 		// loop without a live model. Real scripted corpora live in
@@ -1178,24 +1194,43 @@ func newProvider() (provider.Provider, error) {
 			{Kind: "done", Done: "stop"},
 		}}), nil
 	default:
-		return nil, fmt.Errorf("unknown NEXUS_PROVIDER %q (want fake or anthropic)", os.Getenv("NEXUS_PROVIDER"))
+		return nil, fmt.Errorf("unknown NEXUS_PROVIDER %q (want fake, anthropic, or litellm)", os.Getenv("NEXUS_PROVIDER"))
 	}
+}
+
+// spanExporter is what newSpanExporter returns: rest.Server.Exporter's own
+// point-event Emit, plus obs.Tracer's real start/end spans that
+// kernel.Kernel.Tracer uses (docs/local-llm.md) — obs.Exporter and
+// obs.OTLPExporter both satisfy this already, this interface just names the
+// combination once instead of at each of the two call sites that need it.
+type spanExporter interface {
+	rest.SpanEmitter
+	obs.Tracer
 }
 
 // newSpanExporter builds whichever obs Exporter this process emits spans
 // through (README task 13.12, closing production-readiness finding F13):
 // NEXUS_OTLP_ENDPOINT set means a real collector (obs.OTLPExporter, over
-// OTLP/HTTP); unset falls back to the stdout obs.Exporter every earlier
-// phase already had — the filtering guarantee (internal/obs's allowlist) is
-// identical either way, only the sink changes. The returned shutdown func
-// flushes an OTLP exporter's buffered spans; it's a no-op for the stdout
-// one, which has nothing to flush.
-func newSpanExporter(ctx context.Context) (rest.SpanEmitter, func(), error) {
+// OTLP/HTTP — e.g. Langfuse's own OTLP endpoint, docs/local-llm.md); unset
+// falls back to the stdout obs.Exporter every earlier phase already had —
+// the filtering guarantee (internal/obs's allowlist) is identical either
+// way, only the sink changes. The returned shutdown func flushes an OTLP
+// exporter's buffered spans; it's a no-op for the stdout one, which has
+// nothing to flush.
+//
+// NEXUS_OTLP_URL_PATH and NEXUS_OTLP_HEADERS exist specifically to reach a
+// collector that isn't a bare local OTel collector — Langfuse's OTLP
+// ingestion lives at a non-default path and needs a Basic-auth header
+// (docs/local-llm.md spells out the exact values for its self-hosted dev
+// stack). Both are optional; a plain local collector needs neither.
+func newSpanExporter(ctx context.Context) (spanExporter, func(), error) {
 	endpoint := envOr("NEXUS_OTLP_ENDPOINT", "")
 	if endpoint == "" {
 		return obs.NewExporter(os.Stdout), func() {}, nil
 	}
-	exp, err := obs.NewOTLPExporter(ctx, endpoint, envOr("NEXUS_OTLP_INSECURE", "true") == "true")
+	headers := parseHeaderList(envOr("NEXUS_OTLP_HEADERS", ""))
+	urlPath := envOr("NEXUS_OTLP_URL_PATH", "")
+	exp, err := obs.NewOTLPExporter(ctx, endpoint, envOr("NEXUS_OTLP_INSECURE", "true") == "true", headers, urlPath)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1206,6 +1241,27 @@ func newSpanExporter(ctx context.Context) (rest.SpanEmitter, func(), error) {
 			slog.Error("nexusd: shutdown OTLP span exporter", "error", err)
 		}
 	}, nil
+}
+
+// parseHeaderList parses "Key1=Val1,Key2=Val2" into a map — same shape as
+// the comma-split env vars this file already has (NEXUS_WEB_FETCH_ALLOWLIST,
+// NEXUS_OAUTH_PROVIDERS), just with a "=" split on each element too. An
+// empty raw string returns nil, not an empty-but-non-nil map, so
+// NewOTLPExporter's own `len(headers) > 0` check skips WithHeaders entirely
+// when nothing was configured.
+func parseHeaderList(raw string) map[string]string {
+	if raw == "" {
+		return nil
+	}
+	headers := map[string]string{}
+	for _, pair := range strings.Split(raw, ",") {
+		k, v, ok := strings.Cut(pair, "=")
+		if !ok {
+			continue
+		}
+		headers[strings.TrimSpace(k)] = strings.TrimSpace(v)
+	}
+	return headers
 }
 
 // newEmbedder returns this demo's one Embedder: internal/provider/fake's

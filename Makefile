@@ -1,4 +1,4 @@
-.PHONY: up down build run signerd token test lint migrate seed eval eval-baseline verify-chain erase dashboard go-live web-build docker-build docker-up
+.PHONY: up down build run signerd token test lint migrate seed eval eval-baseline verify-chain erase dashboard go-live web-build docker-build docker-up ollama-pull llm-up langfuse-up llm-down
 
 TENANT ?= acme
 
@@ -69,3 +69,26 @@ go-live: build ## run the go-live checklist against a live deployment (README ta
 
 web-build: ## build the React web app (README task 11.7)
 	cd web && npm ci && npm run build
+
+# --- Local model + observability (docs/local-llm.md) ---
+# A separate compose file (deploy/docker-compose.local-llm.yml), not more
+# services in the one above: nothing here references, or is referenced by,
+# postgres/pgbouncer/redis/signerd/nexusd, so a plain `down` on this file
+# can never touch them — no need for the explicit-service-name workaround a
+# shared file would require. Ollama itself is never a target here — it runs
+# natively on the Mac host (Metal acceleration), started separately
+# (`ollama serve`, or the menubar app).
+
+ollama-pull: ## pull the local dev model into a natively-running Ollama (requires `ollama serve` already up)
+	ollama pull qwen2.5:3b
+
+llm-up: ## start the LiteLLM proxy in front of host Ollama (NEXUS_PROVIDER=litellm's target)
+	docker compose -f deploy/docker-compose.local-llm.yml --profile llm up -d
+	@echo "litellm: http://localhost:4100  (model: qwen2.5-local -> ollama_chat/qwen2.5:3b)"
+
+langfuse-up: ## start a self-hosted Langfuse stack (web, worker, clickhouse, minio, redis, postgres) for agent tracing
+	docker compose -f deploy/docker-compose.local-llm.yml --profile langfuse up -d
+	@echo "langfuse: http://localhost:3001  (dev@nexus.local / nexus-dev-password)"
+
+llm-down: ## stop the litellm + langfuse containers (postgres/pgbouncer/redis from `make up` are untouched — separate compose file)
+	docker compose -f deploy/docker-compose.local-llm.yml --profile llm --profile langfuse down
