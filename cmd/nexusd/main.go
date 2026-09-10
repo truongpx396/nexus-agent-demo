@@ -1355,6 +1355,18 @@ func newToolPipeline(st *store.Store, keyStore *crypto.KeyStore, chain *audit.Ch
 		builtin.ConnectorFetch{Tokens: vault, Sessions: nexusdSessionLookup{store: st}, AllowedHosts: webFetchAllowlist},
 		builtin.Retrieve{Searcher: nexusdRetrieverAdapter{retriever: retriever}},
 	}
+	// platform/web_crawl (README docs/build-phases.md Phase 16, task 16.1) is
+	// registered only when NEXUS_CRAWL4AI_URL is actually configured — the
+	// same "absent means off" convention newConnectorRegistry already uses
+	// for an unconfigured OAuth provider, rather than shipping a tool that is
+	// always present but always fails closed with "not configured."
+	if crawl4aiURL := envOr("NEXUS_CRAWL4AI_URL", ""); crawl4aiURL != "" {
+		builtinTools = append(builtinTools, builtin.WebCrawl{
+			BaseURL:      crawl4aiURL,
+			APIToken:     envOr("NEXUS_CRAWL4AI_API_TOKEN", ""),
+			AllowedHosts: webFetchAllowlist,
+		})
+	}
 	var toolRefs []string
 	var catalog []provider.ToolSchema
 	for _, t := range builtinTools {
@@ -1476,10 +1488,27 @@ func newConnectorRegistry() *connectors.Registry {
 	return connectors.NewRegistry(providers...)
 }
 
-// loadSkillCatalog reads NEXUS_SKILLS_ROOT (default .dev/skills, same
-// zero-setup-path idiom as NEXUS_WORKSPACE_ROOT), admits every bundle that
-// scans clean AND carries a valid signature under NEXUS_SKILLS_SIGNING_PUBKEY
-// (base64 ed25519 public key) — a bundle failing either check is SKIPPED
+// devSkillsSigningPubkey is the public half of the fixed, deterministic
+// ed25519 dev key docs/build-phases.md Phase 16 (task 16.7) signed
+// skills/web-research and skills/sandboxed-code with — the same "fixed,
+// low-entropy dev-only value" spirit as deploy/docker-compose.yml's
+// postgres://nexus:nexus@... and deploy/docker-compose.local-llm.yml's
+// fixed Langfuse keypair. A public key carries no confidentiality
+// requirement, so defaulting NEXUS_SKILLS_SIGNING_PUBKEY to it (rather than
+// leaving it empty) is what makes the two in-repo demo skills trusted out of
+// the box, the same zero-setup posture NEXUS_PROVIDER=fake and
+// loadOrGenerateKEK's --dev branch already hold this binary to — an
+// operator who signs their own bundles overrides this env var, never edits
+// the default. docs/agentic-capabilities.md documents the regeneration
+// recipe (sign with a real, private key; publish only the public half here).
+const devSkillsSigningPubkey = "O25T/FllLc+s5DjZvNhcrLzo13358AdkbfLpYX0jEFc="
+
+// loadSkillCatalog reads NEXUS_SKILLS_ROOT (default "skills" — a tracked
+// repo directory, not .dev/: skill bundles are durable, reviewed content
+// like evals/corpus/*.yaml, not machine-local generated secrets), admits
+// every bundle that scans clean AND carries a valid signature under
+// NEXUS_SKILLS_SIGNING_PUBKEY (base64 ed25519 public key, defaulting to
+// devSkillsSigningPubkey above) — a bundle failing either check is SKIPPED
 // and logged, not fataled: skill bundles are less-trusted content than a
 // first-party builtin tool, unlike the builtin loop above which fatals on a
 // bad admission (README task 7.5's "the whole bundle is refused" scoped to
@@ -1487,12 +1516,9 @@ func newConnectorRegistry() *connectors.Registry {
 // script registered as a real tool under the "skill" namespace; if
 // registration fails (e.g. a namespace/ref collision), the WHOLE bundle is
 // dropped, per task 7.5 — never a bundle with a body but a silently
-// missing tool. No NEXUS_SKILLS_SIGNING_PUBKEY configured means no bundle
-// is ever trusted — the honest empty default, exactly like an unset
-// NEXUS_SANDBOX leaves platform/shell unsandboxed rather than refusing to
-// start.
+// missing tool.
 func loadSkillCatalog(reg *tools.Registry) (*skills.Catalog, []skills.SkillBundle, []tools.Tool) {
-	bundles, err := skills.LoadBundles(envOr("NEXUS_SKILLS_ROOT", ".dev/skills"))
+	bundles, err := skills.LoadBundles(envOr("NEXUS_SKILLS_ROOT", "skills"))
 	if err != nil {
 		fatalf("load skill bundles: %v", err)
 	}
@@ -1501,7 +1527,7 @@ func loadSkillCatalog(reg *tools.Registry) (*skills.Catalog, []skills.SkillBundl
 	}
 
 	var pubKey ed25519.PublicKey
-	if raw := envOr("NEXUS_SKILLS_SIGNING_PUBKEY", ""); raw != "" {
+	if raw := envOr("NEXUS_SKILLS_SIGNING_PUBKEY", devSkillsSigningPubkey); raw != "" {
 		decoded, err := base64.StdEncoding.DecodeString(raw)
 		if err != nil {
 			fatalf("decode NEXUS_SKILLS_SIGNING_PUBKEY: %v", err)
@@ -1561,24 +1587,52 @@ func derivedArtifactRecorder(st *store.Store, chain *audit.Chain) tools.DerivedA
 }
 
 // newSandboxFactory wires platform/shell to run inside Docker (README task
-// 5.12) when NEXUS_SANDBOX=docker and a daemon is actually reachable —
+// 5.12) when NEXUS_SANDBOX=docker and a daemon is actually reachable, or
+// inside an OpenSandbox sandbox (docs/build-phases.md Phase 16, task 16.4)
+// when NEXUS_SANDBOX=opensandbox and NEXUS_OPENSANDBOX_URL is configured —
 // opt-in, not the default: this demo's zero-setup path (`make up && make
-// run`) must keep working on a machine with no Docker daemon running,
-// exactly like NEXUS_PROVIDER=fake needs no ANTHROPIC_API_KEY.
+// run`) must keep working on a machine with no Docker daemon and no
+// OpenSandbox server running, exactly like NEXUS_PROVIDER=fake needs no
+// ANTHROPIC_API_KEY. Both branches share the same fail-open-to-unsandboxed
+// posture on a misconfiguration — a demo that asked for isolation and can't
+// get it stays running, not fataled, matching the `docker` branch's own
+// long-standing behavior.
 func newSandboxFactory(workspaceRoot string) func(uuid.UUID) tools.SandboxExec {
-	if envOr("NEXUS_SANDBOX", "") != "docker" {
-		return nil
-	}
-	docker, err := sandbox.NewDocker()
-	if err != nil {
-		log.Warn().Err(err).Msg("nexusd: NEXUS_SANDBOX=docker but connecting to Docker failed; platform/shell stays unsandboxed")
-		return nil
-	}
-	return func(sessionID uuid.UUID) tools.SandboxExec {
-		return sandbox.SessionSandbox{
-			Docker: docker,
-			Config: sandbox.Config{WorkspaceDir: filepath.Join(workspaceRoot, sessionID.String())},
+	switch envOr("NEXUS_SANDBOX", "") {
+	case "docker":
+		docker, err := sandbox.NewDocker()
+		if err != nil {
+			log.Warn().Err(err).Msg("nexusd: NEXUS_SANDBOX=docker but connecting to Docker failed; platform/shell stays unsandboxed")
+			return nil
 		}
+		return func(sessionID uuid.UUID) tools.SandboxExec {
+			return sandbox.SessionSandbox{
+				Docker: docker,
+				Config: sandbox.Config{WorkspaceDir: filepath.Join(workspaceRoot, sessionID.String())},
+			}
+		}
+	case "opensandbox":
+		domain := envOr("NEXUS_OPENSANDBOX_URL", "")
+		if domain == "" {
+			log.Warn().Msg("nexusd: NEXUS_SANDBOX=opensandbox but NEXUS_OPENSANDBOX_URL is unset; platform/shell stays unsandboxed")
+			return nil
+		}
+		protocol, host, ok := strings.Cut(domain, "://")
+		if !ok {
+			protocol, host = "http", domain
+		}
+		apiKey := envOr("NEXUS_OPENSANDBOX_API_KEY", "")
+		return func(uuid.UUID) tools.SandboxExec {
+			// Unlike Docker (one bind-mounted host directory per session),
+			// OpenSandbox's sandbox itself IS the per-call scope — no
+			// session-keyed WorkspaceDir to thread through, one fresh
+			// sandbox per Exec call (opensandbox.go's own doc comment).
+			return sandbox.OpenSandboxSession{
+				Config: sandbox.OpenSandboxConfig{Domain: host, Protocol: protocol, APIKey: apiKey},
+			}
+		}
+	default:
+		return nil
 	}
 }
 
@@ -2247,8 +2301,50 @@ func runSeed(ctx context.Context, args []string) error {
 		return fmt.Errorf("seed price book: %w", err)
 	}
 
+	if err := s.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+		return seedDemoSkills(ctx, tx, tenantID)
+	}); err != nil {
+		return fmt.Errorf("seed demo skills: %w", err)
+	}
+
 	fmt.Printf("seeded tenant %q (tenant_id=%s)\n", *tenantName, tenantID)
 	return nil
+}
+
+// demoSkillIDs are the two bundles under skills/ (docs/build-phases.md
+// Phase 16, task 16.7) — admitting them at seed time is what makes
+// `nexusctl run "research ..."` reach for activate_skill("web-research") on
+// a freshly seeded tenant, without a separate manual admission step.
+var demoSkillIDs = []string{"web-research", "sandboxed-code"}
+
+// seedDemoSkills admits demoSkillIDs into tenantID's config, UNIONED with
+// whatever is already admitted (config.Upsert replaces the whole
+// admitted_skill_ids array, so a naive overwrite here would silently
+// un-admit anything an operator had already turned on by hand) — idempotent
+// like seedPriceBook, and harmless if skills/'s bundles fail the signature
+// or scan check at load time (task 7.3/7.5): admission and trust are two
+// independent gates, checked in two different places.
+func seedDemoSkills(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) error {
+	cfg, err := config.Load(ctx, tx, tenantID)
+	if err != nil {
+		return fmt.Errorf("load tenant config: %w", err)
+	}
+	admitted := map[string]bool{}
+	for _, id := range cfg.AdmittedSkillIDs {
+		admitted[id] = true
+	}
+	changed := false
+	for _, id := range demoSkillIDs {
+		if !admitted[id] {
+			cfg.AdmittedSkillIDs = append(cfg.AdmittedSkillIDs, id)
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	cfg.TenantID = tenantID
+	return config.Upsert(ctx, tx, cfg)
 }
 
 // seedPriceBook inserts one price book entry per (meter, model) pair the

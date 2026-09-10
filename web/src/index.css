@@ -338,6 +338,30 @@ button.danger {
   opacity: 0.6;
 }
 
+/* suggested-prompt chips (docs/build-phases.md Phase 16, task 16.9) */
+
+.prompt-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: -4px;
+}
+
+.prompt-chip {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-alt);
+  color: var(--text);
+}
+
+.prompt-chip:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .conn-open {
   color: var(--success);
 }

@@ -1,4 +1,4 @@
-.PHONY: up down build run signerd token test lint migrate seed eval eval-baseline verify-chain erase dashboard go-live web-build docker-build docker-up ollama-pull llm-up langfuse-up llm-down
+.PHONY: up down build run signerd token test lint migrate seed eval eval-baseline verify-chain erase dashboard go-live web-build docker-build docker-up ollama-pull llm-up langfuse-up llm-down agentic-up agentic-down
 
 TENANT ?= acme
 
@@ -92,3 +92,16 @@ langfuse-up: ## start a self-hosted Langfuse stack (web, worker, clickhouse, min
 
 llm-down: ## stop the litellm + langfuse containers (postgres/pgbouncer/redis from `make up` are untouched — separate compose file)
 	docker compose -f deploy/docker-compose.local-llm.yml --profile llm --profile langfuse down
+
+# --- Agentic capabilities: Crawl4AI + OpenSandbox (docs/agentic-capabilities.md) ---
+# A third, separate compose file — same reasoning as the local-llm block
+# above: nothing here references postgres/pgbouncer/redis/signerd/nexusd, so
+# `make down`/`make llm-down` can never touch it.
+
+agentic-up: ## start Crawl4AI (platform/web_crawl) + an OpenSandbox server (NEXUS_SANDBOX=opensandbox)
+	docker compose -f deploy/docker-compose.agentic.yml --profile agentic up -d
+	@echo "crawl4ai: http://localhost:11235  (NEXUS_CRAWL4AI_URL, NEXUS_CRAWL4AI_API_TOKEN=nexus-dev-crawl4ai-token)"
+	@echo "opensandbox: http://localhost:8090  (NEXUS_SANDBOX=opensandbox, NEXUS_OPENSANDBOX_URL, NEXUS_OPENSANDBOX_API_KEY=nexus-dev-opensandbox-key)"
+
+agentic-down: ## stop the crawl4ai + opensandbox-server containers
+	docker compose -f deploy/docker-compose.agentic.yml --profile agentic down

@@ -1,0 +1,22 @@
+id: capability-web-crawl-round-trip
+class: capability
+description: >
+  A platform/web_crawl tool_use/tool_result round-trip concatenates content
+  correctly and reaches a clean `stop` — the same wire-format proof
+  capability_multi_tool_use.yaml already runs for file_read, extended to the
+  tool docs/build-phases.md Phase 16 (task 16.1) added.
+script:
+  chunks:
+    - kind: content
+      text: "researching that now: "
+    - kind: tool_use
+      tool_use_id: "t1"
+      tool_name: "web_crawl"
+      input: '{"url":"https://example.com/article"}'
+    - kind: content
+      text: "done."
+    - kind: done
+      done: stop
+want:
+  final_text: "researching that now: done."
+  done: stop
