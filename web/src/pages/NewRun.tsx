@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { createRun, ApiError } from "../lib/api";
 import { addRecentRun, loadRecentRuns } from "../lib/recentRuns";
 import { useSettings } from "../lib/settings";
+import { suggestedPrompts } from "../lib/suggestedPrompts";
 import type { Autonomy } from "../lib/types";
 
 export function NewRun() {
@@ -62,6 +63,20 @@ export function NewRun() {
             placeholder="Describe the task for the agent to run..."
           />
         </label>
+
+        <div className="prompt-chips" role="group" aria-label="Suggested prompts">
+          {suggestedPrompts.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              className="prompt-chip"
+              title={p.hint}
+              onClick={() => setInput(p.text)}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
 
         <div className="form-row">
           <label>

@@ -24,9 +24,10 @@ import (
 type Isolation string
 
 const (
-	IsolationDocker Isolation = "docker" // shipped — the only backend Exec below implements
-	IsolationGVisor Isolation = "gvisor" // unshipped — a seam, not a promise
-	IsolationKata   Isolation = "kata"   // unshipped — a seam, not a promise
+	IsolationDocker      Isolation = "docker"      // shipped — Exec below
+	IsolationOpenSandbox Isolation = "opensandbox" // shipped — opensandbox.go's OpenSandboxSession (docs/build-phases.md Phase 16, task 16.3), the seam below redeemed with a real backend
+	IsolationGVisor      Isolation = "gvisor"      // unshipped — a seam, not a promise
+	IsolationKata        Isolation = "kata"        // unshipped — a seam, not a promise
 )
 
 // Limits are the hard resource ceilings every call is bound by — never

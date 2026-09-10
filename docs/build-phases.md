@@ -104,9 +104,9 @@ file-first memory — see §2 Phases 11–12.
 
 ## 2. Build phases
 
-Sixteen phases (0 through 15). Each is independently shippable and ends with a **demo command**
+Seventeen phases (0 through 16). Each is independently shippable and ends with a **demo command**
 you can run and an **acceptance test** that must be green. Sizing assumes one developer;
-parallelisable work is marked `[P]`. Phases 13–15 are not part of the original 67-pattern coverage —
+parallelisable work is marked `[P]`. Phases 13–16 are not part of the original 67-pattern coverage —
 see their own intros below.
 
 ### Phase 0 — Setup (1 day)
@@ -512,6 +512,55 @@ no content-bearing attribute ever leaving the process.
 **Acceptance**: the load test in 15.3 reports a measured req/s number (not an assumed one);
 `tests/contract/boundaries_test.go`'s two previously-`t.Skipf`'d rules for `internal/controlplane`
 now run and pass.
+
+---
+
+### Phase 16 — Agentic capability surface: Crawl4AI, OpenSandbox, and a real skill/subagent bootstrap
+
+Not part of the original 67-pattern coverage — like Phases 9 and 13–15, no new architectural idea
+ships here. The point of this phase is the opposite: prove the seams §1 already rates **F**/**S**
+by filling two of them with real, named open-source projects instead of a first-party stub, and by
+actually populating two directories (`internal/skills`' bundle root, and the `delegate` tool's
+`agent_id`/`scope_grant` convention) that have shipped as empty machinery since Phases 7–8. Two
+upstream integrations, chosen because each lands on a seam this plan already left open on purpose:
+
+- **[Crawl4AI](https://github.com/unclecode/crawl4ai)** (`unclecode/crawl4ai`) — an LLM-friendly web
+  crawler with a Dockerized FastAPI server — becomes `platform/web_crawl`, a sibling of
+  `platform/web_fetch` (#56 in §1) that returns rendered, boilerplate-stripped Markdown instead of
+  raw HTML. It is **not** a new architectural idea: same taint declaration, same egress allowlist
+  (task 5.13/11.9), same "content is untrusted" posture (Principle V) `platform/web_fetch` already
+  has — the new capability is JS-rendered, LLM-ready extraction, not a new trust boundary.
+- **[OpenSandbox](https://github.com/opensandbox-group/OpenSandbox)**
+  (`opensandbox-group/OpenSandbox`) fills the seam pattern #44's own doc comment names verbatim:
+  *"Isolation carries gvisor/kata as unshipped values ... a stronger isolation backend is a config
+  change later, not a schema or interface change."* `NEXUS_SANDBOX=opensandbox` becomes a second
+  `sandbox.Isolation` alongside `docker`, satisfying the exact same `tools.SandboxExec` structural
+  interface `sandbox.SessionSandbox` already does — `platform/shell` gets a stronger, actively
+  maintained isolation backend (deny-by-default `NetworkPolicy`, a real lifecycle/execd/egress API)
+  with **zero change** to `internal/tools`, the permission chain, or the kernel. No second tool, no
+  new ABI — the seam was built for exactly this.
+
+Both integrations run as opt-in services in a **third** compose file
+(`deploy/docker-compose.agentic.yml`), the same append-only pattern
+`deploy/docker-compose.local-llm.yml` (`docs/local-llm.md`) already established: nothing in it
+references postgres/pgbouncer/redis/signerd/nexusd, so `make down` and `make llm-down` can never
+touch it, and a demo that never runs `make agentic-up` pays nothing.
+
+| # | Task | Proves |
+|---|---|---|
+| 16.1 | `internal/tools/builtin/web_crawl.go` — `platform/web_crawl(url)`: calls Crawl4AI's Docker server `POST /md` (`f=fit` boilerplate-stripped Markdown), `Authorization: Bearer` against `NEXUS_CRAWL4AI_API_TOKEN`; same `hostAllowed`/egress-allowlist check against the **target** URL as `platform/web_fetch` (task 5.13), same result-budget cap (task 3.13) | A second content-acquisition tool sits beside #56 without a second trust model — taint, egress allowlist, and untrusted-content handling are identical, only the extraction quality differs |
+| 16.2 | `Taint{ReturnsUntrusted:true, MutatesExternal:true, ReadsPrivateData:false}` — identical to `platform/web_fetch`'s own declaration, not a weaker one, even though the actual HTTP fetch now happens inside Crawl4AI's container rather than in-process | Delegating the fetch to another service never delegates the trust decision (Principle V) |
+| 16.3 | `internal/sandbox/opensandbox.go` — `OpenSandbox` backend implementing the same `Exec(ctx, cmd) (output, exitCode, breach, err)` shape as `sandbox.SessionSandbox` (structurally, no shared interface declaration — the existing decoupling idiom `internal/tools.SandboxExec`'s own doc comment names), via the official Go SDK (`github.com/alibaba/OpenSandbox/sdks/sandbox/go`): `opensandbox.CreateSandbox` with `NetworkPolicy{DefaultAction:"deny"}` (the same default-deny posture as Docker's `--network none`, task 5.12/5.13), `ConnectionConfig.UseServerProxy:true` so a host-run `nexusd` never needs the server's dynamic sandbox-port range published | Pattern #44's "config change later, not an interface change" claim, redeemed with a real second backend |
+| 16.4 | `newSandboxFactory` (`cmd/nexusd/main.go`) grows an `NEXUS_SANDBOX=opensandbox` branch beside the existing `docker` one — same zero-setup discipline: unset stays unsandboxed, a configured-but-unreachable backend logs a warning and falls back, exactly like `NEXUS_SANDBOX=docker` already does when no daemon answers | The `docker`/`opensandbox` choice is operator config, never a code fork (pattern #61's own discipline, applied to isolation backends) |
+| 16.5 | `deploy/docker-compose.agentic.yml` — `crawl4ai` (pinned `unclecode/crawl4ai:0.9.3`, port 11235, `CRAWL4AI_API_TOKEN` dev secret, `shm_size: 1gb`) and `opensandbox-server` (official `opensandbox/server:latest`, port 8090, `/var/run/docker.sock` mounted, `server.api_key` dev secret, `[docker] host_ip = "host.docker.internal"` — the config the project's own example compose file ships for exactly this "server runs in a container, sandboxes are its Docker siblings" topology) | Two more third-party adapters wired the way `docs/local-llm.md` already proved: opt-in, additive, independently torn down |
+| 16.6 | `Makefile`: `agentic-up`/`agentic-down` (mirrors `llm-up`/`llm-down`); `docs/agentic-capabilities.md` (mirrors `docs/local-llm.md`'s voice): architecture, env vars, and an explicit **caveat** section — Crawl4AI's own JS-rendering cost, and OpenSandbox's server needing the Docker socket (a privileged deploy concern, named rather than hidden, the same honesty `docs/local-llm.md`'s own Caveats section already models) | Every prior third-party adapter in this codebase ships with the same shape of doc; this one does too |
+| 16.7 | `.dev/skills/web-research/` and `.dev/skills/sandboxed-code/` — two real `skill.json` bundles (not test fixtures) with a `trigger_hint`, `declared_tool_ids` naming the tools above, and a tier-3 `GUIDE.md` reference file, loaded by the existing `skills.LoadBundles(NEXUS_SKILLS_ROOT)` (task 7.3) with no loader change; `make seed` admits both into the demo tenant's `admitted_skill_ids` (task 7.6) | Answers directly: yes, this codebase already has a "skills markdown" mechanism (task 7.3–7.9) — it has simply never been populated with real content until this task |
+| 16.8 | Two named `agent_id`/`scope_grant` conventions over the **existing, unmodified** `platform/delegate` tool (#54/8.9) — `web-researcher` (`scope_grant: ["platform/web_crawl@v1","platform/web_fetch@v1","platform/activate_skill@v1"]`) and `sandbox-runner` (`scope_grant: ["platform/shell@v1","platform/activate_skill@v1"]`) — documented in `docs/agentic-capabilities.md`, referenced by both skills' `trigger_hint` text and by the UI's suggested prompts (16.9) | Deliberately **not** a new persona/system-prompt-override table: `scope_grant` (a provable tool-ref subset, task 8.9) already is what defines a sub-agent's capability surface in this architecture, and `harness_digest`/prompt cache-stability (#7, #28) make a per-agent system-prompt fork exactly the kind of thing this plan's own "seams decided early, never bolted on later" rule warns against — the honest move is documenting the existing mechanism, not adding one |
+| 16.9 | `web/src/lib/suggestedPrompts.ts` + chip UI on `NewRun` (populates the initial input) and `RunDetail`'s steer box (injects a follow-up turn) — one-click prompts exercising `platform/web_crawl`, `NEXUS_SANDBOX=opensandbox`-backed `platform/shell`, `activate_skill`, and `platform/delegate` with the two conventions above | A reviewer can exercise every capability this task added, and the delegation/skill patterns Phases 7–8 already shipped, without typing a prompt from scratch |
+| 16.10 | `evals/corpus/capability_web_crawl_round_trip.yaml` — a deterministic `provider/fake`-scripted case (task 1.8/#10, `ProviderScriptCase`) proving a `web_crawl` `tool_use`/`tool_result` round-trip concatenates content correctly and reaches a clean `stop`, the exact shape `capability_multi_tool_use.yaml` already proves for `file_read`, extended to the new tool name | The new tool's wire shape is exercised by the same deterministic corpus every other builtin's is — not a side door that skips it |
+
+**Demo**: `make agentic-up`, then `nexusctl run "research the top 3 headlines on https://news.ycombinator.com and summarize them"` — the run calls `activate_skill("web-research")`, then `platform/web_crawl`, and returns a summary citing the crawled URL. Separately, `NEXUS_SANDBOX=opensandbox make run` and `nexusctl run --autonomy autonomous "delegate to a sandbox-runner sub-agent: run 'python3 --version' and report it"` — the transcript shows a `platform/delegate` call with `scope_grant:["platform/shell@v1",...]`, the child session's `platform/shell` call routed through `internal/sandbox/opensandbox.go`, and the same audit/taint/cost accounting every other tool call already gets. In the web app, the suggested-prompt chips reproduce both without typing.
+**Acceptance**: 16.2 (a table-driven test asserting `WebCrawl{}.Taint()` matches `WebFetch{}.Taint()` field-for-field); 16.4 (`NEXUS_SANDBOX=opensandbox` with the compose service down logs a warning and `platform/shell` still runs unsandboxed — the same fallback contract `docker` already has, never a hard failure); 16.10 green in `make eval` with zero other regressions.
 
 ---
 

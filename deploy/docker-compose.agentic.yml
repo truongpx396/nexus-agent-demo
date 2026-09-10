@@ -1,0 +1,117 @@
+name: nexus-agent-demo-agentic
+
+# docs/build-phases.md Phase 16 / docs/agentic-capabilities.md — two opt-in
+# third-party services behind the seams internal/tools/builtin/web_crawl.go
+# and internal/sandbox/opensandbox.go already wire: Crawl4AI
+# (https://github.com/unclecode/crawl4ai) for platform/web_crawl, and an
+# OpenSandbox server (https://github.com/opensandbox-group/OpenSandbox) for
+# NEXUS_SANDBOX=opensandbox. A THIRD compose file, not more services in
+# deploy/docker-compose.yml — the same append-only pattern
+# deploy/docker-compose.local-llm.yml already established (docs/local-llm.md):
+# nothing here references postgres/pgbouncer/redis/signerd/nexusd, so
+# `make down` and `make llm-down` can never touch it, and a demo that never
+# runs `make agentic-up` pays nothing for either service.
+#
+# Every secret below is a fixed, low-entropy DEV-ONLY value — the same spirit
+# as deploy/docker-compose.yml's own `postgres://nexus:nexus@...` and
+# deploy/docker-compose.local-llm.yml's fixed Langfuse dev keypair. CHANGEME
+# outside a local demo.
+
+services:
+  # --- Crawl4AI: platform/web_crawl's backend ---
+  crawl4ai:
+    profiles: ["agentic"]
+    image: unclecode/crawl4ai:0.9.3
+    shm_size: "1gb" # Chromium under Playwright needs real /dev/shm, not the Docker default 64m
+    ports:
+      - "11235:11235"
+    environment:
+      # Crawl4AI's own startup guard refuses to bind non-loopback without
+      # this set (v0.9.0+, "secure by default") — setting it is what makes
+      # the service reachable at all from outside its own container.
+      CRAWL4AI_API_TOKEN: nexus-dev-crawl4ai-token
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://localhost:11235/health').status==200 else sys.exit(1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s # Playwright/Chromium cold start
+
+  # --- OpenSandbox server: NEXUS_SANDBOX=opensandbox's backend ---
+  #
+  # The server needs the HOST Docker socket to create sandbox containers as
+  # its own siblings (Docker-outside-of-Docker, the same topology the
+  # project's official docker-compose.example.yaml ships) — a real
+  # deployment runs this on a host whose Docker daemon it is acceptable to
+  # hand out, never inside an already-multi-tenant cluster node without
+  # further isolation (docs/agentic-capabilities.md's own caveat on this).
+  opensandbox-server:
+    profiles: ["agentic"]
+    image: opensandbox/server:latest
+    networks:
+      - opensandbox-net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8090:8090"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    configs:
+      - source: opensandbox-config
+        target: /etc/opensandbox/config.toml
+    environment:
+      SANDBOX_CONFIG_PATH: /etc/opensandbox/config.toml
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost:8090/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+configs:
+  opensandbox-config:
+    content: |
+      [server]
+      host = "0.0.0.0"
+      port = 8090
+      # DEV-ONLY fixed secret — sent by internal/sandbox/opensandbox.go as
+      # NEXUS_OPENSANDBOX_API_KEY via the OPEN-SANDBOX-API-KEY header.
+      # CHANGEME outside a local demo.
+      api_key = "nexus-dev-opensandbox-key"
+
+      [proxy]
+      # The lifecycle server is attached to opensandbox-net, while sandboxes
+      # created through the mounted Docker socket use Docker's own bridge
+      # network — route through UseServerProxy (internal/sandbox/
+      # opensandbox.go's own ConnectionConfig) instead of unreachable
+      # sandbox IPs, mirroring the project's official compose example.
+      resolve_internal = false
+
+      [log]
+      level = "INFO"
+
+      [runtime]
+      type = "docker"
+      execd_image = "opensandbox/execd:v1.1.0"
+
+      [egress]
+      image = "opensandbox/egress:v1.1.7"
+      readiness_timeout_seconds = 30.0
+
+      [docker]
+      network_mode = "bridge"
+      # Required because the server itself runs in a container: host-mapped
+      # endpoints and proxy targets must resolve back to the Docker host.
+      host_ip = "host.docker.internal"
+      port_range_min = 40000
+      port_range_max = 40100
+      drop_capabilities = ["AUDIT_WRITE", "MKNOD", "NET_ADMIN", "NET_RAW", "SYS_ADMIN", "SYS_MODULE", "SYS_PTRACE", "SYS_TIME", "SYS_TTY_CONFIG"]
+      no_new_privileges = true
+      pids_limit = 4096
+
+      [ingress]
+      mode = "direct"
+
+networks:
+  opensandbox-net:
+    driver: bridge

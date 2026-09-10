@@ -405,3 +405,4 @@ This repo's own supplementary docs:
 | [`docs/constitution.md`](docs/constitution.md) | The nine principles, copied in verbatim (Phase 0, task 0.6) as the review checklist. |
 | [`docs/go-live.md`](docs/go-live.md) | The go-live checklist and what `nexusd go-live` automates versus what stays a manual review. |
 | [`docs/local-llm.md`](docs/local-llm.md) | Ollama + LiteLLM + Langfuse: a local model wired into `internal/provider.Provider`, and genuine per-run agent tracing (`internal/obs.Tracer`, `kernel/loop.go`) in a self-hosted Langfuse — the §5 deferred-adapters row, actually wired. |
+| [`docs/agentic-capabilities.md`](docs/agentic-capabilities.md) | Crawl4AI (`platform/web_crawl`) + OpenSandbox (`NEXUS_SANDBOX=opensandbox`) — two real backends behind seams `docs/build-phases.md`'s Phase 16 already names, plus the populated `.dev/skills/` bundles and `delegate` `agent_id`/`scope_grant` conventions that make them demonstrable end to end. |

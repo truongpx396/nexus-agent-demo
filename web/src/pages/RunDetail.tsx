@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { ApiError, cancelRun, getRun, steerRun, tightenAutonomy } from "../lib/api";
 import { useSettings } from "../lib/settings";
+import { suggestedFollowUps } from "../lib/suggestedPrompts";
 import { useRunEvents } from "../lib/useRunEvents";
 import type { Autonomy, GetRunResponse } from "../lib/types";
 import { JsonView } from "../components/JsonView";
@@ -137,6 +138,21 @@ export function RunDetail() {
             onChange={(e) => setSteerInput(e.target.value)}
             placeholder="new input to inject"
           />
+        </div>
+
+        <div className="prompt-chips" role="group" aria-label="Suggested follow-ups">
+          {suggestedFollowUps.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              className="prompt-chip"
+              title={p.hint}
+              disabled={actionBusy || isTerminal}
+              onClick={() => setSteerInput(p.text)}
+            >
+              {p.label}
+            </button>
+          ))}
         </div>
 
         <div className="controls-row">

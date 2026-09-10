@@ -1,0 +1,7 @@
+{
+  "skill_id": "web-research",
+  "description": "Research a topic on the public web: crawl pages into clean Markdown, gather multiple sources, and summarize with citations.",
+  "trigger_hint": "The user asks to research a topic, look up current information, summarize an article or webpage, or compare information across sources on the web.",
+  "declared_tool_ids": ["platform/web_crawl@v1", "platform/web_fetch@v1"],
+  "signature": "MXotm4r2djlO6iv+7bZB+wiSzwyAl0ysahcUH7XnpSrenuGeIvyutHYz6mpgMKRJOxwi30rxbO/JZNDwxCvcCw=="
+}

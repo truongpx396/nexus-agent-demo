@@ -1,0 +1,7 @@
+{
+  "skill_id": "sandboxed-code",
+  "description": "Run and test code or shell commands safely inside the isolated sandbox, never directly on the host.",
+  "trigger_hint": "The user asks to run, execute, test, or check a script or command, reproduce a bug, or verify something by actually running it.",
+  "declared_tool_ids": ["platform/shell@v1"],
+  "signature": "Cg4OQ3zohWrKEYJmDbpTMUhNIgV2kCwj1C0cA+kX7Ta7EzJXKXg6/kTw8bSQIq36cCoVyc2fPKfllDF5HekLAw=="
+}
