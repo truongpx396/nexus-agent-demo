@@ -14,11 +14,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/rs/zerolog/log"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/harness"
@@ -144,7 +144,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := s.startRun(r.Context(), tenantID, userID, msg.From, input); err != nil {
-		slog.Error("email: start run", "error", err, "tenant_id", tenantID)
+		log.Error().Err(err).Any("tenant_id", tenantID).Msg("email: start run")
 		http.Error(w, "start run: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -224,7 +224,7 @@ func (s *Server) drainAndNotify(tenantID, sessionID uuid.UUID, recipientAddress 
 			continue
 		}
 		if err := s.Outbox.Deliver(context.Background(), tenantID, sessionID, re.Event.Seq, "email", recipientAddress, payload, sender); err != nil {
-			slog.Error("email: deliver approval notification", "error", err, "session_id", sessionID)
+			log.Error().Err(err).Any("session_id", sessionID).Msg("email: deliver approval notification")
 		}
 	}
 }

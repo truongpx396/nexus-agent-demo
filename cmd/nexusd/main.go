@@ -18,7 +18,6 @@ import (
 	"flag"
 	"fmt"
 	"iter"
-	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -31,6 +30,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
+	"github.com/rs/zerolog/log"
 	"golang.org/x/oauth2"
 
 	"github.com/truongpx396/nexus-agent-demo/evals"
@@ -351,7 +351,7 @@ func serve(ctx context.Context) error {
 	srv.Skills = &nexusdSkillSetPort{store: st, bundles: admittedSkillBundles}
 	srv.MCP = mcpPort
 	srv.Outbox = &surfaces.Outbox{Store: st, Keys: keyStore, Chain: chain}
-	srv.OutboxSender = slogSender{}
+	srv.OutboxSender = logSender{}
 
 	srv.Exporter = spanExp
 
@@ -431,7 +431,7 @@ func serve(ctx context.Context) error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		if err := httpSrv.Shutdown(shutdownCtx); err != nil {
-			slog.Error("nexusd: graceful shutdown failed", "error", err)
+			log.Error().Err(err).Msg("nexusd: graceful shutdown failed")
 		}
 	}()
 	if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -497,7 +497,7 @@ func handleMetrics(st *store.Store) http.HandlerFunc {
 		for _, tenantID := range tenantIDs {
 			signals, err := obs.ComputeGoldenSignals(r.Context(), st, tenantID, metricsStaleClaimAfter, nil, nil)
 			if err != nil {
-				slog.Error("nexusd: /metrics: compute golden signals", "tenant_id", tenantID, "error", err)
+				log.Error().Err(err).Any("tenant_id", tenantID).Msg("nexusd: /metrics: compute golden signals")
 				continue
 			}
 			signalsByTenant[tenantID] = signals
@@ -739,7 +739,7 @@ func startAnchorLoop(ctx context.Context, st *store.Store, chain *audit.Chain) (
 func anchorAndVerifyAllTenants(ctx context.Context, st *store.Store, chain *audit.Chain) {
 	tenantIDs, err := listTenantIDs(ctx)
 	if err != nil {
-		slog.Error("nexusd: list tenants for anchor/verify pass", "error", err)
+		log.Error().Err(err).Msg("nexusd: list tenants for anchor/verify pass")
 		return
 	}
 	for _, tenantID := range tenantIDs {
@@ -752,11 +752,11 @@ func anchorAndVerifyAllTenants(ctx context.Context, st *store.Store, chain *audi
 				return err
 			}
 			if !report.OK() {
-				slog.Error("nexusd: audit chain verification found a problem", "tenant_id", tenantID, "breaks", report.Breaks, "gaps", report.Gaps)
+				log.Error().Any("tenant_id", tenantID).Any("breaks", report.Breaks).Any("gaps", report.Gaps).Msg("nexusd: audit chain verification found a problem")
 			}
 			return nil
 		}); err != nil {
-			slog.Error("nexusd: anchor/verify pass failed", "tenant_id", tenantID, "error", err)
+			log.Error().Err(err).Any("tenant_id", tenantID).Msg("nexusd: anchor/verify pass failed")
 		}
 	}
 }
@@ -786,12 +786,12 @@ func startTeamBackstopLoop(ctx context.Context, teamsSvc *teams.Service) (stop f
 func sweepTeamBackstopAllTenants(ctx context.Context, teamsSvc *teams.Service) {
 	tenantIDs, err := listTenantIDs(ctx)
 	if err != nil {
-		slog.Error("nexusd: list tenants for team backstop sweep", "error", err)
+		log.Error().Err(err).Msg("nexusd: list tenants for team backstop sweep")
 		return
 	}
 	for _, tenantID := range tenantIDs {
 		if err := teamsSvc.SweepBackstop(ctx, tenantID, teamBackstopWindow); err != nil {
-			slog.Error("nexusd: team backstop sweep failed", "tenant_id", tenantID, "error", err)
+			log.Error().Err(err).Any("tenant_id", tenantID).Msg("nexusd: team backstop sweep failed")
 		}
 	}
 }
@@ -832,16 +832,16 @@ func listTenantIDs(ctx context.Context) ([]uuid.UUID, error) {
 	return ids, rows.Err()
 }
 
-// slogSender is the demo's stand-in surfaces.Sender (README task 7.14) —
+// logSender is the demo's stand-in surfaces.Sender (README task 7.14) —
 // logs the notification rather than actually reaching a human, the same
 // honest-interim posture demoSafetyModel and the unsandboxed platform/shell
 // fallback already take elsewhere in this file. A real Telegram/email
 // Sender is Phase 11's; the point of this phase is the outbox's own
 // durability discipline, not a new transport.
-type slogSender struct{}
+type logSender struct{}
 
-func (slogSender) Send(_ context.Context, surfaceID, recipient string, payload []byte) error {
-	slog.Info("nexusd: outbox delivery (demo sender)", "surface_id", surfaceID, "recipient", recipient, "payload", string(payload))
+func (logSender) Send(_ context.Context, surfaceID, recipient string, payload []byte) error {
+	log.Info().Str("surface_id", surfaceID).Str("recipient", recipient).Str("payload", string(payload)).Msg("nexusd: outbox delivery (demo sender)")
 	return nil
 }
 
@@ -920,7 +920,7 @@ func startQueueWorkers(ctx context.Context, st *store.Store, redisClient *redis.
 	adminDSN := envOr("NEXUS_ADMIN_DATABASE_URL", envOr("NEXUS_MIGRATE_DATABASE_URL", defaultMigrateDSN))
 	adminPool, err := pgxpool.New(ctx, adminDSN)
 	if err != nil {
-		slog.Error("nexusd: queue: connect as admin failed; the worker pool is NOT running (fresh runs still work; crash recovery does not)", "error", err)
+		log.Error().Err(err).Msg("nexusd: queue: connect as admin failed; the worker pool is NOT running (fresh runs still work; crash recovery does not)")
 		return func() {}
 	}
 
@@ -952,7 +952,7 @@ func startQueueWorkers(ctx context.Context, st *store.Store, redisClient *redis.
 func recoverOrphanedSessions(ctx context.Context, adminPool *pgxpool.Pool, port queue.Port) {
 	rows, err := adminPool.Query(ctx, `SELECT session_id, tenant_id, session_key FROM sessions WHERE status = 'running'`)
 	if err != nil {
-		slog.Error("nexusd: queue: list orphaned running sessions failed", "error", err)
+		log.Error().Err(err).Msg("nexusd: queue: list orphaned running sessions failed")
 		return
 	}
 	defer rows.Close()
@@ -961,17 +961,17 @@ func recoverOrphanedSessions(ctx context.Context, adminPool *pgxpool.Pool, port 
 		var sessionID, tenantID uuid.UUID
 		var sessionKey string
 		if err := rows.Scan(&sessionID, &tenantID, &sessionKey); err != nil {
-			slog.Error("nexusd: queue: scan orphaned session failed", "error", err)
+			log.Error().Err(err).Msg("nexusd: queue: scan orphaned session failed")
 			continue
 		}
 		if _, err := port.Enqueue(ctx, queue.Job{TenantID: tenantID, SessionID: sessionID, SessionKey: sessionKey, Kind: queue.KindResume}); err != nil {
-			slog.Error("nexusd: queue: enqueue resume for orphaned session failed", "session_id", sessionID, "error", err)
+			log.Error().Err(err).Any("session_id", sessionID).Msg("nexusd: queue: enqueue resume for orphaned session failed")
 			continue
 		}
 		recovered++
 	}
 	if recovered > 0 {
-		slog.Info("nexusd: queue: enqueued resume jobs for orphaned running sessions", "count", recovered)
+		log.Info().Int("count", recovered).Msg("nexusd: queue: enqueued resume jobs for orphaned running sessions")
 	}
 }
 
@@ -1004,7 +1004,7 @@ func (r *queueRunner) Run(ctx context.Context, job queue.Job) error {
 	// session (the overwhelming majority), and only does real work here.
 	if r.delegations != nil {
 		if err := r.delegations.OnChildTerminal(ctx, job.TenantID, job.SessionID); err != nil {
-			slog.Error("nexusd: queue: resolve delegation after crash-recovered child failed", "session_id", job.SessionID, "error", err)
+			log.Error().Err(err).Any("session_id", job.SessionID).Msg("nexusd: queue: resolve delegation after crash-recovered child failed")
 		}
 	}
 	// A crash-recovered session that is ALSO a team member (README task 9.9)
@@ -1013,7 +1013,7 @@ func (r *queueRunner) Run(ctx context.Context, job queue.Job) error {
 	// only does real work here, mirroring OnChildTerminal's own call above.
 	if r.teams != nil {
 		if err := r.teams.OnMemberTerminal(ctx, job.TenantID, job.SessionID); err != nil {
-			slog.Error("nexusd: queue: resolve team after crash-recovered member failed", "session_id", job.SessionID, "error", err)
+			log.Error().Err(err).Any("session_id", job.SessionID).Msg("nexusd: queue: resolve team after crash-recovered member failed")
 		}
 	}
 
@@ -1051,7 +1051,7 @@ func (r *queueRunner) Run(ctx context.Context, job queue.Job) error {
 		return err
 	})
 	if err != nil {
-		slog.Error("nexusd: queue: save checkpoint after run failed", "job_id", job.JobID, "error", err)
+		log.Error().Err(err).Any("job_id", job.JobID).Msg("nexusd: queue: save checkpoint after run failed")
 	}
 	return nil
 }
@@ -1128,7 +1128,7 @@ func (p *nexusdOversightPort) onResumed(ctx context.Context, tenantID uuid.UUID,
 	}
 	if p.delegations != nil {
 		if err := p.delegations.OnChildTerminal(ctx, tenantID, sessionID); err != nil {
-			slog.Error("nexusd: resolve delegation after approval-resumed child failed", "session_id", sessionID, "error", err)
+			log.Error().Err(err).Any("session_id", sessionID).Msg("nexusd: resolve delegation after approval-resumed child failed")
 		}
 	}
 	// An approval-resumed session may ALSO be a team member (README task
@@ -1136,7 +1136,7 @@ func (p *nexusdOversightPort) onResumed(ctx context.Context, tenantID uuid.UUID,
 	// OnChildTerminal's own call just above.
 	if p.teams != nil {
 		if err := p.teams.OnMemberTerminal(ctx, tenantID, sessionID); err != nil {
-			slog.Error("nexusd: resolve team after approval-resumed member failed", "session_id", sessionID, "error", err)
+			log.Error().Err(err).Any("session_id", sessionID).Msg("nexusd: resolve team after approval-resumed member failed")
 		}
 	}
 }
@@ -1238,7 +1238,7 @@ func newSpanExporter(ctx context.Context) (spanExporter, func(), error) {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := exp.Shutdown(shutdownCtx); err != nil {
-			slog.Error("nexusd: shutdown OTLP span exporter", "error", err)
+			log.Error().Err(err).Msg("nexusd: shutdown OTLP span exporter")
 		}
 	}, nil
 }
@@ -1336,7 +1336,7 @@ func newToolPipeline(st *store.Store, keyStore *crypto.KeyStore, chain *audit.Ch
 			Admitted: func(tenantID uuid.UUID) []string {
 				cfg, err := config.LoadForTenant(context.Background(), st, tenantID)
 				if err != nil {
-					slog.Error("nexusd: load tenant config for skill admission check", "tenant_id", tenantID, "error", err)
+					log.Error().Err(err).Any("tenant_id", tenantID).Msg("nexusd: load tenant config for skill admission check")
 					return nil // fail closed: an unreadable config admits nothing
 				}
 				return cfg.AdmittedSkillIDs
@@ -1517,22 +1517,22 @@ func loadSkillCatalog(reg *tools.Registry) (*skills.Catalog, []skills.SkillBundl
 	var scriptTools []tools.Tool
 	for _, b := range bundles {
 		if pubKey == nil || !skills.VerifySignature(b, pubKey) {
-			slog.Warn("nexusd: skipped a skill bundle with a missing or invalid signature", "skill_id", b.SkillID)
+			log.Warn().Any("skill_id", b.SkillID).Msg("nexusd: skipped a skill bundle with a missing or invalid signature")
 			continue
 		}
 		status, findings := skills.ScanBundle(b)
 		if status != tools.AdmissionClean {
-			slog.Warn("nexusd: skipped a skill bundle that failed admission scanning", "skill_id", b.SkillID, "status", status, "findings", findings)
+			log.Warn().Any("skill_id", b.SkillID).Any("status", status).Any("findings", findings).Msg("nexusd: skipped a skill bundle that failed admission scanning")
 			continue
 		}
 		if b.HasScript() {
 			script := skills.ScriptTool{SkillID: b.SkillID, Description: b.Description, Content: b.ScriptContent}
 			if err := reg.Register(script); err != nil {
-				slog.Warn("nexusd: skipped a skill bundle whose script failed to register as a tool", "skill_id", b.SkillID, "error", err)
+				log.Warn().Err(err).Any("skill_id", b.SkillID).Msg("nexusd: skipped a skill bundle whose script failed to register as a tool")
 				continue
 			}
 			if err := reg.SetAdmissionStatus(script.ID(), tools.AdmissionClean); err != nil {
-				slog.Warn("nexusd: skipped a skill bundle whose script tool could not be admitted", "skill_id", b.SkillID, "error", err)
+				log.Warn().Err(err).Any("skill_id", b.SkillID).Msg("nexusd: skipped a skill bundle whose script tool could not be admitted")
 				continue
 			}
 			scriptTools = append(scriptTools, script)
@@ -1571,7 +1571,7 @@ func newSandboxFactory(workspaceRoot string) func(uuid.UUID) tools.SandboxExec {
 	}
 	docker, err := sandbox.NewDocker()
 	if err != nil {
-		slog.Warn("nexusd: NEXUS_SANDBOX=docker but connecting to Docker failed; platform/shell stays unsandboxed", "error", err)
+		log.Warn().Err(err).Msg("nexusd: NEXUS_SANDBOX=docker but connecting to Docker failed; platform/shell stays unsandboxed")
 		return nil
 	}
 	return func(sessionID uuid.UUID) tools.SandboxExec {
@@ -1622,7 +1622,7 @@ func loadOrGenerateKEK(path string, dev bool) (crypto.KEK, error) {
 	if err := os.WriteFile(path, kek.Bytes(), 0o600); err != nil {
 		return crypto.KEK{}, fmt.Errorf("write KEK file %s: %w", path, err)
 	}
-	slog.Info("generated a new dev KEK", "path", path)
+	log.Info().Str("path", path).Msg("generated a new dev KEK")
 	return kek, nil
 }
 
@@ -1658,7 +1658,7 @@ func loadOrGenerateSigningKey(path string, dev bool) (ed25519.PrivateKey, error)
 	if err := os.WriteFile(path, key, 0o600); err != nil {
 		return nil, fmt.Errorf("write AuthN signing key file %s: %w", path, err)
 	}
-	slog.Info("generated a new dev AuthN signing key", "path", path)
+	log.Info().Str("path", path).Msg("generated a new dev AuthN signing key")
 	return key, nil
 }
 
@@ -2089,7 +2089,7 @@ func runErase(ctx context.Context, args []string) error {
 func reclaimArtifacts(result crypto.ErasureResult) {
 	for _, a := range result.DeletedArtifacts {
 		if err := os.Remove(a.Path); err != nil && !os.IsNotExist(err) {
-			slog.Warn("nexusd: failed to unlink derived artifact after erasure", "path", a.Path, "error", err)
+			log.Warn().Err(err).Str("path", a.Path).Msg("nexusd: failed to unlink derived artifact after erasure")
 		}
 	}
 }

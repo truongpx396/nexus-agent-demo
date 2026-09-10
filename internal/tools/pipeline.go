@@ -5,11 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"path/filepath"
 	"sync"
 
 	"github.com/google/uuid"
+	"github.com/rs/zerolog/log"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/hooks"
 	"github.com/truongpx396/nexus-agent-demo/internal/permissions"
@@ -561,7 +561,7 @@ func (p *Pipeline) finishCall(ctx context.Context, tool Tool, ref ToolRef, descr
 			// reconciliation error. A claim left in_flight here is exactly
 			// the ambiguous state a future retry's Open() already refuses
 			// to silently re-execute past.
-			slog.Error("tools: failed to complete write-ahead claim", "error", cerr, "claim_id", claimID, "tool_id", ref.String())
+			log.Error().Err(cerr).Any("claim_id", claimID).Str("tool_id", ref.String()).Msg("tools: failed to complete write-ahead claim")
 		}
 	}
 

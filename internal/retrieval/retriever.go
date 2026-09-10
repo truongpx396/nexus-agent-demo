@@ -3,10 +3,10 @@ package retrieval
 import (
 	"context"
 	"fmt"
-	"log/slog"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/rs/zerolog/log"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	"github.com/truongpx396/nexus-agent-demo/internal/ingest"
@@ -194,7 +194,7 @@ func (r *Retriever) embed(ctx context.Context, tenantID, sessionID uuid.UUID, te
 	embeddings, usage, embedErr := r.Embedder.Embed(ctx, texts, provider.RunContext{TenantID: tenantID, SessionID: sessionID})
 	reported := embedErr == nil
 	if rerr := r.Gate.ReconcileEmbedding(ctx, res, usage.Tokens, reported); rerr != nil {
-		slog.Error("retrieval: failed to reconcile embedding reservation", "error", rerr, "tenant_id", tenantID, "session_id", sessionID)
+		log.Error().Err(rerr).Any("tenant_id", tenantID).Any("session_id", sessionID).Msg("retrieval: failed to reconcile embedding reservation")
 	}
 	if embedErr != nil {
 		return nil, embedErr

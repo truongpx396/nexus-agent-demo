@@ -14,12 +14,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/rs/zerolog/log"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/controlplane"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
@@ -390,7 +390,7 @@ func (s *Server) publishUntilDone(tenantID, sessionID uuid.UUID, events <-chan R
 func (s *Server) emitTerminalSpan(tenantID, sessionID uuid.UUID) {
 	sess, err := s.getSession(context.Background(), tenantID, sessionID)
 	if err != nil {
-		slog.Error("rest: emit terminal span: load session", "error", err, "session_id", sessionID)
+		log.Error().Err(err).Any("session_id", sessionID).Msg("rest: emit terminal span: load session")
 		return
 	}
 	attrs := obs.Attrs{"session.id": sessionID.String(), "tenant.id": tenantID.String()}
@@ -398,7 +398,7 @@ func (s *Server) emitTerminalSpan(tenantID, sessionID uuid.UUID) {
 		attrs["terminal_reason"] = *sess.TerminalReason
 	}
 	if err := s.Exporter.Emit("run.terminal", attrs); err != nil {
-		slog.Error("rest: emit terminal span", "error", err, "session_id", sessionID)
+		log.Error().Err(err).Any("session_id", sessionID).Msg("rest: emit terminal span")
 	}
 }
 
@@ -416,12 +416,12 @@ func (s *Server) deliverApprovalNotification(sessionID uuid.UUID, ev store.Event
 	}
 	payload, err := json.Marshal(map[string]string{"session_id": sessionID.String(), "tool_id": toolID})
 	if err != nil {
-		slog.Error("rest: marshal approval notification payload", "error", err, "session_id", sessionID)
+		log.Error().Err(err).Any("session_id", sessionID).Msg("rest: marshal approval notification payload")
 		return
 	}
 	const operatorRecipient = "operator" // no per-tenant notification-target config exists yet (Phase 11's connector/OAuth work); one fixed recipient is the honest interim
 	if err := s.Outbox.Deliver(context.Background(), ev.TenantID, sessionID, ev.Seq, Descriptor.SurfaceID, operatorRecipient, payload, s.OutboxSender); err != nil {
-		slog.Error("rest: deliver approval notification", "error", err, "session_id", sessionID, "seq", ev.Seq)
+		log.Error().Err(err).Any("session_id", sessionID).Any("seq", ev.Seq).Msg("rest: deliver approval notification")
 	}
 }
 

@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"iter"
-	"log/slog"
 	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/rs/zerolog/log"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
@@ -793,7 +793,7 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 // here would let an accounting write outage kill an otherwise-healthy run.
 func (k *Kernel) reconcile(ctx context.Context, st *RunState, res cost.Reservation, usage provider.Usage, reported bool) {
 	if err := k.Budget.Reconcile(ctx, res, usage, reported); err != nil {
-		slog.Error("kernel: cost reconciliation failed", "error", err, "session_id", st.SessionID, "reservation_id", res.ID)
+		log.Error().Err(err).Any("session_id", st.SessionID).Any("reservation_id", res.ID).Msg("kernel: cost reconciliation failed")
 	}
 }
 

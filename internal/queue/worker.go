@@ -2,9 +2,10 @@ package queue
 
 import (
 	"context"
-	"log/slog"
 	"math/rand/v2"
 	"time"
+
+	"github.com/rs/zerolog/log"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/reliability"
 )
@@ -94,7 +95,7 @@ func (w *Worker) Run(ctx context.Context) {
 func (w *Worker) pollOnce(ctx context.Context) {
 	job, ok, err := w.cfg.Port.Lease(ctx, w.cfg.Owner, w.cfg.LeaseFor)
 	if err != nil {
-		slog.Error("queue: lease failed", "error", err)
+		log.Error().Err(err).Msg("queue: lease failed")
 		return
 	}
 	if !ok {
@@ -124,7 +125,7 @@ func (w *Worker) pollOnce(ctx context.Context) {
 
 	token, locked, err := w.cfg.Lock.Acquire(ctx, job.SessionKey)
 	if err != nil {
-		slog.Error("queue: session lock acquire failed", "session_key", job.SessionKey, "error", err)
+		log.Error().Err(err).Str("session_key", job.SessionKey).Msg("queue: session lock acquire failed")
 		w.failJob(ctx, job, "session_lock_error: "+err.Error(), false, time.Now().Add(w.cfg.Backoff.Delay(job.Attempts, w.rng).Duration))
 		return
 	}
@@ -137,7 +138,7 @@ func (w *Worker) pollOnce(ctx context.Context) {
 	}
 	defer func() {
 		if err := w.cfg.Lock.Release(ctx, job.SessionKey, token); err != nil {
-			slog.Error("queue: session lock release failed", "session_key", job.SessionKey, "error", err)
+			log.Error().Err(err).Str("session_key", job.SessionKey).Msg("queue: session lock release failed")
 		}
 	}()
 
@@ -145,7 +146,7 @@ func (w *Worker) pollOnce(ctx context.Context) {
 	if runErr == nil {
 		breaker.RecordSuccess()
 		if err := w.cfg.Port.Complete(ctx, job.JobID); err != nil {
-			slog.Error("queue: complete failed", "job_id", job.JobID, "error", err)
+			log.Error().Err(err).Any("job_id", job.JobID).Msg("queue: complete failed")
 		}
 		return
 	}
@@ -154,13 +155,14 @@ func (w *Worker) pollOnce(ctx context.Context) {
 	tripped := breaker.RecordFailure(runErr.Error())
 	permanent := class == reliability.FailurePermanent || tripped
 	delay := w.cfg.Backoff.Delay(job.Attempts, w.rng)
-	slog.Warn("queue: job failed", "job_id", job.JobID, "session_key", job.SessionKey,
-		"class", class, "breaker_tripped", tripped, "error", runErr, "backoff_reason", delay.Reason)
+	log.Warn().Err(runErr).Any("job_id", job.JobID).Str("session_key", job.SessionKey).
+		Any("class", class).Bool("breaker_tripped", tripped).Any("backoff_reason", delay.Reason).
+		Msg("queue: job failed")
 	w.failJob(ctx, job, runErr.Error(), permanent, time.Now().Add(delay.Duration))
 }
 
 func (w *Worker) failJob(ctx context.Context, job Job, reason string, permanent bool, retryAt time.Time) {
 	if err := w.cfg.Port.Fail(ctx, job.JobID, reason, permanent, retryAt); err != nil {
-		slog.Error("queue: fail failed", "job_id", job.JobID, "error", err)
+		log.Error().Err(err).Any("job_id", job.JobID).Msg("queue: fail failed")
 	}
 }
