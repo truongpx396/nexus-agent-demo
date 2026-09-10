@@ -13,11 +13,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/rs/zerolog/log"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/harness"
@@ -75,7 +75,7 @@ type Server struct {
 	// Outbox, if set, backs durable at-least-once delivery of
 	// EventApprovalRequested (README task 7.14, reused unchanged) — nil
 	// leaves it unmounted. Unlike REST's own OutboxSender (a single
-	// stateless field: its dev-mode slogSender needs no per-tenant
+	// stateless field: its dev-mode logSender needs no per-tenant
 	// credential), a real Sender here needs THIS delivery's own tenant's
 	// bot token, so drainAndNotify constructs a *Sender per call instead
 	// of reusing one fixed instance — surfaces.Sender's own interface
@@ -150,7 +150,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	chatID := fmt.Sprintf("%d", upd.Message.Chat.ID)
 
 	if _, err := s.startRun(r.Context(), tenantID, userID, chatID, upd.Message.Text); err != nil {
-		slog.Error("telegram: start run", "error", err, "tenant_id", tenantID)
+		log.Error().Err(err).Any("tenant_id", tenantID).Msg("telegram: start run")
 		http.Error(w, "start run: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -240,7 +240,7 @@ func (s *Server) drainAndNotify(tenantID, sessionID uuid.UUID, chatID string, ev
 			continue
 		}
 		if err := s.Outbox.Deliver(context.Background(), tenantID, sessionID, re.Event.Seq, "telegram", chatID, payload, sender); err != nil {
-			slog.Error("telegram: deliver approval notification", "error", err, "session_id", sessionID)
+			log.Error().Err(err).Any("session_id", sessionID).Msg("telegram: deliver approval notification")
 		}
 	}
 }

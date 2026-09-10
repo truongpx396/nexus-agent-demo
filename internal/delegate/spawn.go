@@ -4,10 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/rs/zerolog/log"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
@@ -173,7 +174,7 @@ func (d *Delegations) Spawn(ctx context.Context, req SpawnRequest) (uuid.UUID, e
 	if req.EnvelopeID != nil {
 		perCall, currency, err := envelopePerCallEstimate(ctx, d.Store, req.TenantID, *req.EnvelopeID)
 		if err != nil {
-			slog.Error("delegate: envelope lookup failed; child will run under the ordinary budget gate", "envelope_id", *req.EnvelopeID, "error", err)
+			log.Error().Err(err).Any("envelope_id", *req.EnvelopeID).Msg("delegate: envelope lookup failed; child will run under the ordinary budget gate")
 		} else {
 			clone := *d.cfg.Kernel
 			clone.Budget = &EnvelopeBudgetGate{Store: d.Store, EnvelopeID: *req.EnvelopeID, TenantID: req.TenantID, PerCallEstimate: perCall, Currency: currency}
@@ -181,11 +182,28 @@ func (d *Delegations) Spawn(ctx context.Context, req SpawnRequest) (uuid.UUID, e
 		}
 	}
 
+	// The child runs on its own goroutine (Spawn never blocks on it), which
+	// would otherwise sever OTel's ctx-based parent/child propagation — a
+	// bare context.Background() carries no span, so the child's own
+	// "kernel.run" root span would open as an unrelated new trace instead of
+	// nesting under the delegate tool_use (or delegate_fanout step) that
+	// spawned it. Carrying req's ctx SpanContext across the goroutine
+	// boundary explicitly is the same thing an OTel propagator does at any
+	// other async/cross-process boundary (e.g. a queue consumer): re-attach
+	// the parent's SpanContext to a fresh Context so the next span started
+	// from it still nests correctly. IsValid() is false whenever no Tracer
+	// is wired (k.startSpan never touches ctx in that case) or ctx was never
+	// traced at all — bg then stays plain context.Background(), unchanged
+	// from before.
+	parentSpanCtx := trace.SpanContextFromContext(ctx)
 	go func() {
 		bg := context.Background()
+		if parentSpanCtx.IsValid() {
+			bg = trace.ContextWithRemoteSpanContext(bg, parentSpanCtx)
+		}
 		for _, err := range childKernel.Run(bg, childState, childCfg) {
 			if err != nil {
-				slog.Error("delegate: child run errored", "child_session_id", childID, "error", err)
+				log.Error().Err(err).Any("child_session_id", childID).Msg("delegate: child run errored")
 				return
 			}
 		}
@@ -197,7 +215,7 @@ func (d *Delegations) Spawn(ctx context.Context, req SpawnRequest) (uuid.UUID, e
 		// approval is eventually granted/denied — see OnChildTerminal's own
 		// doc comment for where that second call site lives.
 		if err := d.OnChildTerminal(bg, req.TenantID, childID); err != nil {
-			slog.Error("delegate: resolve after child run failed", "child_session_id", childID, "error", err)
+			log.Error().Err(err).Any("child_session_id", childID).Msg("delegate: resolve after child run failed")
 		}
 	}()
 

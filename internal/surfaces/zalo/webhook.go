@@ -17,11 +17,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/rs/zerolog/log"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/harness"
@@ -154,7 +154,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	userID := uuid.NewSHA1(zaloNamespace, fmt.Appendf(nil, "%s:%s", tenantID, ev.Sender.ID))
 
 	if _, err := s.startRun(r.Context(), tenantID, userID, ev.Sender.ID, ev.Message.Text); err != nil {
-		slog.Error("zalo: start run", "error", err, "tenant_id", tenantID)
+		log.Error().Err(err).Any("tenant_id", tenantID).Msg("zalo: start run")
 		http.Error(w, "start run: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -234,7 +234,7 @@ func (s *Server) drainAndNotify(tenantID, sessionID uuid.UUID, recipientID strin
 			continue
 		}
 		if err := s.Outbox.Deliver(context.Background(), tenantID, sessionID, re.Event.Seq, "zalo", recipientID, payload, sender); err != nil {
-			slog.Error("zalo: deliver approval notification", "error", err, "session_id", sessionID)
+			log.Error().Err(err).Any("session_id", sessionID).Msg("zalo: deliver approval notification")
 		}
 	}
 }

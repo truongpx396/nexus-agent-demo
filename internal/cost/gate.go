@@ -3,7 +3,6 @@ package cost
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -11,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/redis/go-redis/v9"
+	"github.com/rs/zerolog/log"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
@@ -281,7 +281,7 @@ func (g *Gate) Reserve(ctx context.Context, req ReserveRequest) (Reservation, er
 		// holds and fail closed, same as any other accounting failure.
 		if reservedInRedis {
 			if rerr := g.redis.Release(ctx, tenBudget.ID, tenBudget.Epoch, worst.Micros); rerr != nil {
-				slog.Error("cost: failed to roll back tenant reservation after a decision-persist failure", "error", rerr)
+				log.Error().Err(rerr).Msg("cost: failed to roll back tenant reservation after a decision-persist failure")
 			}
 		}
 		return g.refuse(ctx, res, &deciding.ID, worst, "failed to record budget decision (fail closed): "+err.Error())
@@ -465,7 +465,7 @@ func (g *Gate) finishReconcile(ctx context.Context, res Reservation, actual Mone
 	}
 	if res.tenantBudget != nil {
 		if err := g.redis.Release(ctx, res.tenantBudget.ID, res.tenantEpoch, delta.Micros); err != nil {
-			slog.Error("cost: failed to release tenant reservation delta", "error", err, "tenant_id", res.TenantID, "session_id", res.SessionID)
+			log.Error().Err(err).Any("tenant_id", res.TenantID).Any("session_id", res.SessionID).Msg("cost: failed to release tenant reservation delta")
 		}
 	}
 	return nil
@@ -651,7 +651,7 @@ func (g *Gate) refuse(ctx context.Context, res Reservation, budgetID *uuid.UUID,
 
 func (g *Gate) bestEffortPersist(ctx context.Context, tenantID, sessionID uuid.UUID, d Decision) {
 	if err := g.persistDecision(ctx, tenantID, sessionID, d); err != nil {
-		slog.Error("cost: failed to persist budget decision", "error", err, "tenant_id", tenantID, "session_id", sessionID, "decision", d.Kind)
+		log.Error().Err(err).Any("tenant_id", tenantID).Any("session_id", sessionID).Any("decision", d.Kind).Msg("cost: failed to persist budget decision")
 	}
 }
 

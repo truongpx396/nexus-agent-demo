@@ -7,12 +7,12 @@ package cron
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	robfigcron "github.com/robfig/cron/v3"
+	"github.com/rs/zerolog/log"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/harness"
@@ -74,7 +74,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 func (s *Scheduler) runOnce(ctx context.Context) {
 	tenantIDs, err := s.Tenants.ListTenantIDs(ctx)
 	if err != nil {
-		slog.Error("cron: list tenants", "error", err)
+		log.Error().Err(err).Msg("cron: list tenants")
 		return
 	}
 	for _, tenantID := range tenantIDs {
@@ -111,7 +111,7 @@ func (s *Scheduler) runTenant(ctx context.Context, tenantID uuid.UUID) {
 		return rows.Err()
 	})
 	if err != nil {
-		slog.Error("cron: list due schedules", "error", err, "tenant_id", tenantID)
+		log.Error().Err(err).Any("tenant_id", tenantID).Msg("cron: list due schedules")
 		return
 	}
 
@@ -127,7 +127,7 @@ func (s *Scheduler) runTenant(ctx context.Context, tenantID uuid.UUID) {
 func (s *Scheduler) fire(ctx context.Context, tenantID uuid.UUID, d dueSchedule) {
 	sched, err := robfigcron.ParseStandard(d.CronExpr)
 	if err != nil {
-		slog.Error("cron: unparseable cron_expr, disabling schedule", "error", err, "schedule_id", d.ScheduleID)
+		log.Error().Err(err).Any("schedule_id", d.ScheduleID).Msg("cron: unparseable cron_expr, disabling schedule")
 		s.disable(ctx, tenantID, d.ScheduleID)
 		return
 	}
@@ -174,7 +174,7 @@ func (s *Scheduler) fire(ctx context.Context, tenantID uuid.UUID, d dueSchedule)
 		return err
 	})
 	if err != nil {
-		slog.Error("cron: create session for due schedule", "error", err, "schedule_id", d.ScheduleID)
+		log.Error().Err(err).Any("schedule_id", d.ScheduleID).Msg("cron: create session for due schedule")
 		return
 	}
 
@@ -187,7 +187,7 @@ func (s *Scheduler) fire(ctx context.Context, tenantID uuid.UUID, d dueSchedule)
 	}
 	events, err := s.Starter.StartRun(context.Background(), req)
 	if err != nil {
-		slog.Error("cron: start run for due schedule", "error", err, "schedule_id", d.ScheduleID)
+		log.Error().Err(err).Any("schedule_id", d.ScheduleID).Msg("cron: start run for due schedule")
 		return
 	}
 	go drain(events)
@@ -209,7 +209,7 @@ func (s *Scheduler) disable(ctx context.Context, tenantID, scheduleID uuid.UUID)
 		_, err := tx.Exec(ctx, `UPDATE cron_schedules SET enabled = false WHERE schedule_id = $1`, scheduleID)
 		return err
 	}); err != nil {
-		slog.Error("cron: disable unparseable schedule", "error", err, "schedule_id", scheduleID)
+		log.Error().Err(err).Any("schedule_id", scheduleID).Msg("cron: disable unparseable schedule")
 	}
 }
 

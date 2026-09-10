@@ -12,11 +12,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net"
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/rs/zerolog/log"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
 	"github.com/truongpx396/nexus-agent-demo/internal/audit/signerkey"
@@ -40,7 +41,7 @@ func main() {
 	if err != nil {
 		fatalf("load signing key: %v", err)
 	}
-	slog.Info("signerd: loaded signing key", "key_id", key.KeyID)
+	log.Info().Any("key_id", key.KeyID).Msg("signerd: loaded signing key")
 
 	socketPath := envOr("NEXUS_SIGNERD_SOCKET", defaultSocketPath)
 	if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
@@ -69,7 +70,7 @@ func main() {
 			if ctx.Err() != nil {
 				return // orderly shutdown
 			}
-			slog.Error("signerd: accept", "error", err)
+			log.Error().Err(err).Msg("signerd: accept")
 			continue
 		}
 		go handleConn(conn, key)
@@ -112,11 +113,11 @@ func handleConn(conn net.Conn, key signerkey.Key) {
 func writeResponse(conn net.Conn, resp audit.Response) {
 	line, err := json.Marshal(resp)
 	if err != nil {
-		slog.Error("signerd: marshal response", "error", err)
+		log.Error().Err(err).Msg("signerd: marshal response")
 		return
 	}
 	if _, err := conn.Write(append(line, '\n')); err != nil {
-		slog.Error("signerd: write response", "error", err)
+		log.Error().Err(err).Msg("signerd: write response")
 	}
 }
 

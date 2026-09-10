@@ -15,7 +15,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -25,6 +24,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
@@ -161,13 +162,13 @@ func TestSecretLeak_LiveOAuthTokenNeverAppearsInOutputOrLogs(t *testing.T) {
 		AllowPrivateNetworks: true,
 	}
 
-	// Capture EVERY slog record for the duration of this call — a
-	// TextHandler renders the full attribute set to text, exactly what a
-	// real log sink would persist.
+	// Capture EVERY log record for the duration of this call — zerolog's
+	// JSON encoding renders the full field set to text, exactly what a real
+	// log sink would persist.
 	var logBuf bytes.Buffer
-	prevLogger := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, nil)))
-	defer slog.SetDefault(prevLogger)
+	prevLogger := log.Logger
+	log.Logger = zerolog.New(&logBuf)
+	defer func() { log.Logger = prevLogger }()
 
 	reg := tools.NewRegistry()
 	if err := reg.DeclareNamespace("platform", "test"); err != nil {

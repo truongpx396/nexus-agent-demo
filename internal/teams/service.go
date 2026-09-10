@@ -3,11 +3,11 @@ package teams
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/rs/zerolog/log"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
@@ -169,7 +169,7 @@ func (s *Service) CreateTeam(ctx context.Context, req CreateTeamRequest) (uuid.U
 
 	for _, m := range req.Members {
 		if err := s.spawnMember(context.Background(), req.TenantID, teamID, envelopeID, creator, m); err != nil {
-			slog.Error("teams: spawn member failed", "team_id", teamID, "agent_id", m.AgentID, "error", err)
+			log.Error().Err(err).Any("team_id", teamID).Any("agent_id", m.AgentID).Msg("teams: spawn member failed")
 		}
 	}
 	return teamID, nil
@@ -224,12 +224,12 @@ func (s *Service) spawnMember(ctx context.Context, tenantID, teamID, envelopeID 
 		bg := context.Background()
 		for _, err := range clone.Run(bg, memberState, memberCfg) {
 			if err != nil {
-				slog.Error("teams: member run errored", "member_session_id", memberID, "error", err)
+				log.Error().Err(err).Any("member_session_id", memberID).Msg("teams: member run errored")
 				return
 			}
 		}
 		if err := s.OnMemberTerminal(bg, tenantID, memberID); err != nil {
-			slog.Error("teams: resolve after member run failed", "member_session_id", memberID, "error", err)
+			log.Error().Err(err).Any("member_session_id", memberID).Msg("teams: resolve after member run failed")
 		}
 	}()
 	return nil
@@ -336,7 +336,7 @@ func (s *Service) endTeam(ctx context.Context, tenantID, teamID uuid.UUID, statu
 			continue
 		}
 		if err := s.cfg.Canceler.Cancel(ctx, tenantID, m, fmt.Sprintf("team %s: %s", status, reason)); err != nil {
-			slog.Error("teams: reap member failed", "team_id", teamID, "member_session_id", m, "error", err)
+			log.Error().Err(err).Any("team_id", teamID).Any("member_session_id", m).Msg("teams: reap member failed")
 		}
 	}
 
@@ -364,7 +364,7 @@ func (s *Service) SweepBackstop(ctx context.Context, tenantID uuid.UUID, backsto
 	}
 	for _, id := range stale {
 		if err := s.endTeam(ctx, tenantID, id, StatusAborted, "wall-clock backstop exceeded"); err != nil {
-			slog.Error("teams: backstop reap failed", "team_id", id, "error", err)
+			log.Error().Err(err).Any("team_id", id).Msg("teams: backstop reap failed")
 		}
 	}
 	return nil

@@ -23,8 +23,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/delegate"
+	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 	"github.com/truongpx396/nexus-agent-demo/internal/permissions"
 	"github.com/truongpx396/nexus-agent-demo/internal/plan"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
@@ -160,7 +164,10 @@ func onDelegateFunc(d *delegate.Delegations) kernel.OnDelegate {
 // Rule-of-Two Ask (delegate.Taint() engages all three legs on every call,
 // by design — README task 8.9) self-satisfies without a human decision;
 // bound/scope violations still refuse at Gate 2, BEFORE layer 7 ever runs.
-func buildDelegationRig(t *testing.T, r *oversightRig, prov provider.Provider) (*kernel.Kernel, *tools.Pipeline, *delegate.Delegations, []provider.ToolSchema) {
+// tracer is wired straight onto the Kernel (nil is valid, obs.Tracer's own
+// "this control isn't wired" convention) — every pre-existing caller passes
+// nil; TestSpawn_ChildrenNestUnderParentTraceSpan is the one that doesn't.
+func buildDelegationRig(t *testing.T, r *oversightRig, prov provider.Provider, tracer obs.Tracer) (*kernel.Kernel, *tools.Pipeline, *delegate.Delegations, []provider.ToolSchema) {
 	t.Helper()
 	reg := tools.NewRegistry()
 	if err := reg.DeclareNamespace("platform", "test"); err != nil {
@@ -190,6 +197,7 @@ func buildDelegationRig(t *testing.T, r *oversightRig, prov provider.Provider) (
 		Store:      r.st,
 		Receipts:   r.receiptFunc(),
 		OnDelegate: onDelegateFunc(d),
+		Tracer:     tracer,
 	}
 	d.Wire(delegate.Config{Kernel: k, Pipeline: pipeline, System: "test", MaxTurns: 10})
 
@@ -241,7 +249,7 @@ func TestDelegate_RoundTrip(t *testing.T) {
 		contentScript("child summary: all good"),
 		contentScript("parent: done, thanks"),
 	)
-	k, _, d, catalog := buildDelegationRig(t, r, prov)
+	k, _, d, catalog := buildDelegationRig(t, r, prov, nil)
 
 	parentID, userID := uuid.New(), uuid.New()
 	r.createSession(t, parentID, userID, "autonomous")
@@ -300,7 +308,7 @@ func TestDelegate_RoundTrip(t *testing.T) {
 func TestDelegate_BoundsFailClosed_ThroughTheRealChain(t *testing.T) {
 	r := setupOversightRig(t)
 	prov := fake.New() // no script consumed if bounds correctly refuse before any Call
-	k, pipeline, d, _ := buildDelegationRig(t, r, prov)
+	k, pipeline, d, _ := buildDelegationRig(t, r, prov, nil)
 	_ = k
 
 	t.Run("depth", func(t *testing.T) {
@@ -421,4 +429,122 @@ func mustListDelegations(t *testing.T, r *oversightRig, parentID uuid.UUID) []de
 		t.Fatalf("list delegations for parent %s: %v", parentID, err)
 	}
 	return out
+}
+
+// recordingTracer implements obs.Tracer over a real OTel SDK tracer instead
+// of stdout (span.go's Exporter) or a live OTLP endpoint (otlp.go's
+// OTLPExporter, which needs a real collector to dial) — exactly the same
+// ctx-based StartSpan(ctx, ...) call obs.OTLPExporter.StartSpan makes, just
+// backed by an in-memory exporter (tracetest.InMemoryExporter) a test can
+// inspect synchronously after the fact.
+type recordingTracer struct {
+	tracer trace.Tracer
+}
+
+func (rt *recordingTracer) StartSpan(ctx context.Context, name string, kind obs.ObservationType, attrs obs.Attrs) (context.Context, obs.Span) {
+	ctx, span := rt.tracer.Start(ctx, name)
+	return ctx, &recordingSpan{span: span}
+}
+
+type recordingSpan struct{ span trace.Span }
+
+func (s *recordingSpan) End(obs.Attrs)             { s.span.End() }
+func (s *recordingSpan) SetContent(string, string) {}
+
+// TestSpawn_ChildrenNestUnderParentTraceSpan proves the internal/delegate/
+// spawn.go fix: Spawn's child kernel.Run runs on its own goroutine (Spawn
+// never blocks on it), which used to hand it a bare context.Background() —
+// severing OTel's ctx-based parent/child propagation, so every delegated
+// child opened as an unrelated new trace in Langfuse instead of nesting
+// under the span that was active when Spawn was called. Spawn now carries
+// that SpanContext across the goroutine boundary explicitly
+// (trace.ContextWithRemoteSpanContext), the same thing an OTel propagator
+// does at any other async boundary.
+//
+// This spawns two children sharing one parent span — the delegate_fanout
+// shape (internal/plan/steps.go's runDelegateFanout calls Spawn in a loop
+// over the SAME ctx for every child in the cohort) — and asserts both
+// children's own root "kernel.run" spans (kernel/loop.go's Run) share the
+// parent span's trace ID and are its direct children, i.e. Langfuse would
+// render them as two sibling branches under one trace, not two unrelated
+// traces.
+func TestSpawn_ChildrenNestUnderParentTraceSpan(t *testing.T) {
+	r := setupOversightRig(t)
+	exp := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exp))
+	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+	tracer := &recordingTracer{tracer: tp.Tracer("test")}
+
+	prov := fake.New(contentScript("child A done"), contentScript("child B done"))
+	_, _, d, _ := buildDelegationRig(t, r, prov, tracer)
+
+	// The parent session row only, never a real kernel.Run — this test's
+	// only assertion is about span nesting, not delegation resolution
+	// (TestDelegate_RoundTrip already covers that end to end). Each child's
+	// own background goroutine (spawn.go) still calls OnChildTerminal once
+	// it completes, which logs (but does not fail this test on) an expected
+	// "find active key for session" error: resumeParent needs the parent's
+	// OWN event log to already have at least one sealed event to key off
+	// of, which a session row with no real run never has.
+	parentID, userID := uuid.New(), uuid.New()
+	r.createSession(t, parentID, userID, "autonomous")
+
+	// Stand-in for the span that's genuinely active in production at each
+	// Spawn call site: the `delegate` tool_use's own tool span (an ad hoc
+	// delegate) or the delegate_fanout step's ctx (both children of one
+	// fan-out share it) — kernel/loop.go and internal/plan/steps.go both
+	// pass a ctx already carrying one of these down into Delegations.Spawn.
+	parentCtx, parentSpan := tracer.tracer.Start(context.Background(), "test.fanout_step")
+
+	var childIDs []uuid.UUID
+	for i := 0; i < 2; i++ {
+		childID, err := d.Spawn(parentCtx, delegate.SpawnRequest{
+			TenantID: r.tenantID, ParentSessionID: parentID,
+			AgentID: "worker", Task: "do work", ScopeGrant: []string{"platform/delegate@v1"},
+		})
+		if err != nil {
+			t.Fatalf("Spawn child %d: %v", i, err)
+		}
+		childIDs = append(childIDs, childID)
+	}
+	parentSpan.End()
+
+	for _, childID := range childIDs {
+		waitForStatus(t, r, childID, store.SessionStatusCompleted)
+	}
+
+	// waitForStatus above only proves the child's session ROW reached
+	// "completed" — that update lands inside kernel/loop.go's terminate(),
+	// a few statements before the generator function it runs in actually
+	// returns and the deferred rootSpan.End() (loop.go's Run) fires. Poll
+	// for the span too, the same reason waitForStatus itself polls rather
+	// than assuming a happens-before relationship across goroutines.
+	var childRootSpans tracetest.SpanStubs
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		childRootSpans = nil
+		for _, s := range exp.GetSpans() {
+			if s.Name == "kernel.run" {
+				childRootSpans = append(childRootSpans, s)
+			}
+		}
+		if len(childRootSpans) >= len(childIDs) || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if len(childRootSpans) != len(childIDs) {
+		t.Fatalf("got %d kernel.run spans, want %d (one per fan-out child)", len(childRootSpans), len(childIDs))
+	}
+
+	wantTraceID := parentSpan.SpanContext().TraceID()
+	wantParentSpanID := parentSpan.SpanContext().SpanID()
+	for _, s := range childRootSpans {
+		if s.SpanContext.TraceID() != wantTraceID {
+			t.Errorf("child kernel.run trace ID = %s, want parent's trace ID %s — child opened an unrelated new trace instead of nesting", s.SpanContext.TraceID(), wantTraceID)
+		}
+		if s.Parent.SpanID() != wantParentSpanID {
+			t.Errorf("child kernel.run parent span ID = %s, want parent span ID %s", s.Parent.SpanID(), wantParentSpanID)
+		}
+	}
 }

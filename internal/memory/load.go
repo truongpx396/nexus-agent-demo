@@ -3,13 +3,13 @@ package memory
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/rs/zerolog/log"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/config"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
@@ -55,7 +55,7 @@ func (s *Store) Load(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) (Snapsh
 		}
 		status, findings := Screen(string(content))
 		if status != StatusClean {
-			slog.Warn("memory: skipped a memory file that failed screening", "tenant_id", tenantID, "file", e.name, "status", status, "findings", findings)
+			log.Warn().Any("tenant_id", tenantID).Any("file", e.name).Any("status", status).Any("findings", findings).Msg("memory: skipped a memory file that failed screening")
 			continue
 		}
 		fmt.Fprintf(&buf, "# memory: %s\n%s\n\n", e.name, content)
