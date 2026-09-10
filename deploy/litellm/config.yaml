@@ -1,0 +1,23 @@
+# LiteLLM proxy config for docs/local-llm.md — a pure OpenAI-compatible
+# gateway in front of Ollama running natively on the host (Metal
+# acceleration; Ollama itself is never containerized). Nothing in this file
+# talks to Langfuse: this proxy is model-serving infrastructure only. Agent
+# observability comes from nexusd's own Tracer (internal/obs, kernel/loop.go)
+# pointed at Langfuse's OTLP endpoint — see docs/local-llm.md for why the
+# two are kept separate.
+model_list:
+  - model_name: qwen2.5-local
+    litellm_params:
+      # ollama_chat/, not ollama/ — LiteLLM's own docs recommend it for
+      # better responses (it goes through Ollama's chat, not generate, API).
+      model: ollama_chat/qwen2.5:3b
+      # host.docker.internal resolves to the Mac host from inside this
+      # container (deploy/docker-compose.yml's litellm service adds the
+      # extra_hosts entry Linux needs for the same resolution).
+      api_base: http://host.docker.internal:11434
+
+litellm_settings:
+  # qwen2.5:3b via Ollama doesn't support every sampling/tool-call parameter
+  # LiteLLM forwards by default — drop what it can't take instead of
+  # erroring the call.
+  drop_params: true

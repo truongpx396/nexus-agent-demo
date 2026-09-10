@@ -1,0 +1,194 @@
+# Local model + observability (docs/local-llm.md) — split out from
+# docker-compose.yml on purpose: nothing in this file is referenced by, or
+# references, that file's postgres/pgbouncer/redis/signerd/nexusd (litellm
+# and langfuse-* only ever reference each other), so there is no coupling to
+# preserve by keeping them together, and this whole file is optional,
+# heavy, opt-in infrastructure — same "must keep working with it off" rule
+# docker-compose.yml's own app profile follows (README §5). `name:` matches
+# docker-compose.yml's own project name so containers/volumes share its
+# naming (`nexus-agent-demo-litellm-1`, etc.) and — if both files are ever
+# brought up together — its default network, though nothing here depends on
+# that: nexusd is documented to run natively and reach litellm over its
+# published host port (docs/local-llm.md), never by container DNS.
+#
+# Ollama itself is deliberately NOT a service here: it runs natively on the
+# Mac host (Metal acceleration), started separately (`ollama serve`, or the
+# menubar app).
+name: nexus-agent-demo
+
+services:
+  # `docker compose --profile llm up` (make llm-up): a pure OpenAI-compatible
+  # gateway in front of that host Ollama — nothing here talks to Langfuse,
+  # see litellm/config.yaml's own header comment for why.
+  litellm:
+    profiles: ["llm"]
+    # main-stable, not main-latest: LiteLLM's own designated stable channel
+    # rather than tracking the tip of main.
+    image: ghcr.io/berriai/litellm:main-stable
+    ports:
+      # Host port 4100, not litellm's own default 4000: same reason
+      # docker-compose.yml shifts postgres/redis's own host ports — 4000 is
+      # a common dev-server port, confirmed colliding with another
+      # project's own litellm container on this very machine. The
+      # container's own port stays 4000, matching litellm/config.yaml's
+      # --port flag.
+      - "4100:4000"
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
+    # Docker Desktop for Mac already resolves host.docker.internal without
+    # this; the entry is here so the same compose file also works on Linux,
+    # where it doesn't resolve by default.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+
+  # `docker compose --profile langfuse up` (make langfuse-up): a self-hosted
+  # Langfuse v4 stack, ported from Langfuse's own official docker-compose.yml
+  # (docker.langfuse.com images) — renamed service names throughout to avoid
+  # colliding with docker-compose.yml's own postgres/redis, and no host port
+  # bindings except langfuse-web: only a browser needs to reach this stack
+  # from outside the compose network, nexusd and litellm both reach
+  # Langfuse's OTLP endpoint (or, for litellm, nothing — it never talks to
+  # Langfuse at all) by service name. Every secret below is a FIXED,
+  # low-entropy dev-only value — the same spirit as docker-compose.yml's own
+  # `postgres://nexus:nexus@...` — CHANGEME outside a local demo.
+  langfuse-postgres:
+    profiles: ["langfuse"]
+    image: postgres:17
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse # CHANGEME outside local dev
+      POSTGRES_DB: langfuse
+    volumes:
+      - langfuse-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  langfuse-clickhouse:
+    profiles: ["langfuse"]
+    image: clickhouse/clickhouse-server:25.12
+    user: "101:101"
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: langfuse # CHANGEME outside local dev
+    volumes:
+      - langfuse-clickhouse-data:/var/lib/clickhouse
+      - langfuse-clickhouse-logs:/var/log/clickhouse-server
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 1s
+
+  langfuse-minio:
+    profiles: ["langfuse"]
+    image: minio/minio
+    entrypoint: sh
+    # create the 'langfuse' bucket before starting the service
+    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
+    environment:
+      MINIO_ROOT_USER: langfuse
+      MINIO_ROOT_PASSWORD: langfusesecret # CHANGEME outside local dev
+    volumes:
+      - langfuse-minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 1s
+      timeout: 5s
+      retries: 5
+      start_period: 1s
+
+  langfuse-redis:
+    profiles: ["langfuse"]
+    image: redis:7
+    command: ["--requirepass", "langfuse", "--maxmemory-policy", "noeviction"] # CHANGEME outside local dev
+    volumes:
+      - langfuse-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "langfuse", "ping"]
+      interval: 3s
+      timeout: 10s
+      retries: 10
+
+  langfuse-worker:
+    profiles: ["langfuse"]
+    image: docker.langfuse.com/langfuse/langfuse-worker:4
+    depends_on: &langfuse-depends-on
+      langfuse-postgres:
+        condition: service_healthy
+      langfuse-minio:
+        condition: service_healthy
+      langfuse-redis:
+        condition: service_healthy
+      langfuse-clickhouse:
+        condition: service_healthy
+    environment: &langfuse-env
+      DATABASE_URL: postgresql://langfuse:langfuse@langfuse-postgres:5432/langfuse
+      SALT: nexus-dev-salt-changeme # CHANGEME outside local dev
+      ENCRYPTION_KEY: b6366c66b62155a555347a1f4226ae13b4b680244c12f9fa5dffe37eff22dabc # CHANGEME outside local dev — generate via `openssl rand -hex 32`
+      CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse-clickhouse:9000
+      CLICKHOUSE_URL: http://langfuse-clickhouse:8123
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: langfuse
+      # Explicit false, not omitted: langfuse-clickhouse below is a single
+      # node with no Zookeeper, and Langfuse's migration tool defaults to
+      # cluster-mode DDL (ON CLUSTER default) when this is left unset,
+      # which fails hard against a non-clustered ClickHouse.
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: langfusesecret
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: langfusesecret
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+      REDIS_HOST: langfuse-redis
+      REDIS_PORT: "6379"
+      REDIS_AUTH: langfuse
+      TELEMETRY_ENABLED: "false"
+      # Headless bootstrap (real Langfuse env vars, from their own shipped
+      # compose file) — pre-seeds an org/project/user/API-keypair on first
+      # boot so `make langfuse-up` needs no manual signup, the same
+      # zero-setup ethos docker-compose.yml's own --dev nexusd already
+      # follows. docs/local-llm.md gives the matching NEXUS_OTLP_HEADERS
+      # value.
+      LANGFUSE_INIT_ORG_ID: dev-org
+      LANGFUSE_INIT_ORG_NAME: "Nexus Dev"
+      LANGFUSE_INIT_PROJECT_ID: nexus-demo
+      LANGFUSE_INIT_PROJECT_NAME: nexus-agent-demo
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: pk-lf-c0b5ea2f6fb8990d1f59215e5f79c163
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: sk-lf-1ce1762967990aacbff57c894cea6e39
+      LANGFUSE_INIT_USER_EMAIL: dev@nexus.local
+      LANGFUSE_INIT_USER_NAME: "Nexus Dev"
+      LANGFUSE_INIT_USER_PASSWORD: nexus-dev-password # CHANGEME outside local dev
+
+  langfuse-web:
+    profiles: ["langfuse"]
+    image: docker.langfuse.com/langfuse/langfuse:4
+    depends_on: *langfuse-depends-on
+    ports:
+      # 3001, not Langfuse's own default 3000: a bare 3000 is a common
+      # collision with other local dev servers (docker-compose.yml's own
+      # postgres/redis already shift host ports for exactly this reason).
+      - "3001:3000"
+    environment:
+      <<: *langfuse-env
+      NEXTAUTH_URL: http://localhost:3001
+      NEXTAUTH_SECRET: 22ebd729610f4ffae410d793f7f2b0f43d60cdb6ecf44c09d7b67fdf3bf5ae49 # CHANGEME outside local dev
+
+volumes:
+  langfuse-postgres-data:
+  langfuse-clickhouse-data:
+  langfuse-clickhouse-logs:
+  langfuse-minio-data:
+  langfuse-redis-data:
