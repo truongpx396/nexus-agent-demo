@@ -1,4 +1,4 @@
-.PHONY: up down build run signerd token test lint migrate seed eval eval-baseline verify-chain erase dashboard go-live web-build docker-build docker-up ollama-pull llm-up langfuse-up llm-down agentic-up agentic-down
+.PHONY: up down build run signerd token test lint migrate seed eval eval-baseline verify-chain erase dashboard go-live web-build docker-build docker-up docker-down ollama-pull llm-up langfuse-up llm-down agentic-up agentic-down observability-up observability-down
 
 TENANT ?= acme
 
@@ -18,6 +18,9 @@ docker-build: ## build the nexusd and signerd images (README task 13.3)
 docker-up: docker-build ## start nexusd + signerd (built images) against the existing infra services
 	docker compose -f deploy/docker-compose.yml --profile app up -d
 
+docker-down: ## stop nexusd + signerd (the --profile app containers) -- `make down` alone does NOT stop these (confirmed: plain `docker compose down` ignores profile-gated services that are still running); infra (postgres/pgbouncer/redis) stays up
+	docker compose -f deploy/docker-compose.yml --profile app down
+
 # --- Go build / test / lint ---
 
 build: ## build all three binaries into ./bin
@@ -25,13 +28,13 @@ build: ## build all three binaries into ./bin
 	go build -o bin/nexusctl ./cmd/nexusctl
 	go build -o bin/signerd ./cmd/signerd
 
-run: build ## run signerd in the background + nexusd in the foreground (Ctrl-C stops both) -- --dev keeps the zero-setup path (auto KEK/AuthN key, fake provider); a real deployment omits it (README task 13.1/13.11)
-	./bin/signerd & echo $$! > .dev/signerd.pid
+run: build ## run signerd in the background + nexusd in the foreground (Ctrl-C stops both) -- --dev keeps the zero-setup path (auto KEK/AuthN key, fake provider); a real deployment omits it (README task 13.1/13.11). Both also tee structured logs to .dev/*.log (NEXUS_LOG_FILE, internal/obs.InitLogger) so `make observability-up`'s Promtail has something to tail even though neither runs in Docker by default.
+	NEXUS_LOG_FILE=.dev/signerd.log ./bin/signerd & echo $$! > .dev/signerd.pid
 	@trap 'kill `cat .dev/signerd.pid` 2>/dev/null; rm -f .dev/signerd.pid' EXIT INT TERM; \
-	./bin/nexusd --dev
+	NEXUS_LOG_FILE=.dev/nexusd.log ./bin/nexusd --dev
 
 signerd: build ## run signerd alone in the foreground — nexusd's Kernel.Receipts (README task 5.2) needs it reachable at NEXUS_SIGNERD_SOCKET (default .dev/signerd.sock) before any event can append
-	./bin/signerd
+	NEXUS_LOG_FILE=.dev/signerd.log ./bin/signerd
 
 token: build ## mint a dev bearer token (TENANT=name, default acme) for curl/nexusctl/the web app -- nexusctl run "..." NEXUS_TOKEN=$$(make -s token)
 	./bin/nexusd --dev token --tenant=$(TENANT)
@@ -105,3 +108,22 @@ agentic-up: ## start Crawl4AI (platform/web_crawl) + an OpenSandbox server (NEXU
 
 agentic-down: ## stop the crawl4ai + opensandbox-server containers
 	docker compose -f deploy/docker-compose.agentic.yml --profile agentic down
+
+# --- Observability: Prometheus + Loki + Grafana (docs/observability.md) ---
+# A fifth, separate compose file — same reasoning as the llm/agentic blocks
+# above: nothing here references postgres/pgbouncer/redis/signerd/nexusd, so
+# `make down`/`make llm-down`/`make agentic-down` can never touch it.
+# Prometheus scrapes nexusd's own /metrics over the host network; Promtail
+# tails .dev/*.log (`make run`/`make signerd` already write there via
+# NEXUS_LOG_FILE) — neither needs nexusd running inside Docker.
+
+observability-up: ## start prometheus + alertmanager + cadvisor + loki + promtail + grafana, pre-wired with the Nexus dashboards + alert rules -- run `make docker-up` first (not `make run`) if you want nexusd/signerd's own CPU/memory/network/disk IO to show up in cAdvisor
+	docker compose -f deploy/docker-compose.observability.yml --profile observability up -d
+	@echo "prometheus:   http://localhost:9091"
+	@echo "alertmanager: http://localhost:9094"
+	@echo "cadvisor:     http://localhost:8083"
+	@echo "loki:         http://localhost:3101"
+	@echo "grafana:      http://localhost:3310  (admin / nexus-dev-password) -- Nexus folder has Golden Signals + Cost & Tools + Infrastructure + Logs dashboards"
+
+observability-down: ## stop the prometheus + alertmanager + cadvisor + loki + promtail + grafana containers
+	docker compose -f deploy/docker-compose.observability.yml --profile observability down

@@ -1,0 +1,29 @@
+# Headless datasource bootstrap (docs/observability.md) — the same
+# zero-click-setup ethos docker-compose.local-llm.yml's LANGFUSE_INIT_* env
+# vars already give Langfuse, applied to Grafana's own provisioning API.
+# Both datasources are reached by compose service name (Grafana runs inside
+# the same compose network as prometheus/loki — unlike nexusd, which this
+# stack reaches over a published host port, these two never need to be).
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    editable: false
+
+  - name: Alertmanager
+    type: alertmanager
+    access: proxy
+    url: http://alertmanager:9093
+    jsonData:
+      implementation: prometheus
+    editable: false

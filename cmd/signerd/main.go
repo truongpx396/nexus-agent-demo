@@ -21,6 +21,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
 	"github.com/truongpx396/nexus-agent-demo/internal/audit/signerkey"
+	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 	"github.com/truongpx396/nexus-agent-demo/internal/version"
 )
 
@@ -35,6 +36,8 @@ func envOr(key, fallback string) string {
 }
 
 func main() {
+	obs.InitLogger("signerd")
+
 	fmt.Printf("signerd %s (%s)\n", version.Version, version.GitCommit)
 
 	key, err := signerkey.LoadOrGenerate(envOr("NEXUS_SIGNER_KEY_PATH", defaultKeyPath))

@@ -1,0 +1,18 @@
+# Alertmanager config for docker-compose.observability.yml's alertmanager
+# service (docs/build-phases.md's Phase 17, task 17.11). The `default`
+# receiver below has NO configured integration (no Slack/email/webhook/
+# PagerDuty) — on purpose, for a local demo: alerts still fire, group, and
+# are visible in Alertmanager's own UI/API (http://localhost:9094), but
+# nothing outbound gets sent. Wiring a real integration is operator config
+# (add a slack_configs/webhook_configs/email_configs block under
+# `receivers`), the same "config, not a fork" discipline
+# docs/build-phases.md's other adapters already follow — not a code change.
+route:
+  receiver: default
+  group_by: ["alertname", "tenant_id"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+receivers:
+  - name: default

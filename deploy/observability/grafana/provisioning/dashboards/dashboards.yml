@@ -1,0 +1,17 @@
+# Points Grafana at the pre-built dashboard JSON in
+# deploy/observability/grafana/dashboards/ (docker-compose.observability.yml
+# bind-mounts that directory to /var/lib/grafana/dashboards) — dashboards
+# ship as committed files, not something a viewer has to build by hand on
+# first login.
+apiVersion: 1
+
+providers:
+  - name: nexus
+    orgId: 1
+    folder: Nexus
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
