@@ -39,7 +39,7 @@ func loadServerConfig(dev bool) (serverConfig, error) {
 			SignerdSocket:       envOr("NEXUS_SIGNERD_SOCKET", defaultSignerdSocket),
 			KEKPath:             envOr("NEXUS_KEK_PATH", defaultKEKPath),
 			AuthnSigningKeyPath: envOr("NEXUS_AUTHN_SIGNING_KEY_PATH", defaultAuthnSigningKeyPath),
-			HTTPAddr:            envOr("NEXUS_HTTP_ADDR", ":8080"),
+			HTTPAddr:            envOr("NEXUS_HTTP_ADDR", ":8055"),
 		}, nil
 	}
 

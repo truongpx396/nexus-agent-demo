@@ -61,6 +61,12 @@ func (e *Exporter) StartSpan(ctx context.Context, name string, kind ObservationT
 	return ctx, &stdoutSpan{e: e, name: name, kind: kind, attrs: attrs, start: time.Now()}
 }
 
+// Detach/Attach are no-ops: this exporter has no cross-goroutine
+// propagation of its own (StartSpan's own doc comment — ctx is returned
+// unchanged already), so there is nothing for either to do.
+func (e *Exporter) Detach(context.Context) SpanLink                        { return nil }
+func (e *Exporter) Attach(ctx context.Context, _ SpanLink) context.Context { return ctx }
+
 type stdoutSpan struct {
 	e             *Exporter
 	name          string

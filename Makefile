@@ -1,4 +1,4 @@
-.PHONY: up down build run signerd token test lint migrate seed eval eval-baseline verify-chain erase dashboard go-live web-build docker-build docker-up docker-down ollama-pull llm-up langfuse-up llm-down agentic-up agentic-down observability-up observability-down
+.PHONY: up down build run signerd token test lint migrate seed eval eval-baseline verify-chain erase dashboard go-live web-build docker-build docker-up docker-down ollama-pull llm-up langfuse-up langfuse-lite-up llm-down agentic-up agentic-down observability-up observability-down tempo-up
 
 TENANT ?= acme
 
@@ -89,12 +89,16 @@ llm-up: ## start the LiteLLM proxy in front of host Ollama (NEXUS_PROVIDER=litel
 	docker compose -f deploy/docker-compose.local-llm.yml --profile llm up -d
 	@echo "litellm: http://localhost:4100  (model: qwen2.5-local -> ollama_chat/qwen2.5:3b)"
 
-langfuse-up: ## start a self-hosted Langfuse stack (web, worker, clickhouse, minio, redis, postgres) for agent tracing
+langfuse-up: ## start a self-hosted Langfuse stack (web, worker, clickhouse, minio, redis, postgres) for agent tracing -- pair with NEXUS_OTLP_ENDPOINT (docs/local-llm.md)
 	docker compose -f deploy/docker-compose.local-llm.yml --profile langfuse up -d
 	@echo "langfuse: http://localhost:3001  (dev@nexus.local / nexus-dev-password)"
 
-llm-down: ## stop the litellm + langfuse containers (postgres/pgbouncer/redis from `make up` are untouched — separate compose file)
-	docker compose -f deploy/docker-compose.local-llm.yml --profile llm --profile langfuse down
+langfuse-lite-up: ## start the lightweight Langfuse v2 stack (web + postgres only, no worker/clickhouse/minio/redis) -- pair with NEXUS_LANGFUSE_HOST/PUBLIC_KEY/SECRET_KEY (docs/local-llm.md), NOT NEXUS_OTLP_ENDPOINT; only bring up one of `langfuse-up`/`langfuse-lite-up` at a time (both use host port 3001)
+	docker compose -f deploy/docker-compose.local-llm.yml --profile langfuse-lite up -d
+	@echo "langfuse (lite): http://localhost:3001  (dev@nexus.local / nexus-dev-password)"
+
+llm-down: ## stop the litellm + langfuse (+ langfuse-lite) containers (postgres/pgbouncer/redis from `make up` are untouched — separate compose file)
+	docker compose -f deploy/docker-compose.local-llm.yml --profile llm --profile langfuse --profile langfuse-lite down
 
 # --- Agentic capabilities: Crawl4AI + OpenSandbox (docs/agentic-capabilities.md) ---
 # A third, separate compose file — same reasoning as the local-llm block
@@ -121,9 +125,13 @@ observability-up: ## start prometheus + alertmanager + cadvisor + loki + promtai
 	docker compose -f deploy/docker-compose.observability.yml --profile observability up -d
 	@echo "prometheus:   http://localhost:9091"
 	@echo "alertmanager: http://localhost:9094"
-	@echo "cadvisor:     http://localhost:8083"
+	@echo "cadvisor:     http://localhost:8095"
 	@echo "loki:         http://localhost:3101"
 	@echo "grafana:      http://localhost:3310  (admin / nexus-dev-password) -- Nexus folder has Golden Signals + Cost & Tools + Infrastructure + Logs dashboards"
 
-observability-down: ## stop the prometheus + alertmanager + cadvisor + loki + promtail + grafana containers
-	docker compose -f deploy/docker-compose.observability.yml --profile observability down
+tempo-up: ## start Grafana Tempo (generic OTLP trace storage, separate opt-in profile -- pairs with the SAME Grafana `make observability-up` runs, but neither command requires the other) -- pair with NEXUS_OTLP_ENDPOINT=localhost:4418 (docs/observability.md), no headers/URL path needed unlike Langfuse's OTLP endpoint
+	docker compose -f deploy/docker-compose.observability.yml --profile tracing up -d
+	@echo "tempo: http://localhost:3200  (OTLP grpc:4417 http:4418) -- browse via Grafana's Explore, Tempo datasource"
+
+observability-down: ## stop the prometheus + alertmanager + cadvisor + loki + promtail + grafana (+ tempo, if up) containers
+	docker compose -f deploy/docker-compose.observability.yml --profile observability --profile tracing down

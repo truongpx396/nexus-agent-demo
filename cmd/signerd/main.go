@@ -21,6 +21,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
 	"github.com/truongpx396/nexus-agent-demo/internal/audit/signerkey"
+	"github.com/truongpx396/nexus-agent-demo/internal/dotenv"
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 	"github.com/truongpx396/nexus-agent-demo/internal/version"
 )
@@ -36,6 +37,10 @@ func envOr(key, fallback string) string {
 }
 
 func main() {
+	// See cmd/nexusd/main.go's identical call for why this comes first.
+	if err := dotenv.Load(); err != nil {
+		fmt.Fprintf(os.Stderr, "signerd: %v\n", err)
+	}
 	obs.InitLogger("signerd")
 
 	fmt.Printf("signerd %s (%s)\n", version.Version, version.GitCommit)

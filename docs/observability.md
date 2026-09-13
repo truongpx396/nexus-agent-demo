@@ -1,4 +1,4 @@
-# Observability stack: Prometheus, Loki, Grafana, Alertmanager, cAdvisor
+# Observability stack: Prometheus, Loki, Grafana, Alertmanager, cAdvisor, Tempo
 
 `docs/build-phases.md`'s Phase 17. README task 13.12 wired `nexusd`'s own
 `/metrics` endpoint and `internal/obs.ComputeGoldenSignals` (task 10.12) —
@@ -9,9 +9,11 @@ target actually needs."* This is that scrape target: a local Prometheus +
 Alertmanager + cAdvisor + Loki + Grafana stack, pre-wired with four
 dashboards and five alert rules, that turns the metrics and logs this
 codebase already emits into something you can actually look at — and page
-on.
+on. A separate, independently opt-in profile in the same compose file adds
+Grafana Tempo for generic distributed tracing, correlated in the same
+Grafana instance.
 
-## Architecture: metrics, logs, alerts, and container resource usage, not traces
+## Architecture: metrics, logs, alerts, container resource usage — and, optionally, traces
 
 ```
 nexusd --(GET /metrics, Prometheus text exposition)--> prometheus --> grafana
@@ -19,20 +21,35 @@ cadvisor --(per-container cpu/mem/net/disk)------------>    |
                                                              v
                                                        alertmanager
 nexusd/signerd --(zerolog JSON: file OR docker logs)--> promtail --> loki --> grafana
+nexusd --(OTLP/HTTP, opt-in profile "tracing")---------> tempo -------------> grafana
 ```
 
-Per-run **tracing** already has a home — Langfuse, wired in
-[`docs/local-llm.md`](local-llm.md) through `internal/obs.Tracer` — and is
-deliberately not duplicated here. This stack covers the other observability
-pillars: aggregate **metrics** (golden signals across every run, not one
-run's own call tree — plus a per-tool/per-model breakdown), **container
-resource usage** (CPU/memory/network/disk IO per container — something
-application-level `/metrics` structurally can't see), **logs** (what the
-process itself is doing — retries, circuit breaks, hook failures —
-independent of any one session), and **alerts** (Prometheus evaluating
-those same golden-signal metrics against a threshold and routing through
-Alertmanager, so a regression doesn't require someone to be staring at a
-dashboard when it happens).
+Per-run **LLM tracing** — the per-generation/per-tool call tree, token
+usage, cost — already has a home purpose-built for it: Langfuse, wired in
+[`docs/local-llm.md`](local-llm.md) through `internal/obs.Tracer`. This
+stack's base **"observability"** profile deliberately doesn't duplicate
+that: it covers the other pillars — aggregate **metrics** (golden signals
+across every run, not one run's own call tree — plus a per-tool/per-model
+breakdown), **container resource usage** (CPU/memory/network/disk IO per
+container — something application-level `/metrics` structurally can't
+see), **logs** (what the process itself is doing — retries, circuit
+breaks, hook failures — independent of any one session), and **alerts**
+(Prometheus evaluating those same golden-signal metrics against a
+threshold and routing through Alertmanager, so a regression doesn't
+require someone to be staring at a dashboard when it happens).
+
+A separate **"tracing"** profile (below, `make tempo-up`) adds Grafana
+Tempo — generic OTLP distributed tracing, not LLM-specific like Langfuse,
+but sharing the exact same `obs.OTLPExporter` this codebase already has
+(`NEXUS_OTLP_ENDPOINT`, no Langfuse-specific headers or URL path needed).
+The point of adding it here rather than reaching for Langfuse every time:
+it's a single container with local disk storage, and it lands in the SAME
+Grafana this stack already runs, one click away from the golden-signal
+metrics and logs a regression usually needs correlated together — where
+Langfuse is the right tool for looking at one run's own LLM call tree in
+depth, Tempo is the right tool for "what else was slow/erroring around the
+same time," without spinning up a second Grafana or a 2-to-6-container
+Langfuse stack just to look at spans.
 
 **Recommended: run nexusd/signerd containerized (`make docker-up`), not as
 host processes (`make run`)**, when this stack is up — cAdvisor can only
@@ -97,9 +114,19 @@ setup — `deploy/observability/grafana/provisioning/`), all under the
   `$level` template variables narrow it. Same content-free posture as the
   golden-signal board — these are process logs, never event-log payloads
   (constitution Principle VI); a run's actual input/output never appears
-  here, same as it never appears on a span (`docs/local-llm.md`'s own
-  explanation of why `NEXUS_TRACE_CONTENT` is a separate, explicit channel
-  applies here too — this stack has no equivalent opt-in).
+  here, same as it never appears on a span by default (see the Tempo bullet
+  below for the one opt-in exception this stack DOES have).
+
+**Tempo** (the separate "tracing" profile) has no dashboard of its own —
+Grafana's built-in **Explore** view, pointed at the **Tempo** datasource,
+is already a full trace browser (search by service/duration, click into a
+trace to see its span tree) with no extra JSON to maintain. Same
+allowlist-filtered structure as every span this codebase emits
+(`internal/obs/allowlist.go`) — session.id/tenant.id/tool.id/model.id/
+usage.\*/outcome/terminal_reason, never conversation content — UNLESS
+`NEXUS_TRACE_CONTENT=true` (docs/local-llm.md), which applies identically
+here: it's the same `obs.OTLPExporter`/`Span.SetContent` opt-in channel
+Langfuse's OTLP path already has, not something specific to Tempo.
 
 ## Alerting
 
@@ -142,9 +169,17 @@ make observability-up
 # grafana:      http://localhost:3310  (admin / nexus-dev-password)
 # prometheus:   http://localhost:9091
 # alertmanager: http://localhost:9094
-# cadvisor:     http://localhost:8083
+# cadvisor:     http://localhost:8095
 # loki:         http://localhost:3101
 # docker-label-exporter: http://localhost:9101
+
+# 3. optional: Tempo, for generic distributed tracing (a SEPARATE profile —
+#    step 2 above never pulls this in on its own)
+make tempo-up
+# tempo: http://localhost:3200  (OTLP grpc:4417 http:4418)
+# then run nexusd/signerd (step 1) with NEXUS_OTLP_ENDPOINT=localhost:4418
+# set — no NEXUS_OTLP_HEADERS/NEXUS_OTLP_URL_PATH needed, unlike Langfuse's
+# OTLP endpoint (docs/local-llm.md)
 ```
 
 Open Grafana, the **Nexus** folder has all four dashboards waiting. If
@@ -159,7 +194,8 @@ the `cadvisor` and `docker-label-exporter` targets are `UP` on that same
 targets page — the join between them (see Caveats) needs both.
 
 `make observability-down` stops everything in
-`deploy/docker-compose.observability.yml` — `make down`'s own
+`deploy/docker-compose.observability.yml` — both the "observability" profile
+AND Tempo's "tracing" profile, if either or both are up — `make down`'s own
 postgres/pgbouncer/redis, and `make llm-down`'s/`make agentic-down`'s own
 stacks, live in entirely separate compose files, so there's nothing there
 for this to touch. `make docker-up`'s own nexusd/signerd containers need
@@ -174,6 +210,7 @@ flag to start them in the first place).
 |---|---|---|
 | `NEXUS_LOG_LEVEL` | `info` | `internal/obs.InitLogger`'s floor — any zerolog level name (`trace`/`debug`/`info`/`warn`/`error`). An unparseable value falls back to `info`. |
 | `NEXUS_LOG_FILE` | unset (stderr only) | Additionally tee JSON logs to this path, append-only — `make run`/`make signerd` set it to `.dev/nexusd.log`/`.dev/signerd.log` by default; unset it to go back to stderr-only, the behavior before this doc existed. |
+| `NEXUS_OTLP_ENDPOINT` | unset (stdout spans) | Set to `localhost:4418` to send spans to Tempo (`make tempo-up`) — the full `NEXUS_OTLP_*`/`NEXUS_LANGFUSE_*` env var set is documented in `docs/local-llm.md`, since this same exporter is shared with the Langfuse tracing path. |
 
 `docker-label-exporter` (task 17.15) takes two of its own, set in
 `docker-compose.observability.yml`'s own service block rather than here —
@@ -270,3 +307,19 @@ bind address. Neither needs to change for this repo's own use.
   calibrated SLOs** — sized for a demo tenant's traffic, not measured
   against real production load. Tune them (and wire a real Alertmanager
   receiver — see Alerting above) before trusting this stack to page anyone.
+- **Tempo's local-disk storage backend is a demo topology**, the same call
+  Loki's single-binary mode above already makes — fine for a local run's
+  actual trace volume, not the object-store-backed deployment Tempo's own
+  docs recommend for anything with real retention/throughput needs.
+- **Tempo has no span-metrics/service-graph generation wired up** —
+  `deploy/observability/tempo.yaml` trims Grafana's own official example's
+  `metrics_generator` block on purpose, since enabling it also needs
+  Prometheus's `--enable-feature=remote-write-receiver` flag turned on (a
+  separate change to the `prometheus` service, not made here). Traces are
+  fully queryable via Grafana's Explore either way; what's missing is
+  Tempo deriving its own RED metrics/service-graph edges FROM those traces
+  into Prometheus.
+- **`NEXUS_TRACE_CONTENT=true` applies to whichever OTLP destination is
+  configured** — Tempo included, not just Langfuse. Turn it on for local
+  debugging; think about whether you want it on for anything real, same
+  caveat `docs/local-llm.md` already gives its own OTLP/Langfuse path.

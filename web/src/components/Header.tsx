@@ -51,7 +51,7 @@ export function Header() {
               <input
                 type="text"
                 value={draft.baseUrl}
-                placeholder="http://localhost:8080"
+                placeholder="http://localhost:8055"
                 onChange={(e) => setDraft({ ...draft, baseUrl: e.target.value })}
               />
             </label>

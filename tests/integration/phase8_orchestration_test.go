@@ -446,6 +446,28 @@ func (rt *recordingTracer) StartSpan(ctx context.Context, name string, kind obs.
 	return ctx, &recordingSpan{span: span}
 }
 
+// Detach/Attach: the real go.opentelemetry.io/otel/trace.SpanContext
+// mechanism, matching obs.OTLPExporter's own (internal/obs/otlp.go) — this
+// is what internal/delegate/spawn.go now goes through generically instead
+// of calling trace.SpanContextFromContext/ContextWithRemoteSpanContext
+// directly, and TestSpawn_ChildrenNestUnderParentTraceSpan below is the
+// proof that refactor didn't change this test's own observable behavior.
+func (rt *recordingTracer) Detach(ctx context.Context) obs.SpanLink {
+	sc := trace.SpanContextFromContext(ctx)
+	if !sc.IsValid() {
+		return nil
+	}
+	return sc
+}
+
+func (rt *recordingTracer) Attach(ctx context.Context, link obs.SpanLink) context.Context {
+	sc, ok := link.(trace.SpanContext)
+	if !ok {
+		return ctx
+	}
+	return trace.ContextWithRemoteSpanContext(ctx, sc)
+}
+
 type recordingSpan struct{ span trace.Span }
 
 func (s *recordingSpan) End(obs.Attrs)             { s.span.End() }

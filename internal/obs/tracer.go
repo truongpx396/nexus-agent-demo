@@ -38,7 +38,35 @@ type Tracer interface {
 	// free, standard OTel parent/child propagation, no manual trace-ID
 	// plumbing.
 	StartSpan(ctx context.Context, name string, kind ObservationType, attrs Attrs) (context.Context, Span)
+
+	// Detach extracts whatever this Tracer needs from ctx to reconstruct
+	// correct parent linkage later, from a DIFFERENT ctx — the seam
+	// internal/delegate/spawn.go's Spawn uses to carry a delegated
+	// subagent's parent span across its own goroutine boundary (a bare
+	// context.Background() would otherwise sever propagation, opening the
+	// child as a disconnected new trace). Generic on purpose: a naive
+	// direct dependency on go.opentelemetry.io/otel/trace's SpanContext
+	// works for a single OTel-backed Tracer, but breaks the moment more
+	// than one Tracer implementation needs to agree on "the current span"
+	// at once (MultiExporter, multi.go) — each gets its own private
+	// SpanLink instead of fighting over one shared ctx slot. A Tracer with
+	// no cross-goroutine propagation of its own (the stdout Exporter) can
+	// return nil.
+	Detach(ctx context.Context) SpanLink
+
+	// Attach re-injects a SpanLink Detach previously produced (necessarily
+	// from THIS SAME Tracer instance — a SpanLink is opaque and never
+	// interpreted by anything else) into ctx, so a span later started from
+	// the returned ctx nests under whatever was detached. A nil link
+	// (Detach found nothing, or this Tracer has nothing to attach) returns
+	// ctx unchanged.
+	Attach(ctx context.Context, link SpanLink) context.Context
 }
+
+// SpanLink is Tracer.Detach's opaque return value. Never inspected
+// generically — only ever handed back to Attach on the exact same Tracer
+// instance that produced it.
+type SpanLink any
 
 // Span is one open span returned by Tracer.StartSpan.
 type Span interface {

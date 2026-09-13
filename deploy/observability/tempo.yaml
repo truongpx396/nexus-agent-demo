@@ -1,0 +1,34 @@
+# Minimal single-binary Tempo config (docs/observability.md), based
+# verbatim on Grafana's own current example
+# (github.com/grafana/tempo/example/docker-compose/single-binary/tempo.yaml)
+# with the metrics_generator/query_frontend.mcp_server/overrides blocks
+# trimmed — this is deliberately just "receive OTLP, store locally,
+# queryable from Grafana," not span-metrics/service-graph generation (that
+# needs Prometheus's own remote-write-receiver feature flag enabled too,
+# a separate, not-yet-made change to the prometheus service if ever
+# wanted).
+stream_over_http_enabled: true
+
+server:
+  http_listen_port: 3200
+  log_level: info
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: "0.0.0.0:4317"
+        http:
+          endpoint: "0.0.0.0:4318"
+
+storage:
+  trace:
+    backend: local
+    wal:
+      path: /var/tempo/wal
+    local:
+      path: /var/tempo/blocks
+
+usage_report:
+  reporting_enabled: false

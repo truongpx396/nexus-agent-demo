@@ -8,9 +8,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
-	"go.opentelemetry.io/otel/trace"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
@@ -183,23 +183,29 @@ func (d *Delegations) Spawn(ctx context.Context, req SpawnRequest) (uuid.UUID, e
 	}
 
 	// The child runs on its own goroutine (Spawn never blocks on it), which
-	// would otherwise sever OTel's ctx-based parent/child propagation — a
-	// bare context.Background() carries no span, so the child's own
-	// "kernel.run" root span would open as an unrelated new trace instead of
-	// nesting under the delegate tool_use (or delegate_fanout step) that
-	// spawned it. Carrying req's ctx SpanContext across the goroutine
-	// boundary explicitly is the same thing an OTel propagator does at any
-	// other async/cross-process boundary (e.g. a queue consumer): re-attach
-	// the parent's SpanContext to a fresh Context so the next span started
-	// from it still nests correctly. IsValid() is false whenever no Tracer
-	// is wired (k.startSpan never touches ctx in that case) or ctx was never
-	// traced at all — bg then stays plain context.Background(), unchanged
-	// from before.
-	parentSpanCtx := trace.SpanContextFromContext(ctx)
+	// would otherwise sever ctx-based parent/child propagation — a bare
+	// context.Background() carries no span, so the child's own "kernel.run"
+	// root span would open as an unrelated new trace instead of nesting
+	// under the delegate tool_use (or delegate_fanout step) that spawned
+	// it. Tracer.Detach/Attach (internal/obs/tracer.go) is the generic
+	// seam for exactly this: carry whatever the active Tracer needs across
+	// the goroutine boundary, without this package needing to know WHICH
+	// Tracer implementation is wired — deliberately not a direct
+	// go.opentelemetry.io/otel/trace.SpanContext call anymore, since a
+	// MultiExporter (fanning out to more than one destination at once,
+	// docs/local-llm.md) needs each of ITS OWN underlying exporters to get
+	// its own independent link, not one shared OTel slot. A nil Tracer, or
+	// ctx never having been traced at all, means link is nil and Attach is
+	// a no-op — bg then stays plain context.Background(), unchanged from
+	// before.
+	var link obs.SpanLink
+	if tracer := childKernel.Tracer; tracer != nil {
+		link = tracer.Detach(ctx)
+	}
 	go func() {
 		bg := context.Background()
-		if parentSpanCtx.IsValid() {
-			bg = trace.ContextWithRemoteSpanContext(bg, parentSpanCtx)
+		if tracer := childKernel.Tracer; tracer != nil {
+			bg = tracer.Attach(bg, link)
 		}
 		for _, err := range childKernel.Run(bg, childState, childCfg) {
 			if err != nil {

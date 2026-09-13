@@ -69,6 +69,26 @@ func (t *spyTracer) StartSpan(ctx context.Context, name string, kind obs.Observa
 	return context.WithValue(ctx, spyCtxKey{}, s), s
 }
 
+// Detach/Attach: reuses the same spyCtxKey StartSpan already keys off of —
+// this spy has no real cross-process backend, but implementing these for
+// real (rather than as no-ops) means a test using spyTracer through an
+// actual goroutine boundary would nest correctly too, the same guarantee
+// obs.OTLPExporter/obs.LangfuseExporter give internal/delegate/spawn.go.
+func (t *spyTracer) Detach(ctx context.Context) obs.SpanLink {
+	s, _ := ctx.Value(spyCtxKey{}).(*spySpan)
+	if s == nil {
+		return nil
+	}
+	return s
+}
+
+func (t *spyTracer) Attach(ctx context.Context, link obs.SpanLink) context.Context {
+	if link == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, spyCtxKey{}, link)
+}
+
 func TestKernelTracerProducesRootGenerationToolTree(t *testing.T) {
 	pool, cleanup := setupPostgresAndPgBouncer(t)
 	defer cleanup()
