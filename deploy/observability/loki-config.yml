@@ -1,0 +1,50 @@
+# Single-binary Loki config for docker-compose.observability.yml's loki
+# service (docs/observability.md) — local filesystem storage (no S3/GCS,
+# same "smallest topology that is still the real thing" reasoning
+# docker-compose.observability.yml's own header comment gives for choosing
+# single-binary mode at all). Adapted from Loki's own shipped
+# local-config.yaml, trimmed to what this demo actually needs.
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+
+common:
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  # A local demo's log volume is trivial; these exist so a runaway retry
+  # loop (internal/reliability's own circuit breaker is the real backstop —
+  # this is just Loki's ingestion-side guard) can't wedge the single
+  # instance. Generous, not tight.
+  ingestion_rate_mb: 16
+  ingestion_burst_size_mb: 32
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h
+  # 14 days — plenty for a local demo, short enough that the filesystem
+  # volume never grows unbounded across a long-running dev machine.
+  retention_period: 336h
+
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+  delete_request_store: filesystem

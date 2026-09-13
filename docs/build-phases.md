@@ -104,9 +104,9 @@ file-first memory — see §2 Phases 11–12.
 
 ## 2. Build phases
 
-Seventeen phases (0 through 16). Each is independently shippable and ends with a **demo command**
+Eighteen phases (0 through 17). Each is independently shippable and ends with a **demo command**
 you can run and an **acceptance test** that must be green. Sizing assumes one developer;
-parallelisable work is marked `[P]`. Phases 13–16 are not part of the original 67-pattern coverage —
+parallelisable work is marked `[P]`. Phases 13–17 are not part of the original 67-pattern coverage —
 see their own intros below.
 
 ### Phase 0 — Setup (1 day)
@@ -561,6 +561,81 @@ touch it, and a demo that never runs `make agentic-up` pays nothing.
 
 **Demo**: `make agentic-up`, then `nexusctl run "research the top 3 headlines on https://news.ycombinator.com and summarize them"` — the run calls `activate_skill("web-research")`, then `platform/web_crawl`, and returns a summary citing the crawled URL. Separately, `NEXUS_SANDBOX=opensandbox make run` and `nexusctl run --autonomy autonomous "delegate to a sandbox-runner sub-agent: run 'python3 --version' and report it"` — the transcript shows a `platform/delegate` call with `scope_grant:["platform/shell@v1",...]`, the child session's `platform/shell` call routed through `internal/sandbox/opensandbox.go`, and the same audit/taint/cost accounting every other tool call already gets. In the web app, the suggested-prompt chips reproduce both without typing.
 **Acceptance**: 16.2 (a table-driven test asserting `WebCrawl{}.Taint()` matches `WebFetch{}.Taint()` field-for-field); 16.4 (`NEXUS_SANDBOX=opensandbox` with the compose service down logs a warning and `platform/shell` still runs unsandboxed — the same fallback contract `docker` already has, never a hard failure); 16.10 green in `make eval` with zero other regressions.
+
+---
+
+### Phase 17 — Observability stack: Prometheus, Loki, Grafana, Alertmanager, cAdvisor (3–4 days)
+
+Not part of the original 67-pattern coverage — like Phases 9 and 13–16, no new architectural idea
+ships here. Task 13.12 (F13) wired the emission side — `nexusd`'s own `/metrics` endpoint and
+`internal/obs.ComputeGoldenSignals` (task 10.12) — but never built the other half:
+`handleMetrics`'s own doc comment in `cmd/nexusd/main.go` says outright that it exists because
+"this is what a scrape target actually needs," and until this phase, nothing actually scraped it.
+This phase is that scrape target plus its log-aggregation, alerting, and container-resource-usage
+counterparts: a local Prometheus + Alertmanager + cAdvisor + Loki + Grafana stack, opt-in and
+additive on the same append-only pattern `deploy/docker-compose.local-llm.yml` and
+`deploy/docker-compose.agentic.yml` already established — nothing in
+`deploy/docker-compose.observability.yml` references postgres/pgbouncer/redis/signerd/nexusd, so
+`make down`/`make llm-down`/`make agentic-down` can never touch it, and a demo that never runs
+`make observability-up` pays nothing.
+
+Per-run tracing keeps its existing home (Langfuse, Phase 11's local-LLM work,
+`internal/obs.Tracer`) and is deliberately not duplicated here — this phase covers the other
+observability pillars: aggregate metrics across every run (both the tenant-wide golden signals and
+a per-tool/per-model breakdown), per-container CPU/memory/network/disk IO (something
+application-level `/metrics` structurally cannot see), process-level logs independent of any one
+session, and alerting on top of the golden-signal metrics.
+
+| # | Task | Closes |
+|---|---|---|
+| 17.1 | `internal/obs/logging.go` — `InitLogger(service string)` installs the global zerolog logger (`github.com/rs/zerolog/log.Logger`, the one every package already calls through) with an explicit `NEXUS_LOG_LEVEL` floor and an optional second JSON sink (`NEXUS_LOG_FILE`, append-only) alongside stderr — the tee a log-shipping agent needs since nexusd/signerd run as plain host processes, not containers Docker's own log driver already exposes | Nothing scrapes or ships structured logs anywhere (the log-side half of F13) |
+| 17.2 | `cmd/nexusd/main.go` and `cmd/signerd/main.go` call `obs.InitLogger("nexusd"/"signerd")` as the first line of `main()`; `Makefile`'s `run`/`signerd` targets set `NEXUS_LOG_FILE=.dev/nexusd.log`/`.dev/signerd.log` by default — zero extra steps for the common path, same "keeps working with it off" rule every other optional adapter in this plan follows (unset the var to go back to stderr-only) | Wires 17.1 into both binaries without changing default behavior when the observability stack isn't running |
+| 17.3 | `deploy/docker-compose.observability.yml` — `prometheus` (scrapes `nexusd`'s `/metrics` over `host.docker.internal:8080`), `alertmanager`, `cadvisor`, `loki` (single-binary mode, filesystem storage — the same "smallest topology that is still the real thing" call `docker-compose.yml` already makes for PgBouncer over a full pool mesh), `promtail`, `grafana` — a fifth, separate compose file, `--profile observability` gated | Provides the scrape target `handleMetrics`'s own doc comment named as the missing half of F13 |
+| 17.4 | `deploy/observability/{prometheus.yml,loki-config.yml,promtail-config.yml}` — scrape/ingestion config; Promtail's pipeline promotes zerolog's own `level`/`service` fields to Loki labels (low-cardinality, the same discipline `internal/obs/allowlist.go` applies to span attributes for a different reason) and leaves everything else in the log line | Config as code, not manual Grafana Explore queries reconstructed from memory each time |
+| 17.5 | `deploy/observability/grafana/provisioning/` — headless datasource (Prometheus + Loki + Alertmanager) and dashboard-folder bootstrap, the same zero-click-setup ethos `docker-compose.local-llm.yml`'s `LANGFUSE_INIT_*` env vars already give Langfuse | No manual "add datasource" / "import dashboard" step on first boot |
+| 17.6 | `deploy/observability/grafana/dashboards/nexus-golden-signals.json` — every field of `obs.GoldenSignals` (task 10.12) as a panel, `$tenant_id`-filterable: completion rate by terminal reason, stuck rate, cost-ceiling breach rate, cache-read rate, approval p50/p95 decision latency, approval mismatch rate, unresolved in-flight claims, telemetry attribute drop rate | The go-live dashboard task 10.12 specified, actually rendered somewhere a human looks |
+| 17.7 | `deploy/observability/grafana/dashboards/nexus-logs.json` — log volume by level, a pre-filtered error/warn stream, an unfiltered stream, `$service`/`$level`-filterable | The log-aggregation counterpart to 17.6, for the failure classes that show up in a log line before they show up in a completion-rate rollup |
+| 17.8 | `Makefile`: `observability-up`/`observability-down` (mirrors `llm-up`/`llm-down`, `agentic-up`/`agentic-down`); `docker-down` (mirrors the existing `docker-up`, a pre-existing gap this phase closes — confirmed plain `make down` does NOT stop `--profile app` containers that are already running); `docs/observability.md` (mirrors `docs/local-llm.md`'s voice): architecture, what you'll see, setup, env vars, and a **caveats** section | Every prior third-party adapter in this codebase ships with the same shape of doc; this one does too |
+| 17.9 | `internal/obs/usage.go` — `ComputeToolCallCounts` (tool_use events grouped by `tool_id`, the plain structural column `migrations/0003_events.sql` already carries — deliberately not `internal/cost.MeterToolInvocations`, which `cost/meter.go`'s own doc comment says is registered but never emitted) and `ComputeModelSpend` (`cost_records` grouped by `model_id`, every token class plus reconciled cost); wired into `handleMetrics` as `nexus_tool_call_count`, `nexus_model_input_tokens`, `nexus_model_output_tokens`, `nexus_model_cost` — the one place this endpoint converts `cost.Money`'s integer micros to float64, at the exposition boundary, never inside `internal/cost` or `internal/obs` itself (task 4.1's ban stays intact) | The golden-signal aggregates roll every tool/model together; a regression hiding behind one noisy tool or one expensive model needs its own breakdown |
+| 17.10 | `deploy/observability/grafana/dashboards/nexus-cost-and-tools.json` — tool call volume by `tool_id`, input tokens per model by cache class, output tokens per model, reconciled cost per model, all `$tenant_id`-filterable | Renders 17.9's breakdown somewhere a human looks, same as 17.6 does for the golden signals |
+| 17.11 | `deploy/observability/{alertmanager.yml,prometheus-rules.yml}` — five alert rules over the golden-signal gauges (`NexusTargetDown`, `NexusStuckRateHigh`, `NexusCostCeilingBreachRateHigh`, `NexusApprovalMismatchDetected`, `NexusUnresolvedInFlightClaims`), routed to an Alertmanager whose default receiver has no configured integration on purpose (alerts fire and are visible in Alertmanager's own UI/API and as a Grafana datasource; wiring a real destination is a `receivers:` block, config not a code change) | A regression doesn't require someone already staring at a dashboard when it happens |
+| 17.12 | cAdvisor service — per-container CPU/memory/network/disk IO, pointed at **containerd directly**, not dockerd. On a Docker Desktop host using the (now-default) containerd-snapshotter storage backend, cAdvisor's legacy Docker container factory cannot register a single container (`failed to identify the read-write layer ID`, reproduced against v0.49.1 and v0.52.1 — that factory assumes the classic dockerd overlay2 graphdriver layout, which doesn't exist under this backend). The fix, not a workaround: `-containerd`/`-containerd-namespace=moby` (`moby` is the namespace dockerd itself uses) — the same mechanism kubelet+cAdvisor already use against containerd in every production Kubernetes cluster. cAdvisor still needs `privileged: true` and broad host mounts to collect ANY container's cgroup data (its own documented requirement) | The piece `/metrics` structurally cannot cover — CPU/memory/network/disk are process/kernel-level facts, not something an application emits about itself |
+| 17.13 | `deploy/observability/grafana/dashboards/nexus-infrastructure.json` — CPU, memory working set, network IO, disk IO per container, `$container`-filterable, joined against 17.15's id→name mapping | Renders 17.12's per-container data somewhere a human looks, same as 17.6/17.10 do for their own domains |
+| 17.14 | `promtail-config.yml`'s `docker` job — Docker service discovery over the socket, filtered to `com.docker.compose.project=nexus-agent-demo` (every compose file in this repo shares that project name), covering nexusd/signerd/postgres/pgbouncer/redis run as containers (`make docker-up`) alongside the existing file-tailing job for the host-process path (`make run`) — both always on, whichever has something to ship just works | Containerizing nexusd/signerd for 17.12's sake (`make docker-up`) would otherwise silently stop shipping their logs, since a containerized process's stdout never reaches the file `NEXUS_LOG_FILE` tees to |
+| 17.15 | `deploy/observability/docker-label-exporter/` — a tiny, dependency-free Go program (its own nested module, stdlib only, same "hand-rolled, not worth a dependency" call `handleMetrics`'s own text-formatting already makes) exposing `container_id_info{id,name,compose_service,compose_project}`, read straight from the Docker Engine API (`GET /containers/json`, server-side filtered by a `label` query param to this project's own compose label) rather than from containerd, because **containerd's "moby" namespace does not carry Docker's own container name or compose labels at all** — confirmed directly (`ctr -n moby containers info <id>`: the only label present is `com.docker/engine.bundle.path`); Docker keeps that metadata in its own daemon store and never pushes it into containerd. `nexus-infrastructure.json`'s panels join cAdvisor's id-keyed series against this exporter (`* on(id) group_left(name, compose_service)`) to recover real names — and, since the exporter never even sees a container outside this project, that join is also what actually scopes the dashboard, not a `metric_relabel_configs` guess on a label cAdvisor's containerd factory doesn't set | Closes the one gap 17.12's containerd fix couldn't: cAdvisor's metrics are correct and crash-free, but id-keyed only — this is what makes them readable again, still on Docker Desktop, no settings changed |
+
+**Demo**: `make docker-up` (containerized nexusd/signerd — recommended for this stack so cAdvisor can
+see them; `make run` also still works for everything except the Infrastructure dashboard), then
+`make observability-up` — Prometheus's own target page shows the `nexusd`, `cadvisor`, and
+`docker-label-exporter` jobs `UP` within one scrape interval (`cadvisor`'s own container log shows
+*"Registration of the containerd container factory successfully"*, never the legacy Docker
+factory's read-write-layer error — task 17.12), and its alert-rules page shows all five rules from
+`prometheus-rules.yml`; Grafana's **Nexus** folder has all four dashboards pre-loaded with live
+data, no manual setup. Drive a few runs through `nexusctl`, watch the Golden Signals board's
+completion-rate panel move and the Cost and Tools board pick up per-tool/per-model numbers, and the
+Infrastructure board's CPU/memory panels move too, labeled by real container name (e.g.
+`nexus-agent-demo-postgres-1`, not a bare hash) — the join task 17.15 exists for; trigger a
+permission refusal or a stuck loop and watch it appear on the Logs board's error/warn stream before
+the next golden-signal scrape even lands; stop `nexusd` and watch `NexusTargetDown` fire in
+Alertmanager within a minute.
+**Acceptance**: `curl -s http://localhost:9091/api/v1/targets` reports the `nexusd`, `cadvisor`, and
+`docker-label-exporter` jobs healthy; `curl -s http://localhost:9091/api/v1/rules` reports all five
+rules `health: "ok"`; `curl -s http://localhost:9094/api/v2/status` reports Alertmanager
+`cluster.status: "ready"`; `curl -s http://localhost:3101/ready` returns `ready`; `curl -s
+http://localhost:3101/loki/api/v1/label/job/values` includes both `nexus` and `docker`; a query
+against `label_replace(sum by (id) (rate(container_cpu_usage_seconds_total{id=~"/docker/.+"}[5m])),
+"id", "$1", "id", "/docker/(.+)") * on(id) group_left(name) container_id_info` returns only
+`nexus-agent-demo-*`-named series, never another project's containers even though cAdvisor itself
+can see the whole host; all four dashboards and all three Grafana datasources (Prometheus, Loki,
+Alertmanager) load with zero manual configuration on a from-scratch `make observability-up`. `make
+down` / `make llm-down` / `make agentic-down` leave every `docker-compose.observability.yml`
+container running — the same
+non-interference test each prior optional compose file already has to pass — and confirmed that
+plain `make down` also leaves `make docker-up`'s own containers running (task 17.8's `docker-down`
+is what stops those). Every host port this stack publishes (9091/9094/8083/3101/3310) is shifted off
+its tool's own default — task 17.3's own port comments explain why (a confirmed collision on the
+machine this plan was built on, not a guess); `docker-label-exporter`'s 9101 is its own natural
+default, no collision found.
 
 ---
 

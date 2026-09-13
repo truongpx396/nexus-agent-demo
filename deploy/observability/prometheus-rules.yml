@@ -1,0 +1,53 @@
+# Alerting rules over the golden-signal gauges nexusd's own /metrics
+# exposes (README task 10.12/13.12) — docs/build-phases.md's Phase 17, task
+# 17.11. Every threshold below is a starting point for a demo tenant's
+# traffic, not a calibrated production SLO; tune per-tenant once real
+# traffic exists, the same "config, not a fork" rule this whole plan applies
+# everywhere else.
+groups:
+  - name: nexus-golden-signals
+    rules:
+      - alert: NexusTargetDown
+        expr: up{job="nexusd"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "nexusd /metrics target is down"
+          description: "Prometheus has not been able to scrape nexusd's own /metrics for at least 1 minute — either nexusd is down or unreachable at its configured scrape target."
+
+      - alert: NexusStuckRateHigh
+        expr: nexus_stuck_rate > 0.15
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Elevated stuck_terminated rate for tenant {{ $labels.tenant_id }}"
+          description: "tenant {{ $labels.tenant_id }}'s stuck_rate is {{ $value | printf \"%.2f\" }}, above the 0.15 warning threshold — internal/reliability's stuck detector (task 6.8) is terminating an unusual share of sessions."
+
+      - alert: NexusCostCeilingBreachRateHigh
+        expr: nexus_cost_ceiling_breach_rate > 0.3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High cost-ceiling breach rate for tenant {{ $labels.tenant_id }}"
+          description: "tenant {{ $labels.tenant_id }} is refusing over 30% of budget reservations (refuse_ceiling) — either the ceiling is mis-sized for actual usage or a run is runaway (task 4.6)."
+
+      - alert: NexusApprovalMismatchDetected
+        expr: nexus_approval_mismatch_rate > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "approval_mismatch detected for tenant {{ $labels.tenant_id }}"
+          description: "step 9a's digest re-verification (task 5.7) caught at least one modified-after-grant argument for tenant {{ $labels.tenant_id }} — investigate before assuming it's noise; a mismatch is never silently re-requested."
+
+      - alert: NexusUnresolvedInFlightClaims
+        expr: nexus_unresolved_inflight_claims > 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Stale in-flight claim(s) for tenant {{ $labels.tenant_id }}"
+          description: "{{ $value }} claim(s) for tenant {{ $labels.tenant_id }} have stayed in_flight past the staleness window (task 6.6) — write-ahead idempotency exists precisely to catch this; resolve by probe or human, never by re-execution."

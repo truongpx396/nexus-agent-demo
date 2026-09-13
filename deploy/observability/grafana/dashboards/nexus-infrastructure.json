@@ -1,0 +1,102 @@
+{
+  "uid": "nexus-infrastructure",
+  "title": "Nexus / Infrastructure",
+  "description": "Per-container CPU, memory, network, and disk IO (docs/build-phases.md Phase 17, task 17.12) — the piece application-level /metrics never covers. Sourced from cAdvisor (pointed at containerd directly — see docker-compose.observability.yml's cadvisor service comment for why) and joined against docker-label-exporter's own id->name mapping (task 17.15), since containerd's \"moby\" namespace doesn't carry Docker's own container name/compose labels. The join is also what scopes this dashboard to this project's own containers: docker-label-exporter is server-side filtered by the Docker Engine API itself, so a container it was never told about simply has no `id` to join against and drops out of every query below. Only containers actually running show up — nexusd/signerd need `make docker-up` (docker-compose.yml's --profile app), not `make run`, to appear here at all.",
+  "tags": ["nexus", "infrastructure", "cadvisor"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 2,
+  "editable": true,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "container",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(container_id_info, name)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "CPU usage (cores)",
+      "description": "rate(container_cpu_usage_seconds_total[5m]) — fraction of one CPU core; 1.0 means fully saturating one core. Joined against docker-label-exporter's container_id_info for the real name (cAdvisor's own `id` label is a raw container-ID cgroup path under containerd, task 17.12's own comment on why).",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "label_replace(sum by (id) (rate(container_cpu_usage_seconds_total{id=~\"/docker/.+\"}[5m])), \"id\", \"$1\", \"id\", \"/docker/(.+)\") * on(id) group_left(name, compose_service) container_id_info{name=~\"$container\"}",
+          "legendFormat": "{{name}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Memory working set",
+      "description": "container_memory_working_set_bytes — the memory the kernel considers actually in use (closer to what an OOM killer looks at than container_memory_usage_bytes, which also counts reclaimable page cache).",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "bytes", "min": 0 }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "label_replace(container_memory_working_set_bytes{id=~\"/docker/.+\"}, \"id\", \"$1\", \"id\", \"/docker/(.+)\") * on(id) group_left(name, compose_service) container_id_info{name=~\"$container\"}",
+          "legendFormat": "{{name}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Network IO",
+      "description": "rate(container_network_{receive,transmit}_bytes_total[5m]) per container.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 9 },
+      "fieldConfig": { "defaults": { "unit": "Bps", "min": 0 }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "label_replace(sum by (id) (rate(container_network_receive_bytes_total{id=~\"/docker/.+\"}[5m])), \"id\", \"$1\", \"id\", \"/docker/(.+)\") * on(id) group_left(name, compose_service) container_id_info{name=~\"$container\"}",
+          "legendFormat": "{{name}} rx",
+          "refId": "A"
+        },
+        {
+          "expr": "label_replace(sum by (id) (rate(container_network_transmit_bytes_total{id=~\"/docker/.+\"}[5m])), \"id\", \"$1\", \"id\", \"/docker/(.+)\") * on(id) group_left(name, compose_service) container_id_info{name=~\"$container\"}",
+          "legendFormat": "{{name}} tx",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Disk IO",
+      "description": "rate(container_fs_{reads,writes}_bytes_total[5m]) per container.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 9 },
+      "fieldConfig": { "defaults": { "unit": "Bps", "min": 0 }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "label_replace(sum by (id) (rate(container_fs_reads_bytes_total{id=~\"/docker/.+\"}[5m])), \"id\", \"$1\", \"id\", \"/docker/(.+)\") * on(id) group_left(name, compose_service) container_id_info{name=~\"$container\"}",
+          "legendFormat": "{{name}} read",
+          "refId": "A"
+        },
+        {
+          "expr": "label_replace(sum by (id) (rate(container_fs_writes_bytes_total{id=~\"/docker/.+\"}[5m])), \"id\", \"$1\", \"id\", \"/docker/(.+)\") * on(id) group_left(name, compose_service) container_id_info{name=~\"$container\"}",
+          "legendFormat": "{{name}} write",
+          "refId": "B"
+        }
+      ]
+    }
+  ]
+}

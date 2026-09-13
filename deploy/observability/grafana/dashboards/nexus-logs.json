@@ -1,0 +1,93 @@
+{
+  "uid": "nexus-logs",
+  "title": "Nexus / Logs",
+  "description": "nexusd's/signerd's structured zerolog output (internal/obs.InitLogger), shipped by promtail (deploy/observability/promtail-config.yml) off the files NEXUS_LOG_FILE points at. Content-free by the same discipline internal/obs/allowlist.go applies to spans: these are process logs, never event-log payloads — a run's actual input/output never appears here (constitution Principle VI).",
+  "tags": ["nexus", "logs"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "service",
+        "type": "query",
+        "datasource": "Loki",
+        "query": "label_values(service)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "level",
+        "type": "query",
+        "datasource": "Loki",
+        "query": "label_values(level)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Log volume by level",
+      "description": "One series per zerolog level — a rising error/warn line is the fastest way to spot a regression before it shows up in the golden-signal dashboard's slower, session-completion-derived rates.",
+      "datasource": "Loki",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "sum by (level) (count_over_time({job=\"nexus\", service=~\"$service\", level=~\"$level\"}[$__interval]))",
+          "legendFormat": "{{level}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "logs",
+      "title": "Error and warn log stream",
+      "description": "Live-tailable stream, filtered to the levels that usually matter first. Widen $level above to see everything.",
+      "datasource": "Loki",
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 8 },
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending"
+      },
+      "targets": [
+        {
+          "expr": "{job=\"nexus\", service=~\"$service\", level=~\"error|warn\"}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "logs",
+      "title": "All logs",
+      "datasource": "Loki",
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 20 },
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending"
+      },
+      "targets": [
+        {
+          "expr": "{job=\"nexus\", service=~\"$service\", level=~\"$level\"}",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}

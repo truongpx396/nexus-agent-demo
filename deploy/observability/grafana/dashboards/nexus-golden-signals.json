@@ -1,0 +1,205 @@
+{
+  "uid": "nexus-golden-signals",
+  "title": "Nexus / Golden Signals",
+  "description": "internal/obs.ComputeGoldenSignals (README task 10.12/13.12), scraped off nexusd's /metrics by docker-compose.observability.yml's prometheus service. Every panel here is one field of obs.GoldenSignals — content-free by construction (internal/obs/allowlist.go), never a payload.",
+  "tags": ["nexus", "golden-signals"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "tenant_id",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(nexus_completion_rate, tenant_id)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Completion and reliability",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Completion rate by terminal reason",
+      "description": "sessions.terminal_reason distribution — a widening stuck_terminated or cost_exhausted slice is the first place a regression shows up.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "nexus_completion_rate{tenant_id=~\"$tenant_id\"}",
+          "legendFormat": "{{tenant_id}} / {{reason}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "gauge",
+      "title": "Stuck rate",
+      "description": "Fraction of terminal sessions ending stuck_terminated (internal/reliability/stuck.go's second corroborating trip). Should sit near zero.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "orange", "value": 0.05 },
+            { "color": "red", "value": 0.15 }
+          ] }
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "expr": "nexus_stuck_rate{tenant_id=~\"$tenant_id\"}", "legendFormat": "{{tenant_id}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "gauge",
+      "title": "Cost ceiling breach rate",
+      "description": "Fraction of budget_decisions resolved refuse_ceiling (internal/cost.DecisionRefuseCeiling) — every refusal here is spend a tenant's own ceiling stopped, not an incident.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "orange", "value": 0.1 },
+            { "color": "red", "value": 0.3 }
+          ] }
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "expr": "nexus_cost_ceiling_breach_rate{tenant_id=~\"$tenant_id\"}", "legendFormat": "{{tenant_id}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "row",
+      "title": "Cost and cache",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 }
+    },
+    {
+      "id": 6,
+      "type": "gauge",
+      "title": "Cache-read rate",
+      "description": "internal/promptctx's two-zone cache-stable prefix (README pattern #7) working: share of input tokens served from Anthropic's prompt cache rather than billed fresh. Higher is better.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 10 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "red", "value": null },
+            { "color": "orange", "value": 0.3 },
+            { "color": "green", "value": 0.6 }
+          ] }
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "expr": "nexus_cache_read_rate{tenant_id=~\"$tenant_id\"}", "legendFormat": "{{tenant_id}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Unresolved in-flight claims",
+      "description": "claims still in_flight past the staleness window (task 6.6) — a fresh in-flight claim is a normal effect mid-flight; an old one is what write-ahead idempotency exists to catch.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 10 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "orange", "value": 1 },
+            { "color": "red", "value": 5 }
+          ] }
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "expr": "nexus_unresolved_inflight_claims{tenant_id=~\"$tenant_id\"}", "legendFormat": "{{tenant_id}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "Telemetry attribute drop rate",
+      "description": "internal/obs/allowlist.go's DropTracker (task 34) — not measured by /metrics itself (see the metric's own HELP text); always 0 from this endpoint. Kept on the board as the documented limitation, not hidden.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 10 },
+      "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] },
+      "targets": [
+        { "expr": "nexus_telemetry_attr_drop_rate{tenant_id=~\"$tenant_id\"}", "legendFormat": "{{tenant_id}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "row",
+      "title": "Approvals",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Approval decision latency (p50 / p95)",
+      "description": "decided_at - created_at across every DECIDED approval (internal/oversight/approval.go) — pending approvals have no decided_at and are excluded, never counted as zero-latency.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 19 },
+      "fieldConfig": { "defaults": { "unit": "ms", "min": 0 }, "overrides": [] },
+      "targets": [
+        { "expr": "nexus_approval_p50_decision_ms{tenant_id=~\"$tenant_id\"}", "legendFormat": "{{tenant_id}} p50", "refId": "A" },
+        { "expr": "nexus_approval_p95_decision_ms{tenant_id=~\"$tenant_id\"}", "legendFormat": "{{tenant_id}} p95", "refId": "B" }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "gauge",
+      "title": "Approval mismatch rate",
+      "description": "approval_mismatch events (task 5.7's digest re-verification) divided by decided approvals — every occurrence here is a modified-after-grant argument caught, not silently re-requested.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 19 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "orange", "value": 0.02 },
+            { "color": "red", "value": 0.1 }
+          ] }
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "expr": "nexus_approval_mismatch_rate{tenant_id=~\"$tenant_id\"}", "legendFormat": "{{tenant_id}}", "refId": "A" }
+      ]
+    }
+  ]
+}

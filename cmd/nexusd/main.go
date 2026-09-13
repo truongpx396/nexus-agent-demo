@@ -121,6 +121,8 @@ const (
 var devMode bool
 
 func main() {
+	obs.InitLogger("nexusd")
+
 	ctx := context.Background()
 
 	args := os.Args[1:]
@@ -494,6 +496,8 @@ func handleMetrics(st *store.Store) http.HandlerFunc {
 		}
 
 		signalsByTenant := make(map[uuid.UUID]obs.GoldenSignals, len(tenantIDs))
+		toolCallsByTenant := make(map[uuid.UUID]obs.ToolCallCounts, len(tenantIDs))
+		modelSpendByTenant := make(map[uuid.UUID][]obs.ModelSpend, len(tenantIDs))
 		for _, tenantID := range tenantIDs {
 			signals, err := obs.ComputeGoldenSignals(r.Context(), st, tenantID, metricsStaleClaimAfter, nil, nil)
 			if err != nil {
@@ -501,6 +505,25 @@ func handleMetrics(st *store.Store) http.HandlerFunc {
 				continue
 			}
 			signalsByTenant[tenantID] = signals
+
+			// Per-tool / per-model breakdown (docs/build-phases.md Phase 17,
+			// task 17.9) — additive to the golden-signal aggregates above, not
+			// a replacement: a failure here is logged and skipped, never lets
+			// a breakdown query take down the golden-signal scrape it rides
+			// alongside.
+			toolCalls, err := obs.ComputeToolCallCounts(r.Context(), st, tenantID)
+			if err != nil {
+				log.Error().Err(err).Any("tenant_id", tenantID).Msg("nexusd: /metrics: compute tool call counts")
+			} else {
+				toolCallsByTenant[tenantID] = toolCalls
+			}
+
+			modelSpend, err := obs.ComputeModelSpend(r.Context(), st, tenantID)
+			if err != nil {
+				log.Error().Err(err).Any("tenant_id", tenantID).Msg("nexusd: /metrics: compute model spend")
+			} else {
+				modelSpendByTenant[tenantID] = modelSpend
+			}
 		}
 
 		w.Header().Set("content-type", "text/plain; version=0.0.4")
@@ -528,6 +551,32 @@ func handleMetrics(st *store.Store) http.HandlerFunc {
 			writeGaugeHeader(w, m.name, m.help)
 			for tenantID, signals := range signalsByTenant {
 				fmt.Fprintf(w, "%s{tenant_id=%q} %f\n", m.name, tenantID, m.value(signals)) //nolint:errcheck // best-effort write to a scrape response
+			}
+		}
+
+		writeGaugeHeader(w, "nexus_tool_call_count", "tool_use events recorded per tool (events.tool_id — structural, never the encrypted payload).")
+		for tenantID, toolCalls := range toolCallsByTenant {
+			for toolID, n := range toolCalls {
+				fmt.Fprintf(w, "nexus_tool_call_count{tenant_id=%q,tool_id=%q} %f\n", tenantID, toolID, float64(n)) //nolint:errcheck // best-effort write to a scrape response
+			}
+		}
+
+		writeGaugeHeader(w, "nexus_model_input_tokens", "Reconciled input tokens per routed model, split by cache class (uncached/cache_read/cache_write).")
+		writeGaugeHeader(w, "nexus_model_output_tokens", "Reconciled output tokens per routed model.")
+		// currencyMajorUnits converts cost.Money's exact integer minor units
+		// (cost.Micros: 1 currency unit = 1_000_000 micros) to a float64 ONLY
+		// here, at the Prometheus text-exposition boundary — the one place
+		// this endpoint's own doc comment already treats as sanctioned for
+		// every other rate above, never inside internal/cost or internal/obs
+		// itself (task 4.1's float64 ban).
+		writeGaugeHeader(w, "nexus_model_cost", "Reconciled cost per routed model, in major currency units (see the currency label).")
+		for tenantID, spend := range modelSpendByTenant {
+			for _, m := range spend {
+				fmt.Fprintf(w, "nexus_model_input_tokens{tenant_id=%q,model_id=%q,class=\"uncached\"} %f\n", tenantID, m.ModelID, float64(m.InputUncached))                    //nolint:errcheck // best-effort write to a scrape response
+				fmt.Fprintf(w, "nexus_model_input_tokens{tenant_id=%q,model_id=%q,class=\"cache_read\"} %f\n", tenantID, m.ModelID, float64(m.InputCacheRead))                 //nolint:errcheck // best-effort write to a scrape response
+				fmt.Fprintf(w, "nexus_model_input_tokens{tenant_id=%q,model_id=%q,class=\"cache_write\"} %f\n", tenantID, m.ModelID, float64(m.InputCacheWrite))               //nolint:errcheck // best-effort write to a scrape response
+				fmt.Fprintf(w, "nexus_model_output_tokens{tenant_id=%q,model_id=%q} %f\n", tenantID, m.ModelID, float64(m.Output))                                             //nolint:errcheck // best-effort write to a scrape response
+				fmt.Fprintf(w, "nexus_model_cost{tenant_id=%q,model_id=%q,currency=%q} %f\n", tenantID, m.ModelID, m.Currency, float64(m.CostMinorUnits)/float64(cost.Micros)) //nolint:errcheck // best-effort write to a scrape response
 			}
 		}
 	}

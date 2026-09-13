@@ -1,0 +1,267 @@
+# Observability stack (docs/observability.md) — a FOURTH, separate compose
+# file, same append-only discipline as docker-compose.local-llm.yml and
+# docker-compose.agentic.yml before it: nothing here references, or is
+# referenced by, postgres/pgbouncer/redis/signerd/nexusd, so `make down` /
+# `make llm-down` / `make agentic-down` can never touch it, and a demo that
+# never runs `make observability-up` pays nothing. `name:` matches the other
+# compose files' own project name so containers/volumes share their naming
+# and — if brought up alongside them — their default network, though nothing
+# here depends on that: every target this file scrapes or tails is reached
+# over a published host port or a bind-mounted file, never container DNS,
+# because nexusd/signerd are documented to run as plain host processes
+# (docs/local-llm.md's own "Ollama runs natively" reasoning), not compose
+# services, by default.
+#
+# This is metrics + logs + container resource usage + alerts, not traces:
+# per-run tracing already has a home (Langfuse, docs/local-llm.md,
+# internal/obs.Tracer) and is deliberately not duplicated here. Prometheus
+# scrapes the golden-signal gauges nexusd's own `/metrics` endpoint has
+# exposed since README task 13.12 (cmd/nexusd/main.go's handleMetrics) —
+# this stack is the scrape target + dashboard that endpoint's own doc
+# comment says it was always missing. cAdvisor adds CPU/memory/network/disk
+# IO PER CONTAINER (task 17.12) — application metrics don't cover that,
+# cAdvisor exists specifically because it doesn't. Promtail ships logs two
+# ways: a tailed file for nexusd/signerd run as plain host processes
+# (`make run`, internal/obs.InitLogger + NEXUS_LOG_FILE), and Docker service
+# discovery for anything running as a container (`make docker-up` — the
+# recommended path for THIS stack, since cAdvisor can only report resource
+# usage for containers it can see). Either way, nothing in the request path
+# takes a new synchronous dependency on this stack being up — the platform
+# keeps working with it off, same as every other optional adapter here.
+name: nexus-agent-demo
+
+services:
+  # `docker compose --profile observability up` (make observability-up):
+  # scrapes nexusd's /metrics (task 13.12) on the host — host.docker.internal
+  # resolves to the Mac host from inside this container the same way
+  # docker-compose.local-llm.yml's litellm service already relies on;
+  # extra_hosts below is what makes that resolution also work on Linux,
+  # where it isn't automatic.
+  prometheus:
+    profiles: ["observability"]
+    image: prom/prometheus:v3.9.1
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/prometheus-rules.yml:/etc/prometheus/rules/nexus-alerts.yml:ro
+      - prometheus-data:/prometheus
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      alertmanager:
+        condition: service_started
+      cadvisor:
+        condition: service_started
+      docker-label-exporter:
+        condition: service_started
+    ports:
+      # Host port 9091, not Prometheus's own default 9090: confirmed
+      # colliding with an unrelated project's own Prometheus container on
+      # this very machine — same shift-on-confirmed-collision reasoning
+      # docker-compose.local-llm.yml already applies to litellm (4000 ->
+      # 4100). The container's own port stays 9090.
+      - "9091:9090"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+
+  # Receives and routes the alerts prometheus-rules.yml defines (task
+  # 17.11). Its own default receiver has no configured integration — see
+  # alertmanager.yml's own header comment for why that's the right default
+  # for a local demo, and where a real deployment wires one in.
+  alertmanager:
+    profiles: ["observability"]
+    image: prom/alertmanager:v0.28.1
+    volumes:
+      - ./observability/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    ports:
+      # Host port 9094, not Alertmanager's own default 9093: confirmed
+      # colliding with an unrelated project's own Alertmanager container on
+      # this very machine — same shift-on-confirmed-collision reasoning as
+      # prometheus/loki/grafana's own port comments below. The container's
+      # own port stays 9093 (prometheus.yml's `alertmanagers` target reaches
+      # it by service name, never through this host mapping).
+      - "9094:9093"
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+
+  # Per-container CPU/memory/network/disk IO (task 17.12) — the piece
+  # `/metrics` (application-level) never covered. cAdvisor structurally
+  # needs broad read access to the host to collect ANY container's cgroup
+  # data — there is no way to make the collector itself see only this
+  # project's containers, hence `privileged: true` and the host mounts
+  # below (cAdvisor's own documented requirement, not something this repo
+  # is loosening).
+  #
+  # POINTED AT CONTAINERD, NOT DOCKER — this is the actual fix, not a
+  # Docker Desktop settings change. Confirmed on the machine this was
+  # built on (`docker info` reporting `driver-type:
+  # io.containerd.snapshotter.v1`, Docker's now-default storage backend):
+  # cAdvisor's legacy "docker" container factory fails outright —
+  # "failed to identify the read-write layer ID ... no such file or
+  # directory" for every single container, reproduced against both
+  # v0.49.1 and v0.52.1, and confirmed it isn't a `-disable_metrics`
+  # issue (container registration itself aborts, not one metric
+  # collector) — because that factory's overlay2 layer-ID lookup
+  # (`/var/lib/docker/image/overlayfs/layerdb/...`) assumes the CLASSIC
+  # dockerd graphdriver layout, which simply doesn't exist when dockerd
+  # is backed by containerd's own snapshotter instead. The fix real
+  # containerd-based deployments already use (this is exactly how kubelet
+  # +cAdvisor talk to containerd in any production Kubernetes cluster) is
+  # to skip dockerd's storage layer entirely and read cgroup/container
+  # data straight from containerd's own gRPC API — `-containerd`/
+  # `-containerd-namespace=moby` below (`moby` is the namespace dockerd
+  # itself uses inside containerd; cAdvisor's own default, `k8s.io`, is
+  # for a bare/CRI containerd install, not Docker's). Verified directly:
+  # this eliminates the crash entirely and correctly reports each
+  # container's real `image` — no version bump, no host reconfiguration,
+  # still Docker Desktop.
+  #
+  # The one thing containerd's "moby" namespace genuinely does NOT carry
+  # is Docker's own container NAME or compose labels — confirmed via `ctr
+  # -n moby containers info <id>`: the only label present is
+  # `com.docker/engine.bundle.path`. Docker keeps its own naming/labels
+  # in dockerd's own metadata store and never pushes them down into
+  # containerd. That's what the docker-label-exporter service below is
+  # for — it reads the SAME information from the Docker Engine API
+  # (which has always had it correctly, independent of the storage
+  # backend) and Grafana joins the two by container ID
+  # (nexus-infrastructure.json).
+  cadvisor:
+    profiles: ["observability"]
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    privileged: true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+      # Mounted at a path OUTSIDE /var/run (not /run/containerd/...): the
+      # /var/run:/var/run:ro mount above makes /run read-only inside the
+      # container, so bind-mounting a specific file under it fails
+      # ("read-only file system" creating the mountpoint) — confirmed.
+      - /run/containerd/containerd.sock:/containerd.sock:ro
+    command:
+      - "-containerd=/containerd.sock"
+      - "-containerd-namespace=moby"
+    ports:
+      # Host port 8083: 8080/8081/8090 are already taken (this project's own
+      # nexusd, an unrelated project's own Open WebUI and cAdvisor,
+      # OpenSandbox — confirmed on the machine this was built on). The
+      # container's own port stays 8080 (cAdvisor's own default).
+      - "8083:8080"
+
+  # Maps a container's full ID to its real Docker name and compose labels
+  # (task 17.15) — the piece cadvisor's own containerd factory above
+  # cannot supply (see that service's own comment for why). A tiny,
+  # dependency-free Go program (deploy/observability/docker-label-exporter)
+  # reading the Docker Engine API directly, the same "hand-rolled, not
+  # worth a dependency" call cmd/nexusd/main.go's own handleMetrics
+  # already makes for its own /metrics text formatting. Scoped server-side
+  # by the Docker daemon itself (a `label` filter on the API call, task
+  # 17.15's own doc comment), not client-side — so, unlike cadvisor's raw
+  # per-container series, this exporter never even SEES another project's
+  # containers, let alone reports them.
+  docker-label-exporter:
+    profiles: ["observability"]
+    build:
+      context: ./observability/docker-label-exporter
+    volumes:
+      # Root:root, mode 660 on a standard install (confirmed) — this
+      # process needs to dial it, hence the image is NOT distroless
+      # nonroot, unlike nexusd/signerd (that Dockerfile's own comment).
+      # Read-only: this exporter only ever calls GET /containers/json.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - "9101:9101"
+
+  # Log aggregation, single-binary mode (Loki's own supported all-in-one
+  # topology for a stack this size — the multi-target microservices mode
+  # Langfuse-scale deployments need is out of scope for a demo, same
+  # "smallest topology that is still the real thing" call docker-compose.yml
+  # itself makes for pgbouncer over a full connection-pool mesh).
+  loki:
+    profiles: ["observability"]
+    image: grafana/loki:3.5.7
+    volumes:
+      - ./observability/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki-data:/loki
+    ports:
+      # Host port 3101, not Loki's own default 3100: same confirmed-
+      # collision reasoning as prometheus's own port comment above. The
+      # container's own port stays 3100 (promtail-config.yml's `clients`
+      # URL reaches it by service name, never through this host mapping).
+      - "3101:3100"
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3100/ready || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  # Ships logs two ways (promtail-config.yml has both jobs): tails
+  # nexusd's/signerd's JSON logs off the HOST filesystem (../.dev, matching
+  # where internal/obs.InitLogger writes when NEXUS_LOG_FILE is set — the
+  # `make run` path), and Docker service discovery for anything running as
+  # a container (the `make docker-up` path task 17.13 adds, needed for
+  # cAdvisor's own resource metrics above to mean anything for nexusd/
+  # signerd specifically). The .dev mount is read-only and never touches
+  # the KEK/signing-key files that also live there — log files only, by
+  # promtail-config.yml's own glob (*.log). The Docker socket mount is a
+  # real permission grant (docker.sock is close to root-equivalent on the
+  # host) — named here, not hidden; see docs/observability.md's Caveats.
+  promtail:
+    profiles: ["observability"]
+    image: grafana/promtail:3.5.7
+    volumes:
+      - ./observability/promtail-config.yml:/etc/promtail/config.yml:ro
+      - ../.dev:/var/log/nexus:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command: ["-config.file=/etc/promtail/config.yml"]
+    depends_on:
+      loki:
+        condition: service_healthy
+
+  grafana:
+    profiles: ["observability"]
+    image: grafana/grafana:11.4.0
+    ports:
+      # Host port 3310, not Grafana's own default 3000 (already taken by
+      # docker-compose.local-llm.yml's langfuse-web on 3001, and by an
+      # unrelated project's own Grafana on 3300, confirmed colliding on
+      # this very machine) — same collision-avoidance reasoning as
+      # prometheus/loki's own port comments above.
+      - "3310:3000"
+    environment:
+      # Fixed, low-entropy dev-only credentials — the same spirit as this
+      # repo's other compose files' own `postgres://nexus:nexus@...` and
+      # Langfuse's `nexus-dev-password`. CHANGEME outside a local demo.
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: nexus-dev-password
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      # Both dashboards below (grafana/dashboards/*.json) are provisioned
+      # read-only from disk — GF_AUTH lets Grafana boot with zero manual
+      # datasource/dashboard clicking, the same headless-bootstrap ethos
+      # docker-compose.local-llm.yml's LANGFUSE_INIT_* env vars already use.
+      GF_PATHS_PROVISIONING: /etc/grafana/provisioning
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_started
+      loki:
+        condition: service_healthy
+      alertmanager:
+        condition: service_started
+
+volumes:
+  prometheus-data:
+  alertmanager-data:
+  loki-data:
+  grafana-data:

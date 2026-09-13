@@ -1,0 +1,66 @@
+# Scrape config for docker-compose.observability.yml's prometheus service
+# (docs/observability.md). The nexusd job reaches /metrics (README task
+# 13.12, cmd/nexusd/main.go's handleMetrics) — the golden-signal gauges
+# internal/obs.ComputeGoldenSignals computes per tenant, in Prometheus text
+# exposition format — at host.docker.internal:8080 regardless of whether
+# nexusd is a plain host process (`make run`) or a container
+# (`make docker-up`, docker-compose.yml's --profile app, the recommended
+# path for THIS stack — see the cadvisor job below): the app profile
+# publishes 8080 to the host either way, so this one target line never
+# needs to change between the two.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# task 17.11: alert on the golden-signal gauges below, routed to the
+# alertmanager service docker-compose.observability.yml also brings up.
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  - job_name: nexusd
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["host.docker.internal:8080"]
+        labels:
+          service: nexusd
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # task 17.12: per-container CPU/memory/network/disk IO, read from
+  # containerd directly (docker-compose.observability.yml's own cadvisor
+  # service comment has the full story on why — Docker's newer
+  # containerd-snapshotter storage backend breaks cAdvisor's legacy Docker
+  # handler). cAdvisor itself still sees every container on the host (it
+  # has to, to collect anything at all); metric_relabel_configs here just
+  # drops the synthetic aggregate cgroups (root "/", "/docker",
+  # "/kubepods", systemd slices — anything cAdvisor never attached a real
+  # `image` to) to cut noise, not to scope by project. The actual
+  # per-project scoping happens at the JOIN, in Grafana
+  # (nexus-infrastructure.json), against the docker-label-exporter job
+  # below — that exporter is what's server-side filtered to this project,
+  # via a label filter on the Docker Engine API call itself (task 17.15's
+  # own doc comment), which is why the join naturally excludes every
+  # container this exporter was never told about.
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]
+    metric_relabel_configs:
+      - source_labels: [image]
+        regex: ""
+        action: drop
+
+  # task 17.15: id -> real Docker name / compose labels, straight from the
+  # Docker Engine API — the join key nexus-infrastructure.json uses to
+  # turn cadvisor's id-keyed series back into something readable, scoped
+  # to this project.
+  - job_name: docker-label-exporter
+    static_configs:
+      - targets: ["docker-label-exporter:9101"]

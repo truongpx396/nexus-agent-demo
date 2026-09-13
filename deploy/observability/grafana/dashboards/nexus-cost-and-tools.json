@@ -1,0 +1,107 @@
+{
+  "uid": "nexus-cost-and-tools",
+  "title": "Nexus / Cost and Tools",
+  "description": "Per-tool call volume and per-model token spend (docs/build-phases.md Phase 17, task 17.9) — the breakdown the Golden Signals board's own tenant-wide aggregates (cache-read rate, cost-ceiling breach rate) don't show. Tool counts come from events.tool_id (structural, never the encrypted payload); model spend comes from cost_records, the same reconciled truth internal/cost.Reconcile writes (README pattern #37).",
+  "tags": ["nexus", "cost", "tools"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "30s",
+  "time": { "from": "now-24h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "tenant_id",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(nexus_tool_call_count, tenant_id)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Tool usage",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "id": 2,
+      "type": "barchart",
+      "title": "Tool call volume by tool",
+      "description": "tool_use events per tool_id (events.tool_id) — a snapshot of everything recorded so far, not a rate; watch for one tool dominating a run's tool budget or a tool that never gets called at all.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "orientation": "horizontal", "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "nexus_tool_call_count{tenant_id=~\"$tenant_id\"}",
+          "legendFormat": "{{tenant_id}} / {{tool_id}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "row",
+      "title": "Model spend",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 10 }
+    },
+    {
+      "id": 4,
+      "type": "barchart",
+      "title": "Input tokens per model, by cache class",
+      "description": "internal/cost.Reconcile's own per-class split (uncached / cache_read / cache_write) — the same three classes the Golden Signals board's cache-read-rate panel sums tenant-wide, broken out per routed model instead.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 11 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "orientation": "horizontal", "stacking": "normal", "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "nexus_model_input_tokens{tenant_id=~\"$tenant_id\"}",
+          "legendFormat": "{{model_id}} / {{class}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "barchart",
+      "title": "Output tokens per model",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 11 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "orientation": "horizontal", "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "nexus_model_output_tokens{tenant_id=~\"$tenant_id\"}",
+          "legendFormat": "{{model_id}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "barchart",
+      "title": "Reconciled cost per model",
+      "description": "cost_records.minor_units, converted to major currency units at this one exposition boundary (cmd/nexusd/main.go's handleMetrics) — internal/cost itself never computes with float64 (task 4.1's package-wide ban). See the currency label; this demo seeds every tenant with the same USD price book (task 4.3).",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 20 },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" }, "overrides": [] },
+      "options": { "orientation": "horizontal", "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "nexus_model_cost{tenant_id=~\"$tenant_id\"}",
+          "legendFormat": "{{tenant_id}} / {{model_id}} ({{currency}})",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}
