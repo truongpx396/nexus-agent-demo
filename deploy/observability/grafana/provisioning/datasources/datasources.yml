@@ -1,9 +1,14 @@
 # Headless datasource bootstrap (docs/observability.md) — the same
 # zero-click-setup ethos docker-compose.local-llm.yml's LANGFUSE_INIT_* env
 # vars already give Langfuse, applied to Grafana's own provisioning API.
-# Both datasources are reached by compose service name (Grafana runs inside
-# the same compose network as prometheus/loki — unlike nexusd, which this
-# stack reaches over a published host port, these two never need to be).
+# Every datasource here is reached by compose service name (Grafana runs
+# inside the same compose network as prometheus/loki/tempo — unlike
+# nexusd, which this stack reaches over a published host port, these never
+# need to be). Tempo is in a SEPARATE opt-in profile ("tracing",
+# docker-compose.observability.yml) from the rest — provisioning it here
+# unconditionally is harmless: Grafana just shows a connection error on
+# this one entry until `make tempo-up` is also run, same as any other
+# datasource pointed at something not currently up.
 apiVersion: 1
 
 datasources:
@@ -26,4 +31,10 @@ datasources:
     url: http://alertmanager:9093
     jsonData:
       implementation: prometheus
+    editable: false
+
+  - name: Tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
     editable: false

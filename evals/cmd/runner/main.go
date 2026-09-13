@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 
 	"github.com/truongpx396/nexus-agent-demo/evals"
+	"github.com/truongpx396/nexus-agent-demo/internal/dotenv"
 )
 
 // capabilityKTrials is how many times a capability-class case runs before
@@ -85,6 +86,12 @@ func buildInput() (evals.GateInput, error) {
 }
 
 func main() {
+	// See cmd/nexusd/main.go's identical call — a missing .env (every CI
+	// run) is a no-op; NEXUS_REGION/NEXUS_LIVEEVAL_MODEL below only benefit
+	// from one locally.
+	if err := dotenv.Load(); err != nil {
+		fmt.Fprintf(os.Stderr, "eval runner: %v\n", err)
+	}
 	updateBaseline := flag.Bool("update-baseline", false, "write the current run's stats as the new committed baseline instead of checking against it")
 	baselinePath := flag.String("baseline", defaultBaselinePath(), "path to the committed baseline JSON file")
 	flag.Parse()

@@ -27,6 +27,33 @@ needs the host GPU, which a container doesn't get on Docker Desktop for
 Mac. LiteLLM and Langfuse are both containerized, reaching Ollama over
 `host.docker.internal:11434`.
 
+**Langfuse isn't the only place `NEXUS_OTLP_ENDPOINT` can point.** Since
+`obs.OTLPExporter` speaks plain OTLP, it works against any OTLP/HTTP
+collector — `docs/observability.md`'s own opt-in Grafana Tempo profile
+(`make tempo-up`) is a second, lighter option, correlated in the same
+Grafana the metrics/logs stack already runs, with no Langfuse-specific
+headers or URL path to set. Reach for Langfuse when you want the
+per-generation/per-tool LLM view (cost, token usage, prompt/completion);
+reach for Tempo when you just want "is a trace showing up at all" or want
+it next to the golden-signal dashboards. See that doc for setup.
+
+**`NEXUS_OTLP_ENDPOINT` and `NEXUS_LANGFUSE_HOST` can both be set at
+once** — `newSpanExporter` (`cmd/nexusd/main.go`) fans out through
+`obs.NewMultiExporter` (`internal/obs/multi.go`) rather than requiring a
+pick, so e.g. Tempo AND `langfuse-lite` can receive the exact same run's
+spans simultaneously, each correctly nested in its own id space (verified:
+one run, both backends, matching `session.id` on each). This is genuinely
+more than a bare fan-out: `OTLPExporter` and `LangfuseExporter` both
+propagate parent/child linkage through the same
+`go.opentelemetry.io/otel/trace.SpanContext` mechanism, so `MultiExporter`
+gives each of them its own private ctx thread — otherwise whichever ran
+second would silently overwrite the other's notion of "current span,"
+corrupting nesting specifically for delegated subagent runs. That's also
+why `internal/delegate/spawn.go`'s cross-goroutine propagation now goes
+through the generic `obs.Tracer.Detach`/`.Attach` seam instead of calling
+`go.opentelemetry.io/otel/trace` directly — it has to work no matter which
+Tracer (or combination) is actually wired in.
+
 ## What you'll see in Langfuse, and why
 
 Every run through the kernel loop produces one Langfuse trace: a root
@@ -69,11 +96,19 @@ brew install ollama        # or download from ollama.com
 ollama serve &              # or just use the menubar app
 make ollama-pull             # pulls qwen2.5:3b (~2GB)
 
-# 2. Langfuse (optional, but you'll be tracing nothing without it)
+# 2. Langfuse (optional, but you'll be tracing nothing without it) --
+#    pick ONE of these two, not both (same host port 3001):
+
+# 2a. Full stack (OTLP, real per-run call tree, heavier: 6 containers)
 make langfuse-up
 # first boot takes ~30-60s (clickhouse + minio + migrations) — watch:
 #   docker compose -f deploy/docker-compose.local-llm.yml --profile langfuse logs -f langfuse-web
-# then open http://localhost:3001 — dev@nexus.local / nexus-dev-password
+
+# 2b. OR: lightweight stack (native ingestion, 2 containers: web + postgres)
+make langfuse-lite-up
+# boots in a few seconds — no clickhouse/minio/worker to wait on
+
+# either way: open http://localhost:3001 — dev@nexus.local / nexus-dev-password
 # (pre-seeded headlessly via LANGFUSE_INIT_* env vars, no signup needed)
 
 # 3. LiteLLM (the gateway nexusd's litellm provider actually talks to)
@@ -82,11 +117,20 @@ curl http://localhost:4100/v1/chat/completions \
   -H 'content-type: application/json' \
   -d '{"model":"qwen2.5-local","messages":[{"role":"user","content":"hi"}]}'
 
-# 4. nexusd, pointed at both
+# 4. nexusd, pointed at LiteLLM plus WHICHEVER Langfuse profile you chose:
+
+# 4a. against the full stack (2a) — OTLP
 NEXUS_PROVIDER=litellm \
 NEXUS_OTLP_ENDPOINT=localhost:3001 \
 NEXUS_OTLP_URL_PATH=/api/public/otel/v1/traces \
 NEXUS_OTLP_HEADERS='Authorization=Basic cGstbGYtYzBiNWVhMmY2ZmI4OTkwZDFmNTkyMTVlNWY3OWMxNjM6c2stbGYtMWNlMTc2Mjk2Nzk5MGFhY2JmZjU3Yzg5NGNlYTZlMzk=' \
+make run
+
+# 4b. OR: against the lightweight stack (2b) — native ingestion, no OTLP
+NEXUS_PROVIDER=litellm \
+NEXUS_LANGFUSE_HOST=http://localhost:3001 \
+NEXUS_LANGFUSE_PUBLIC_KEY=pk-lf-c0b5ea2f6fb8990d1f59215e5f79c163 \
+NEXUS_LANGFUSE_SECRET_KEY=sk-lf-1ce1762967990aacbff57c894cea6e39 \
 make run
 ```
 
@@ -100,7 +144,10 @@ The `Authorization` header above is the fixed dev keypair
 `deploy/docker-compose.local-llm.yml`'s `langfuse-worker`/`langfuse-web` services,
 base64-encoded (`echo -n 'pk-lf-...:sk-lf-...' | base64`). If you change
 those keys, regenerate the header the same way — Langfuse's own OTLP docs
-confirm this is Basic Auth over `publicKey:secretKey`.
+confirm this is Basic Auth over `publicKey:secretKey`. The lightweight
+path's `NEXUS_LANGFUSE_PUBLIC_KEY`/`_SECRET_KEY` are the same two values,
+unencoded — `internal/obs.LangfuseExporter` sends Basic auth itself, no
+header to build by hand.
 
 ## Environment variables
 
@@ -110,11 +157,13 @@ confirm this is Basic Auth over `publicKey:secretKey`.
 | `NEXUS_LITELLM_BASE_URL` | `http://localhost:4100` | LiteLLM proxy address (host port 4100, not LiteLLM's own default 4000 — see Caveats) |
 | `NEXUS_LITELLM_MODEL` | `qwen2.5-local` | Must match `deploy/litellm/config.yaml`'s `model_name` |
 | `NEXUS_LITELLM_API_KEY` | unset | Optional; a local unauthenticated proxy needs none |
-| `NEXUS_OTLP_ENDPOINT` | unset (stdout spans) | `host:port` of any OTLP/HTTP collector — Langfuse's self-hosted `langfuse-web`, or any other |
+| `NEXUS_OTLP_ENDPOINT` | unset (stdout spans) | `host:port` of any OTLP/HTTP collector — Langfuse's self-hosted `langfuse-web` (full profile), or any other. Mutually exclusive with `NEXUS_LANGFUSE_HOST` below — set only one |
 | `NEXUS_OTLP_URL_PATH` | OTel default (`/v1/traces`) | Langfuse's OTLP ingestion path is `/api/public/otel/v1/traces`, not the default |
 | `NEXUS_OTLP_HEADERS` | unset | `Key1=Val1,Key2=Val2` — Langfuse needs `Authorization=Basic <base64(publicKey:secretKey)>` |
 | `NEXUS_OTLP_INSECURE` | `true` | Disables TLS to the collector — fine over a private/local network |
-| `NEXUS_TRACE_CONTENT` | `false` | Opt-in: attach actual prompt/completion/tool input-output to spans (see above) |
+| `NEXUS_LANGFUSE_HOST` | unset | `http://host:port` of a self-hosted Langfuse — routes through `internal/obs.LangfuseExporter`'s native Ingestion API instead of OTLP, the only path a lightweight Langfuse v2 (`langfuse-lite` profile) understands. Mutually exclusive with `NEXUS_OTLP_ENDPOINT` — both set is a startup error |
+| `NEXUS_LANGFUSE_PUBLIC_KEY` / `NEXUS_LANGFUSE_SECRET_KEY` | unset | Basic-auth credentials for `NEXUS_LANGFUSE_HOST`, sent as-is (no manual base64/header) — required together with it |
+| `NEXUS_TRACE_CONTENT` | `false` | Opt-in: attach actual prompt/completion/tool input-output to spans (see above) — honored by both the OTLP and native-ingestion exporters identically |
 
 ## Caveats
 
@@ -144,3 +193,56 @@ confirm this is Basic Auth over `publicKey:secretKey`.
   value**, the same spirit as this file's existing `postgres://nexus:nexus@...`
   — CHANGEME outside a local demo, and think twice before turning
   `NEXUS_TRACE_CONTENT` on anywhere real content would flow.
+- **The `langfuse-lite` profile + `NEXUS_LANGFUSE_HOST` speak a protocol
+  Langfuse itself has deprecated**: Langfuse's native Ingestion API predates
+  OTLP and its own docs mark it deprecated in favor of OTLP (Cloud sunset
+  2026-11-16). That date is Langfuse Cloud's own sunset, not a deadline for
+  a self-hosted, version-pinned `langfuse/langfuse:2` image — nothing forces
+  an upgrade, so it keeps working — but this is new code written against a
+  protocol its own vendor is retiring, accepted specifically to keep the
+  local trace stack at 2 containers instead of 6. If Langfuse ever pulls the
+  `:2` tag or the endpoint stops responding entirely, the fix is `make
+  langfuse-up` (the OTLP-compatible full stack), not a patch to this path.
+- **The lightweight path has no "agent" observation kind** — Langfuse's
+  legacy Ingestion API only has SPAN/GENERATION/EVENT, unlike the OTLP
+  path's `langfuse.observation.type=agent` attribute (otlp.go). A run's root
+  span and its tool calls both send as plain SPAN observations. This is a
+  narrower cosmetic gap than it might sound: the UI still tells them apart
+  fine by name + tree position (`kernel.run` vs `tool.call`, nested exactly
+  where they happened) — the same way a LangGraph app's Langfuse v2 trace
+  reads tool calls and subagents apart, since that integration doesn't rely
+  on a dedicated "agent" observation type either. What's actually missing is
+  only Langfuse's specific agent-graph *visualization mode*, an OTLP+v3/v4
+  feature — the OTLP path (`make langfuse-up`) is the one to reach for if
+  that particular view matters more than container count.
+- **Delegated subagent runs (`internal/delegate`) DO correctly nest as one
+  trace, not a separate one per subagent** — worth calling out explicitly
+  because it's easy to get wrong: `internal/delegate/spawn.go` carries a
+  delegated child's parent span across its own goroutine boundary via
+  `go.opentelemetry.io/otel/trace`'s vendor-neutral `SpanContext`
+  propagation (`trace.ContextWithRemoteSpanContext`) — the same mechanism
+  real OTel spans use, kept independent of any particular exporter on
+  purpose. `LangfuseExporter.StartSpan` participates in that same
+  propagation (reads/writes a real `trace.SpanContext`, using its
+  TraceID/SpanID as the Langfuse ids it sends) specifically so this works
+  without spawn.go needing to know which exporter is active. An earlier
+  version of this exporter used a private ctx key instead and silently
+  failed this — every delegated subagent opened as a second, disconnected
+  trace, correlated only by `session.id` metadata, not by nesting.
+  `TestLangfuseExporter_NestsAcrossGoroutineBoundaryLikeDelegateSpawn`
+  (`internal/obs/langfuse_test.go`) copies spawn.go's exact propagation
+  pattern to guard against that regression.
+- **`langfuse-up` and `langfuse-lite-up` are alternatives, never both at
+  once** — same host port 3001, and nexusd's two exporter configs
+  (`NEXUS_OTLP_*` vs. `NEXUS_LANGFUSE_*`) are mutually exclusive by design
+  (`newSpanExporter` errors out at startup if both are set).
+- **Confirmed against a real `langfuse-lite` instance** (a `litellm`-backed
+  run, `NEXUS_TRACE_CONTENT` tried both on and off): the legacy `usage`
+  field on a generation event IS recognized by the v2 server — it correctly
+  populates Langfuse's own `promptTokens`/`completionTokens`/`totalTokens`
+  and cost UI, so there was no need to also send the newer `usageDetails`.
+  And `Emit`'s traceId-less `event-create` (the REST surface's one-off
+  point events, e.g. a run's terminal event) is NOT dropped — Langfuse
+  auto-creates an implicit single-observation trace for it (its `id` equals
+  the trace's own `id`). Both were open questions at implementation time;
+  both now confirmed rather than assumed.

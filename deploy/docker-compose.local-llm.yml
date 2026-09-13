@@ -186,9 +186,67 @@ services:
       NEXTAUTH_URL: http://localhost:3001
       NEXTAUTH_SECRET: 22ebd729610f4ffae410d793f7f2b0f43d60cdb6ecf44c09d7b67fdf3bf5ae49 # CHANGEME outside local dev
 
+  # `docker compose --profile langfuse-lite up` (make langfuse-lite-up): the
+  # pre-ClickHouse Langfuse v2 topology — one web container plus its own
+  # Postgres, no worker/ClickHouse/MinIO/Redis. Only usable now that nexusd
+  # has a native-ingestion exporter (internal/obs/langfuse.go,
+  # NEXUS_LANGFUSE_HOST) — v2 predates OTLP ingestion entirely, so the
+  # "langfuse" profile's own OTLP wiring (NEXUS_OTLP_*) does not work here.
+  # Same LANGFUSE_INIT_* public/secret keypair as the full "langfuse"
+  # profile above, so nexusd's NEXUS_LANGFUSE_PUBLIC_KEY/SECRET_KEY don't
+  # change depending on which one is up — only bring up one at a time, both
+  # publish host port 3001. Confirmed headless LANGFUSE_INIT_* bootstrap
+  # also works against v2, not just v4. Trade-off: v2 is end-of-life
+  # upstream (the native Ingestion API it speaks is deprecated in favor of
+  # OTLP, Langfuse Cloud sunsets it 2026-11-16 — a pinned self-hosted image
+  # keeps working regardless) and, since it writes trace data straight to
+  # Postgres instead of ClickHouse, won't hold up under real trace volume —
+  # fine for exercising the native ingestion wiring and looking at a
+  # handful of local runs, not a stand-in for the full profile's ingestion
+  # path.
+  langfuse-lite-postgres:
+    profiles: ["langfuse-lite"]
+    image: postgres:17
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse # CHANGEME outside local dev
+      POSTGRES_DB: langfuse
+    volumes:
+      - langfuse-lite-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  langfuse-web-lite:
+    profiles: ["langfuse-lite"]
+    image: langfuse/langfuse:2
+    depends_on:
+      langfuse-lite-postgres:
+        condition: service_healthy
+    ports:
+      - "3001:3000"
+    environment:
+      DATABASE_URL: postgresql://langfuse:langfuse@langfuse-lite-postgres:5432/langfuse
+      NEXTAUTH_URL: http://localhost:3001
+      NEXTAUTH_SECRET: 22ebd729610f4ffae410d793f7f2b0f43d60cdb6ecf44c09d7b67fdf3bf5ae49 # CHANGEME outside local dev
+      SALT: nexus-dev-salt-changeme # CHANGEME outside local dev
+      TELEMETRY_ENABLED: "false"
+      LANGFUSE_INIT_ORG_ID: dev-org
+      LANGFUSE_INIT_ORG_NAME: "Nexus Dev"
+      LANGFUSE_INIT_PROJECT_ID: nexus-demo
+      LANGFUSE_INIT_PROJECT_NAME: nexus-agent-demo
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: pk-lf-c0b5ea2f6fb8990d1f59215e5f79c163
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: sk-lf-1ce1762967990aacbff57c894cea6e39
+      LANGFUSE_INIT_USER_EMAIL: dev@nexus.local
+      LANGFUSE_INIT_USER_NAME: "Nexus Dev"
+      LANGFUSE_INIT_USER_PASSWORD: nexus-dev-password # CHANGEME outside local dev
+
 volumes:
   langfuse-postgres-data:
   langfuse-clickhouse-data:
   langfuse-clickhouse-logs:
   langfuse-minio-data:
   langfuse-redis-data:
+  langfuse-lite-postgres-data:

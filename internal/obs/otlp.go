@@ -102,6 +102,27 @@ func (e *OTLPExporter) StartSpan(ctx context.Context, name string, kind Observat
 	return spanCtx, &otlpSpan{span: span, kind: kind, drops: e.Drops}
 }
 
+// Detach/Attach carry this exporter's real OTel SpanContext across a
+// goroutine boundary (internal/delegate/spawn.go's own doc comment) —
+// exactly the two calls that lived in spawn.go directly before Tracer
+// grew this seam; unchanged behavior, just relocated so a caller no
+// longer needs to know it's specifically OTel underneath.
+func (e *OTLPExporter) Detach(ctx context.Context) SpanLink {
+	sc := trace.SpanContextFromContext(ctx)
+	if !sc.IsValid() {
+		return nil
+	}
+	return sc
+}
+
+func (e *OTLPExporter) Attach(ctx context.Context, link SpanLink) context.Context {
+	sc, ok := link.(trace.SpanContext)
+	if !ok {
+		return ctx
+	}
+	return trace.ContextWithRemoteSpanContext(ctx, sc)
+}
+
 type otlpSpan struct {
 	span  trace.Span
 	kind  ObservationType

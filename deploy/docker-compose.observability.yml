@@ -12,9 +12,16 @@
 # (docs/local-llm.md's own "Ollama runs natively" reasoning), not compose
 # services, by default.
 #
-# This is metrics + logs + container resource usage + alerts, not traces:
-# per-run tracing already has a home (Langfuse, docs/local-llm.md,
-# internal/obs.Tracer) and is deliberately not duplicated here. Prometheus
+# This is metrics + logs + container resource usage + alerts by default
+# (the "observability" profile) — per-run LLM tracing already has a home
+# (Langfuse, docs/local-llm.md, internal/obs.Tracer) and isn't duplicated
+# here. A SEPARATE, independently opt-in "tracing" profile below adds
+# Grafana Tempo — generic distributed tracing that speaks the same OTLP
+# obs.OTLPExporter already exports (NEXUS_OTLP_ENDPOINT, no Langfuse-
+# specific headers/URL path needed), correlated in the SAME Grafana this
+# file already runs rather than a second one. `make observability-up`'s
+# own footprint/behavior is unchanged by Tempo's presence — it stays a
+# separate `make tempo-up`. Prometheus
 # scrapes the golden-signal gauges nexusd's own `/metrics` endpoint has
 # exposed since README task 13.12 (cmd/nexusd/main.go's handleMetrics) —
 # this stack is the scrape target + dashboard that endpoint's own doc
@@ -148,11 +155,11 @@ services:
       - "-containerd=/containerd.sock"
       - "-containerd-namespace=moby"
     ports:
-      # Host port 8083: 8080/8081/8090 are already taken (this project's own
+      # Host port 8095: 8080/8081/8090 are already taken (this project's own
       # nexusd, an unrelated project's own Open WebUI and cAdvisor,
       # OpenSandbox — confirmed on the machine this was built on). The
       # container's own port stays 8080 (cAdvisor's own default).
-      - "8083:8080"
+      - "8095:8080"
 
   # Maps a container's full ID to its real Docker name and compose labels
   # (task 17.15) — the piece cadvisor's own containerd factory above
@@ -260,8 +267,43 @@ services:
       alertmanager:
         condition: service_started
 
+  # `docker compose --profile tracing up` (make tempo-up): generic OTLP
+  # distributed tracing — a single-binary Tempo, local-disk storage, no
+  # Kafka/object-store, the same "smallest topology that is still the real
+  # thing" call this file's own loki/pgbouncer precedents already make.
+  # Config is grafana/tempo's own current minimal example, trimmed of the
+  # metrics_generator/service-graph blocks (observability/tempo.yaml's own
+  # header comment explains why). Deliberately a SEPARATE profile from
+  # "observability" above, not folded into it — bringing up the base
+  # metrics/logs/alerts stack never pulls this in, and vice versa; only the
+  # Grafana datasource entry (grafana/provisioning/datasources/datasources.yml)
+  # references it, and Grafana tolerates an unreachable datasource fine (a
+  # red badge in its UI, nothing more) if you bring up "observability"
+  # without "tracing".
+  tempo:
+    profiles: ["tracing"]
+    image: grafana/tempo:3.0.3
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./observability/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    ports:
+      # Host ports shifted off Tempo's own OTLP defaults (4317/4318):
+      # confirmed colliding with an unrelated project's own otel-collector
+      # container on this machine, same shift-on-confirmed-collision
+      # reasoning as every other port comment in this file. The container's
+      # own ports stay 4317/4318 (tempo.yaml's receivers bind those, and
+      # that's also what NEXUS_OTLP_ENDPOINT below points at via this host
+      # mapping). 3200 (Tempo's own query API, what Grafana's datasource
+      # reaches by service name over the compose network) had no collision
+      # found, so it's unchanged.
+      - "4417:4317"
+      - "4418:4318"
+      - "3200:3200"
+
 volumes:
   prometheus-data:
   alertmanager-data:
   loki-data:
   grafana-data:
+  tempo-data:

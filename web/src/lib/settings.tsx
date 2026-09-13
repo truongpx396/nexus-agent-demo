@@ -4,7 +4,7 @@ import type { Settings } from "./types";
 const STORAGE_KEY = "nexus-web-settings";
 
 const DEFAULT_SETTINGS: Settings = {
-  baseUrl: "http://localhost:8080",
+  baseUrl: "http://localhost:8055",
   token: "",
 };
 

@@ -41,6 +41,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/delegate"
+	"github.com/truongpx396/nexus-agent-demo/internal/dotenv"
 	"github.com/truongpx396/nexus-agent-demo/internal/hooks"
 	"github.com/truongpx396/nexus-agent-demo/internal/ingest"
 	"github.com/truongpx396/nexus-agent-demo/internal/memory"
@@ -121,6 +122,13 @@ const (
 var devMode bool
 
 func main() {
+	// Before InitLogger, before every other envOr/os.Getenv call this file
+	// and the packages it wires up make: .env.example (repo root) documents
+	// what dotenv.Load fills in here, and only when the real environment
+	// doesn't already have it — a plain `FOO=bar make run` still wins.
+	if err := dotenv.Load(); err != nil {
+		fmt.Fprintf(os.Stderr, "nexusd: %v\n", err)
+	}
 	obs.InitLogger("nexusd")
 
 	ctx := context.Background()
@@ -1257,39 +1265,87 @@ type spanExporter interface {
 	obs.Tracer
 }
 
-// newSpanExporter builds whichever obs Exporter this process emits spans
-// through (README task 13.12, closing production-readiness finding F13):
-// NEXUS_OTLP_ENDPOINT set means a real collector (obs.OTLPExporter, over
-// OTLP/HTTP — e.g. Langfuse's own OTLP endpoint, docs/local-llm.md); unset
-// falls back to the stdout obs.Exporter every earlier phase already had —
-// the filtering guarantee (internal/obs's allowlist) is identical either
-// way, only the sink changes. The returned shutdown func flushes an OTLP
-// exporter's buffered spans; it's a no-op for the stdout one, which has
-// nothing to flush.
+// newSpanExporter builds whichever obs Exporter(s) this process emits
+// spans through (README task 13.12, closing production-readiness finding
+// F13): NEXUS_LANGFUSE_HOST set means the native-ingestion exporter
+// (obs.LangfuseExporter, docs/local-llm.md's lightweight self-hosted
+// Langfuse v2 path — no OTLP collector needed); NEXUS_OTLP_ENDPOINT set
+// means a real OTLP collector (obs.OTLPExporter — Grafana Tempo,
+// docs/observability.md, or Langfuse's own OTLP endpoint, the heavier
+// v3+/v4 self-hosted path). Unlike earlier, these are NOT mutually
+// exclusive — both set means both run, fanned out through
+// obs.NewMultiExporter (docs/local-llm.md's own "simultaneous tracing"
+// section) so the same run's spans reach both destinations at once, each
+// correctly nested in its OWN id space. Neither set falls back to the
+// stdout obs.Exporter every earlier phase already had. The filtering
+// guarantee (internal/obs's allowlist) is identical across every
+// combination, only the sink(s) change. The returned shutdown func flushes
+// every exporter actually built; it's a no-op for the stdout one, which
+// has nothing to flush.
 //
 // NEXUS_OTLP_URL_PATH and NEXUS_OTLP_HEADERS exist specifically to reach a
 // collector that isn't a bare local OTel collector — Langfuse's OTLP
 // ingestion lives at a non-default path and needs a Basic-auth header
 // (docs/local-llm.md spells out the exact values for its self-hosted dev
-// stack). Both are optional; a plain local collector needs neither.
+// stack). Both are optional; a plain local collector (Tempo included)
+// needs neither.
 func newSpanExporter(ctx context.Context) (spanExporter, func(), error) {
-	endpoint := envOr("NEXUS_OTLP_ENDPOINT", "")
-	if endpoint == "" {
-		return obs.NewExporter(os.Stdout), func() {}, nil
-	}
-	headers := parseHeaderList(envOr("NEXUS_OTLP_HEADERS", ""))
-	urlPath := envOr("NEXUS_OTLP_URL_PATH", "")
-	exp, err := obs.NewOTLPExporter(ctx, endpoint, envOr("NEXUS_OTLP_INSECURE", "true") == "true", headers, urlPath)
-	if err != nil {
-		return nil, nil, err
-	}
-	return exp, func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := exp.Shutdown(shutdownCtx); err != nil {
-			log.Error().Err(err).Msg("nexusd: shutdown OTLP span exporter")
+	var exporters []spanExporter
+	var shutdowns []func()
+
+	if langfuseHost := envOr("NEXUS_LANGFUSE_HOST", ""); langfuseHost != "" {
+		publicKey := envOr("NEXUS_LANGFUSE_PUBLIC_KEY", "")
+		secretKey := envOr("NEXUS_LANGFUSE_SECRET_KEY", "")
+		if publicKey == "" || secretKey == "" {
+			return nil, nil, fmt.Errorf("NEXUS_LANGFUSE_HOST set but NEXUS_LANGFUSE_PUBLIC_KEY/NEXUS_LANGFUSE_SECRET_KEY missing")
 		}
-	}, nil
+		exp := obs.NewLangfuseExporter(langfuseHost, publicKey, secretKey)
+		exporters = append(exporters, exp)
+		shutdowns = append(shutdowns, func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := exp.Shutdown(shutdownCtx); err != nil {
+				log.Error().Err(err).Msg("nexusd: shutdown Langfuse span exporter")
+			}
+		})
+	}
+
+	if endpoint := envOr("NEXUS_OTLP_ENDPOINT", ""); endpoint != "" {
+		headers := parseHeaderList(envOr("NEXUS_OTLP_HEADERS", ""))
+		urlPath := envOr("NEXUS_OTLP_URL_PATH", "")
+		exp, err := obs.NewOTLPExporter(ctx, endpoint, envOr("NEXUS_OTLP_INSECURE", "true") == "true", headers, urlPath)
+		if err != nil {
+			return nil, nil, err
+		}
+		exporters = append(exporters, exp)
+		shutdowns = append(shutdowns, func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := exp.Shutdown(shutdownCtx); err != nil {
+				log.Error().Err(err).Msg("nexusd: shutdown OTLP span exporter")
+			}
+		})
+	}
+
+	combinedShutdown := func() {
+		for _, s := range shutdowns {
+			s()
+		}
+	}
+	switch len(exporters) {
+	case 0:
+		return obs.NewExporter(os.Stdout), func() {}, nil
+	case 1:
+		return exporters[0], combinedShutdown, nil
+	default:
+		// Explicit indices, not exporters... : []spanExporter isn't
+		// assignable to obs's own unexported ...target variadic parameter
+		// (distinct named interface types, even though structurally
+		// identical) — Go's slice-spread assignability rule is stricter
+		// than a single value's implicit interface conversion. Only two
+		// candidates exist above, so this always covers exactly this case.
+		return obs.NewMultiExporter(exporters[0], exporters[1]), combinedShutdown, nil
+	}
 }
 
 // parseHeaderList parses "Key1=Val1,Key2=Val2" into a map — same shape as
