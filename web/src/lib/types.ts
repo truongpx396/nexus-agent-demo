@@ -19,6 +19,13 @@ export interface CreateRunRequest {
   difficulty?: string;
   autonomy?: Autonomy | "";
   budget_usd?: string;
+  // conversational opts the session into pause-not-terminate semantics
+  // (internal/surfaces/rest/run_create.go's own doc comment on
+  // createRunRequest.Conversational): a plain reply suspends the session
+  // awaiting the next message ("awaiting_input" status) instead of ending
+  // the run, and POST .../steer transparently resumes it in place. The web
+  // chat UI always sets this true.
+  conversational?: boolean;
 }
 
 export interface CreateRunResponse {

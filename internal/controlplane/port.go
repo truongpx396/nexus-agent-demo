@@ -84,6 +84,11 @@ type AdmitRunV1 struct {
 	Autonomy      string
 	BudgetUSD     string // empty = no session-scoped ceiling
 	HarnessDigest []byte
+	// Conversational is store.Session.Conversational's own value, set once
+	// at admission and never changed — kernel.RunConfig.Conversational's
+	// doc comment explains what it does. False for every caller except the
+	// web chat UI.
+	Conversational bool
 }
 
 // AdmitRunResultV1 reports whether the session was admitted — Admitted

@@ -35,6 +35,15 @@ type createRunRequest struct {
 	// DecisionSkip for this leg (a tenant-scoped ceiling, if configured
 	// out of band, still applies).
 	BudgetUSD string `json:"budget_usd,omitempty"`
+	// Conversational opts this session into pause-not-terminate semantics
+	// (RunRequest.Conversational's own doc comment, kernel.RunConfig.
+	// Conversational's underlying one) — a plain reply suspends the
+	// session awaiting the caller's next message instead of ending the
+	// run, and POST .../steer transparently resumes it in place rather
+	// than the caller needing to start a new session. Omitted/false
+	// reproduces today's one-task-per-session behavior exactly; the web
+	// chat UI is the first caller to set it true.
+	Conversational bool `json:"conversational,omitempty"`
 }
 
 type createRunResponse struct {
@@ -135,6 +144,7 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		TenantID: tenantID, UserID: userID, SessionID: sessionID, SurfaceID: "rest",
 		DataLabel: string(dataLabel), RouteModelID: route.ModelID, RouteReason: route.Reason,
 		Autonomy: autonomy, BudgetUSD: req.BudgetUSD, HarnessDigest: digest,
+		Conversational: req.Conversational,
 	})
 	if err != nil {
 		http.Error(w, "create run: "+err.Error(), http.StatusInternalServerError)
@@ -169,6 +179,7 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		AutonomyLevel:    autonomy,
 		ExtraCatalog:     mcpCatalog,
 		ExtraLoadedTools: mcpLoadedTools,
+		Conversational:   req.Conversational,
 	}
 	events, err := s.Starter.StartRun(context.Background(), req2) // a run outlives the HTTP request that started it
 	if err != nil {

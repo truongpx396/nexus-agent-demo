@@ -41,6 +41,14 @@ type RunRequest struct {
 	// Every pre-Phase-11 caller leaves both nil, which is a no-op append.
 	ExtraCatalog     []provider.ToolSchema
 	ExtraLoadedTools []string
+
+	// Conversational opts this run into pause-not-terminate semantics
+	// (kernel.RunConfig.Conversational's own doc comment) — a plain reply
+	// suspends the session awaiting the next message instead of ending the
+	// run. False for every pre-existing caller (the CreateRunRequest field
+	// it's threaded from defaults to false), reproducing today's
+	// one-task-per-session behavior exactly.
+	Conversational bool
 }
 
 // RunEvent is one item from the channel StartRun returns — store.Event

@@ -102,6 +102,54 @@ func sweepTeamBackstopAllTenants(ctx context.Context, teamsSvc *teams.Service) {
 	}
 }
 
+// startIdleConversationSweepLoop runs the idle-conversation backstop: every
+// idleConversationSweepInterval, sweep every tenant for a conversational
+// session sitting in store.SessionStatusAwaitingInput past
+// idleConversationWindow and end it via runctl.Control.EndIdleConversation
+// — the same list-every-tenant-then-loop shape startAnchorLoop/
+// startTeamBackstopLoop already use for a periodic cross-tenant pass.
+func startIdleConversationSweepLoop(ctx context.Context, ctl *runctl.Control) (stop func()) {
+	ticker := time.NewTicker(idleConversationSweepInterval)
+	done := make(chan struct{})
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				sweepIdleConversationsAllTenants(ctx, ctl)
+			}
+		}
+	}()
+	return func() { close(done) }
+}
+
+func sweepIdleConversationsAllTenants(ctx context.Context, ctl *runctl.Control) {
+	tenantIDs, err := listTenantIDs(ctx)
+	if err != nil {
+		log.Error().Err(err).Msg("nexusd: list tenants for idle-conversation sweep")
+		return
+	}
+	olderThan := time.Now().Add(-idleConversationWindow)
+	for _, tenantID := range tenantIDs {
+		var staleIDs []uuid.UUID
+		if err := ctl.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+			var err error
+			staleIDs, err = store.ListStaleAwaitingInputSessionIDs(ctx, tx, olderThan)
+			return err
+		}); err != nil {
+			log.Error().Err(err).Any("tenant_id", tenantID).Msg("nexusd: idle-conversation sweep: list stale sessions failed")
+			continue
+		}
+		for _, sessionID := range staleIDs {
+			if err := ctl.EndIdleConversation(ctx, tenantID, sessionID); err != nil {
+				log.Error().Err(err).Any("tenant_id", tenantID).Any("session_id", sessionID).Msg("nexusd: idle-conversation sweep: end session failed")
+			}
+		}
+	}
+}
+
 // listTenantIDs enumerates every tenant in the system — genuinely
 // cross-tenant, unlike everything else in this binary (store.Store.
 // InTenantTx is "the only sanctioned way to scope a database operation to

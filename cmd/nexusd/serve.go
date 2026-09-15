@@ -203,6 +203,9 @@ func serve(ctx context.Context) error {
 	stopTeamBackstop := startTeamBackstopLoop(ctx, teamsSvc)
 	defer stopTeamBackstop()
 
+	stopIdleConversationSweep := startIdleConversationSweepLoop(ctx, ctl)
+	defer stopIdleConversationSweep()
+
 	stopWorkers := startQueueWorkers(ctx, st, redisClient, ctl, delegations, teamsSvc)
 	defer stopWorkers()
 

@@ -389,6 +389,18 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 			// the run isn't done until every tool_use has a paired
 			// result AND the model has seen it.
 		case ClassificationContent, ClassificationEmpty:
+			// A plain reply with no tool call is normally the run's own
+			// natural end (TerminalCompleted) -- but a conversational run
+			// (cfg.Conversational, kernel/types.go's own doc comment on
+			// RunConfig) treats this as the ordinary pause between a
+			// conversation's turns instead: the model is done talking, it's
+			// the human's turn next, and the SAME session picks back up via
+			// ResumeConversation rather than a caller stitching separate
+			// sessions together.
+			if cfg.Conversational {
+				k.suspendForUserInput(ctx, st, yield)
+				return
+			}
 			k.terminate(ctx, st, yield, TerminalCompleted())
 			return
 		}

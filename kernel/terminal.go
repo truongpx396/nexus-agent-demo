@@ -36,6 +36,14 @@ const (
 	// distinct from ReasonError: a refusal is a policy signal, not a failure
 	// of the harness itself.
 	ReasonRefused TerminalReason = "refused"
+	// ReasonIdleTimeout is a conversational run's (RunConfig.Conversational)
+	// own wall-clock backstop: cmd/nexusd's idle-conversation sweep ends a
+	// session that has sat in store.SessionStatusAwaitingInput too long
+	// with nobody answering (mirrors internal/teams's own backstop for a
+	// team stuck 'active' too long) — deliberately distinct from
+	// ReasonAborted, an explicit human cancel, so a golden-signal query can
+	// tell "the user stopped this" apart from "nobody came back."
+	ReasonIdleTimeout TerminalReason = "idle_timeout"
 )
 
 // Terminal pairs a typed reason with a human-readable detail — the shape an
@@ -109,6 +117,13 @@ func TerminalRefused(category string) Terminal {
 	return Terminal{Reason: ReasonRefused, Detail: detail}
 }
 
+// TerminalIdleTimeout is cmd/nexusd's idle-conversation sweep's own
+// producer: a conversational run that sat in SessionStatusAwaitingInput
+// past the sweep's window, with nobody ever sending another message.
+func TerminalIdleTimeout(detail string) Terminal {
+	return Terminal{Reason: ReasonIdleTimeout, Detail: detail}
+}
+
 // terminalEventPayload is the JSON shape sealed into an EventTerminal.
 type terminalEventPayload struct {
 	Reason TerminalReason `json:"reason"`
@@ -120,7 +135,8 @@ type terminalEventPayload struct {
 func buildTerminalPayload(t Terminal) (terminalEventPayload, error) {
 	switch t.Reason {
 	case ReasonCompleted, ReasonMaxTurnsExceeded, ReasonCostExhausted, ReasonAborted,
-		ReasonStuckTerminated, ReasonPermissionDenied, ReasonContextOverflow, ReasonError, ReasonRefused:
+		ReasonStuckTerminated, ReasonPermissionDenied, ReasonContextOverflow, ReasonError, ReasonRefused,
+		ReasonIdleTimeout:
 		return terminalEventPayload(t), nil
 	default:
 		return terminalEventPayload{}, fmt.Errorf("kernel: unknown terminal reason %q", t.Reason)
@@ -238,6 +254,31 @@ func (k *Kernel) suspendForDelegation(ctx context.Context, st *RunState, yield f
 			yield(ev, fmt.Errorf("delegation_requested event %s appended but OnDelegate failed: %w", ev.EventID, err))
 			return
 		}
+	}
+	yield(ev, nil)
+}
+
+// suspendForUserInput is a conversational run's (RunConfig.Conversational)
+// own reaction to a plain content/empty turn (README/GoClaw-comparison
+// note in kernel/types.go's own doc comment on the field): append
+// EventAwaitingInput, mark the session SessionStatusAwaitingInput, and stop
+// the generator WITHOUT a terminal event -- "paused, not done," the exact
+// same shape suspendForApproval/suspendForDelegation already use for their
+// own reasons. Unlike those two, nothing external needs a durable record
+// beyond the event itself (there's no separate approval/delegation row to
+// create) -- internal/runctl.Control.ResumeConversation is the only path
+// back out, driven by the human's next message, not an out-of-band
+// decision. cmd/nexusd's idle-conversation sweep is the backstop that ends
+// one nobody ever answers.
+func (k *Kernel) suspendForUserInput(ctx context.Context, st *RunState, yield func(store.Event, error) bool) {
+	ev, err := k.appendEvent(ctx, st, store.EventAwaitingInput, store.ActorSystem, nil, nil, nil, awaitingInputPayload{})
+	if err != nil {
+		yield(store.Event{}, err)
+		return
+	}
+	if err := k.updateStatus(ctx, st, store.SessionStatusAwaitingInput, nil); err != nil {
+		yield(ev, fmt.Errorf("awaiting_input event %s appended but session status update failed: %w", ev.EventID, err))
+		return
 	}
 	yield(ev, nil)
 }
