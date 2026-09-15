@@ -175,7 +175,7 @@ func (e *LangfuseExporter) flush(ctx context.Context) {
 		log.Error().Err(err).Msg("obs: send langfuse ingestion batch")
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }() // response body carries nothing this call site reads
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		log.Error().Int("status", resp.StatusCode).Msg("obs: langfuse ingestion batch rejected")
 	}

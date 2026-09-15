@@ -38,7 +38,7 @@ func Load() error {
 		}
 		return fmt.Errorf("dotenv: open .env: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // read-only; nothing actionable on a close failure
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
