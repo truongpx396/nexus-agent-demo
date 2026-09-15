@@ -104,9 +104,9 @@ services:
       NEXUS_ADMIN_DATABASE_URL: postgres://nexus:nexus@postgres:5432/nexus
       NEXUS_REDIS_ADDR: redis:6379
       NEXUS_SIGNERD_SOCKET: /var/run/nexus/signerd.sock
-      NEXUS_HTTP_ADDR: :8080
+      NEXUS_HTTP_ADDR: :8085
     ports:
-      - "8080:8080"
+      - "8085:8085"
     # --dev keeps this profile a one-command demo (auto-generated KEK/AuthN
     # keys, persisted in the nexusd-dev volume across restarts) — a real
     # deployment omits it and mounts real secrets instead (README task

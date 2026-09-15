@@ -40,7 +40,7 @@ func TestLoad_MissingFileIsNotAnError(t *testing.T) {
 func TestLoad_SetsUnsetVariables(t *testing.T) {
 	dir := chdirTemp(t)
 	writeEnvFile(t, dir, "NEXUS_TEST_DOTENV_FOO=bar\n")
-	t.Cleanup(func() { os.Unsetenv("NEXUS_TEST_DOTENV_FOO") })
+	t.Cleanup(func() { _ = os.Unsetenv("NEXUS_TEST_DOTENV_FOO") })
 
 	if err := Load(); err != nil {
 		t.Fatalf("Load: %v", err)
@@ -66,7 +66,7 @@ func TestLoad_RealEnvironmentWinsOverDotEnv(t *testing.T) {
 func TestLoad_SkipsBlankLinesAndComments(t *testing.T) {
 	dir := chdirTemp(t)
 	writeEnvFile(t, dir, "\n# a comment\n   \nNEXUS_TEST_DOTENV_FOO=bar\n# NEXUS_TEST_DOTENV_IGNORED=nope\n")
-	t.Cleanup(func() { os.Unsetenv("NEXUS_TEST_DOTENV_FOO"); os.Unsetenv("NEXUS_TEST_DOTENV_IGNORED") })
+	t.Cleanup(func() { _ = os.Unsetenv("NEXUS_TEST_DOTENV_FOO"); _ = os.Unsetenv("NEXUS_TEST_DOTENV_IGNORED") })
 
 	if err := Load(); err != nil {
 		t.Fatalf("Load: %v", err)
@@ -83,8 +83,8 @@ func TestLoad_StripsMatchingQuotes(t *testing.T) {
 	dir := chdirTemp(t)
 	writeEnvFile(t, dir, "NEXUS_TEST_DOTENV_DQ=\"hello world\"\nNEXUS_TEST_DOTENV_SQ='hello single'\n")
 	t.Cleanup(func() {
-		os.Unsetenv("NEXUS_TEST_DOTENV_DQ")
-		os.Unsetenv("NEXUS_TEST_DOTENV_SQ")
+		_ = os.Unsetenv("NEXUS_TEST_DOTENV_DQ")
+		_ = os.Unsetenv("NEXUS_TEST_DOTENV_SQ")
 	})
 
 	if err := Load(); err != nil {

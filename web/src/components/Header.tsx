@@ -1,9 +1,14 @@
 import { useState } from "react";
 import { Link, NavLink } from "react-router-dom";
 import { useSettings } from "../lib/settings";
+import { useTheme } from "../lib/theme";
+
+const THEME_ICON = { system: "🖥️", light: "☀️", dark: "🌙" };
+const THEME_LABEL = { system: "Theme: system", light: "Theme: light", dark: "Theme: dark" };
 
 export function Header() {
   const { settings, setSettings, isConfigured } = useSettings();
+  const { theme, cycleTheme } = useTheme();
   const [open, setOpen] = useState(!isConfigured);
   const [draft, setDraft] = useState(settings);
 
@@ -19,12 +24,12 @@ export function Header() {
           nexus web
         </Link>
         <nav className="nav-links">
-          <NavLink to="/" end>
-            New run
-          </NavLink>
           <NavLink to="/approvals">Approvals</NavLink>
         </nav>
         <div className="header-spacer" />
+        <button type="button" className="theme-toggle" title={THEME_LABEL[theme]} onClick={cycleTheme}>
+          {THEME_ICON[theme]}
+        </button>
         <button
           type="button"
           className={`settings-toggle ${isConfigured ? "" : "warn"}`}
@@ -51,7 +56,7 @@ export function Header() {
               <input
                 type="text"
                 value={draft.baseUrl}
-                placeholder="http://localhost:8055"
+                placeholder="http://localhost:8085"
                 onChange={(e) => setDraft({ ...draft, baseUrl: e.target.value })}
               />
             </label>

@@ -1,7 +1,6 @@
 import { Route, Routes } from "react-router-dom";
 import { Header } from "./components/Header";
-import { NewRun } from "./pages/NewRun";
-import { RunDetail } from "./pages/RunDetail";
+import { ChatPage } from "./pages/ChatPage";
 import { Approvals } from "./pages/Approvals";
 import { ApprovalDetail } from "./pages/ApprovalDetail";
 
@@ -11,8 +10,8 @@ export default function App() {
       <Header />
       <main>
         <Routes>
-          <Route path="/" element={<NewRun />} />
-          <Route path="/runs/:id" element={<RunDetail />} />
+          <Route path="/" element={<ChatPage />} />
+          <Route path="/runs/:id" element={<ChatPage />} />
           <Route path="/approvals" element={<Approvals />} />
           <Route path="/approvals/:id" element={<ApprovalDetail />} />
           <Route path="*" element={<p className="page">Not found.</p>} />

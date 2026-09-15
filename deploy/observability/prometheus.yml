@@ -2,11 +2,11 @@
 # (docs/observability.md). The nexusd job reaches /metrics (README task
 # 13.12, cmd/nexusd/main.go's handleMetrics) — the golden-signal gauges
 # internal/obs.ComputeGoldenSignals computes per tenant, in Prometheus text
-# exposition format — at host.docker.internal:8080 regardless of whether
+# exposition format — at host.docker.internal:8085 regardless of whether
 # nexusd is a plain host process (`make run`) or a container
 # (`make docker-up`, docker-compose.yml's --profile app, the recommended
 # path for THIS stack — see the cadvisor job below): the app profile
-# publishes 8080 to the host either way, so this one target line never
+# publishes 8085 to the host either way, so this one target line never
 # needs to change between the two.
 global:
   scrape_interval: 15s
@@ -26,7 +26,7 @@ scrape_configs:
   - job_name: nexusd
     metrics_path: /metrics
     static_configs:
-      - targets: ["host.docker.internal:8080"]
+      - targets: ["host.docker.internal:8085"]
         labels:
           service: nexusd
 

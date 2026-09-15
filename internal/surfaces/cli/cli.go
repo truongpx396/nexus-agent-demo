@@ -93,7 +93,7 @@ const usageText = `usage:
   nexusctl steer <session-id> "<input>"
   nexusctl fork <session-id> --at=<seq> [--model=<model-id>]
 
-env: NEXUS_HTTP_ADDR (default http://localhost:8080),
+env: NEXUS_HTTP_ADDR (default http://localhost:8085),
      NEXUS_TOKEN (bearer token — mint one with 'nexusd token --tenant=<name>')`
 
 func printUsage(w io.Writer) {
@@ -114,7 +114,7 @@ type client struct {
 
 func newClient() *client {
 	return &client{
-		baseURL: envOr("NEXUS_HTTP_ADDR", "http://localhost:8080"),
+		baseURL: envOr("NEXUS_HTTP_ADDR", "http://localhost:8085"),
 		token:   envOr("NEXUS_TOKEN", ""),
 	}
 }

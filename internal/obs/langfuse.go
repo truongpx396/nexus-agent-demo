@@ -108,12 +108,24 @@ type langfuseBatchRequest struct {
 // this API. Unlike NewOTLPExporter there is no connection handshake here
 // (no SDK to dial); construction just starts the background flusher.
 func NewLangfuseExporter(host, publicKey, secretKey string) *LangfuseExporter {
+	return newLangfuseExporterWithInterval(host, publicKey, secretKey, time.Second)
+}
+
+// newLangfuseExporterWithInterval is NewLangfuseExporter with the flush
+// interval as a constructor argument rather than a field a caller sets
+// after the fact — flushLoop (started here, before this function returns)
+// reads flushInterval on its very first iteration, so setting it via a
+// plain `exp.flushInterval = ...` after NewLangfuseExporter returns races
+// that read with no synchronization (caught by `go test -race`, which is
+// exactly how the tests using this found it). Package-private since only
+// this package's own tests need a non-default interval.
+func newLangfuseExporterWithInterval(host, publicKey, secretKey string, flushInterval time.Duration) *LangfuseExporter {
 	e := &LangfuseExporter{
 		host:          host,
 		publicKey:     publicKey,
 		secretKey:     secretKey,
 		client:        &http.Client{Timeout: 10 * time.Second},
-		flushInterval: time.Second,
+		flushInterval: flushInterval,
 		stop:          make(chan struct{}),
 		stopped:       make(chan struct{}),
 	}
@@ -175,7 +187,7 @@ func (e *LangfuseExporter) flush(ctx context.Context) {
 		log.Error().Err(err).Msg("obs: send langfuse ingestion batch")
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }() // response body carries nothing this call site reads
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		log.Error().Int("status", resp.StatusCode).Msg("obs: langfuse ingestion batch rejected")
 	}

@@ -39,7 +39,7 @@ func loadServerConfig(dev bool) (serverConfig, error) {
 			SignerdSocket:       envOr("NEXUS_SIGNERD_SOCKET", defaultSignerdSocket),
 			KEKPath:             envOr("NEXUS_KEK_PATH", defaultKEKPath),
 			AuthnSigningKeyPath: envOr("NEXUS_AUTHN_SIGNING_KEY_PATH", defaultAuthnSigningKeyPath),
-			HTTPAddr:            envOr("NEXUS_HTTP_ADDR", ":8055"),
+			HTTPAddr:            envOr("NEXUS_HTTP_ADDR", ":8085"),
 		}, nil
 	}
 
@@ -57,7 +57,7 @@ func loadServerConfig(dev bool) (serverConfig, error) {
 		SignerdSocket:       require("NEXUS_SIGNERD_SOCKET"),
 		KEKPath:             require("NEXUS_KEK_PATH"),
 		AuthnSigningKeyPath: require("NEXUS_AUTHN_SIGNING_KEY_PATH"),
-		HTTPAddr:            envOr("NEXUS_HTTP_ADDR", ":8080"), // a listen address has no unsafe-default failure mode; --dev doesn't change what this defaults to
+		HTTPAddr:            envOr("NEXUS_HTTP_ADDR", ":8085"), // a listen address has no unsafe-default failure mode; --dev doesn't change what this defaults to
 	}
 	if len(missing) > 0 {
 		return serverConfig{}, fmt.Errorf(
