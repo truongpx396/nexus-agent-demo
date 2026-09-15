@@ -81,8 +81,7 @@ func (cs *captureServer) waitForEvents(n int) []capturedEvent {
 
 func newTestLangfuseExporter(t *testing.T, cs *captureServer) *LangfuseExporter {
 	t.Helper()
-	e := NewLangfuseExporter(cs.server.URL, "pk-test", "sk-test")
-	e.flushInterval = 20 * time.Millisecond
+	e := newLangfuseExporterWithInterval(cs.server.URL, "pk-test", "sk-test", 20*time.Millisecond)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
@@ -367,8 +366,7 @@ func TestLangfuseExporter_ShutdownFlushesPending(t *testing.T) {
 	cs := newCaptureServer(t)
 	// A long flush interval: only Shutdown's own final flush should deliver
 	// this event within the test's lifetime.
-	exp := NewLangfuseExporter(cs.server.URL, "pk-test", "sk-test")
-	exp.flushInterval = time.Hour
+	exp := newLangfuseExporterWithInterval(cs.server.URL, "pk-test", "sk-test", time.Hour)
 
 	_ = exp.Emit("x", Attrs{"session.id": "s-1"})
 
