@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -67,6 +68,12 @@ type Session struct {
 	// delegation_role="team_member" session and never updated afterward —
 	// the roster is fixed at team creation (internal/teams task 9.1).
 	TeamID *uuid.UUID
+
+	// CreatedAt is read-only (the column's own DEFAULT now() -- CreateSession
+	// never sets it). Added for ListSessionsForUser's own sort/display need;
+	// GetSession fills it too since it's cheap to select alongside every
+	// other column already read there.
+	CreatedAt time.Time
 }
 
 // CreateSession inserts a new session row. Must run inside a tenant-scoped
@@ -128,7 +135,7 @@ func GetSession(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) (Session, e
 		       autonomy_level, root_session_id, depth, delegation_role,
 		       status, terminal_reason,
 		       forked_from_session_id, fork_seq, fork_overrides,
-		       plan_id, plan_version, team_id
+		       plan_id, plan_version, team_id, created_at
 		FROM sessions WHERE session_id = $1`, sessionID,
 	).Scan(
 		&s.SessionID, &s.SessionKey, &s.TenantID, &s.SurfaceID, &s.UserID,
@@ -137,7 +144,7 @@ func GetSession(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) (Session, e
 		&s.AutonomyLevel, &s.RootSessionID, &s.Depth, &s.DelegationRole,
 		&s.Status, &s.TerminalReason,
 		&s.ForkedFromSessionID, &s.ForkSeq, &overrides,
-		&s.PlanID, &s.PlanVersion, &s.TeamID,
+		&s.PlanID, &s.PlanVersion, &s.TeamID, &s.CreatedAt,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -156,6 +163,64 @@ func GetSession(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) (Session, e
 		}
 	}
 	return s, nil
+}
+
+// ListSessionsForUser returns userID's own root sessions (delegation_role =
+// 'root' -- a delegated/team-member session isn't its own top-level thread;
+// it's reached through its parent's own event log via child_session_id),
+// newest first. RLS-scoped like every read in this package. Used by the web
+// UI's session sidebar (internal/surfaces/rest's GET /v1/sessions) -- there
+// is otherwise no "list runs" capability, only GetSession's lookup-by-id.
+func ListSessionsForUser(ctx context.Context, tx pgx.Tx, userID uuid.UUID, limit int) ([]Session, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT session_id, session_key, tenant_id, surface_id, user_id,
+		       agent_id, agent_version, harness_digest,
+		       data_label, route_model_id, route_reason,
+		       autonomy_level, root_session_id, depth, delegation_role,
+		       status, terminal_reason,
+		       forked_from_session_id, fork_seq, fork_overrides,
+		       plan_id, plan_version, team_id, created_at
+		FROM sessions
+		WHERE user_id = $1 AND delegation_role = 'root'
+		ORDER BY created_at DESC
+		LIMIT $2`, userID, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list sessions for user %s: %w", userID, err)
+	}
+	defer rows.Close()
+
+	var out []Session
+	for rows.Next() {
+		var s Session
+		var reason, overrides []byte
+		if err := rows.Scan(
+			&s.SessionID, &s.SessionKey, &s.TenantID, &s.SurfaceID, &s.UserID,
+			&s.AgentID, &s.AgentVersion, &s.HarnessDigest,
+			&s.DataLabel, &s.RouteModelID, &reason,
+			&s.AutonomyLevel, &s.RootSessionID, &s.Depth, &s.DelegationRole,
+			&s.Status, &s.TerminalReason,
+			&s.ForkedFromSessionID, &s.ForkSeq, &overrides,
+			&s.PlanID, &s.PlanVersion, &s.TeamID, &s.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan session: %w", err)
+		}
+		if len(reason) > 0 {
+			if err := json.Unmarshal(reason, &s.RouteReason); err != nil {
+				return nil, fmt.Errorf("unmarshal route_reason: %w", err)
+			}
+		}
+		if len(overrides) > 0 {
+			if err := json.Unmarshal(overrides, &s.ForkOverrides); err != nil {
+				return nil, fmt.Errorf("unmarshal fork_overrides: %w", err)
+			}
+		}
+		out = append(out, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list sessions for user %s: %w", userID, err)
+	}
+	return out, nil
 }
 
 // ListEvents returns every event for sessionID in seq order — the full

@@ -254,6 +254,27 @@ func TestPipeline_SupervisedAsksForMutating(t *testing.T) {
 	}
 }
 
+// TestPipeline_Gate2AskSurvivesAtAutonomousAutonomy proves the mechanism
+// platform/ask_clarification (internal/tools/builtin/ask_clarification.go)
+// depends on: a tool's own CheckPermissions (Gate 2, layer 5) is evaluated
+// unconditionally and, once it resolves Ask, no later layer can silently
+// downgrade it back to Allow -- not even the most permissive autonomy level,
+// and not for a read_only effect class that would otherwise auto-allow.
+func TestPipeline_Gate2AskSurvivesAtAutonomousAutonomy(t *testing.T) {
+	tool := newFakeTool("platform", "ask_clarification", EffectClassReadOnly)
+	tool.checkPerm = PermissionResult{Decision: "ask", Reason: "always asks"}
+	h := newHarness(t, tool)
+	p := h.pipeline()
+
+	got := p.Execute(context.Background(), h.invocation("autonomous", `{"question":"which region?"}`))
+	if !got.AwaitingApproval {
+		t.Fatalf("Execute() = %+v, want AwaitingApproval even at autonomous autonomy on a read_only tool", got)
+	}
+	if tool.callCount != 0 {
+		t.Fatalf("tool called %d times, want 0 (an outstanding ask must never execute)", tool.callCount)
+	}
+}
+
 func TestPipeline_HookDenyProducesPermissionDenied(t *testing.T) {
 	tool := newFakeTool("platform", "read_file", EffectClassReadOnly)
 	h := newHarness(t, tool)

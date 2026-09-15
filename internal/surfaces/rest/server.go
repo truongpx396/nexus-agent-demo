@@ -147,6 +147,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /v1/runs", s.authed(s.handleCreateRun))
 	mux.Handle("GET /v1/runs/{id}", s.authed(s.handleGetRun))
 	mux.Handle("GET /v1/runs/{id}/events", s.authed(s.handleEvents))
+	mux.Handle("GET /v1/sessions", s.authed(s.handleListSessions))
 	if s.Oversight != nil {
 		mux.Handle("GET /v1/approvals", s.authed(s.handleListApprovals))
 		mux.Handle("GET /v1/approvals/{id}", s.authed(s.handleGetApproval))
@@ -163,7 +164,40 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle("POST /v1/runs/{id}/autonomy", s.authed(s.handleTightenAutonomy))
 		mux.Handle("POST /v1/runs/{id}/fork", s.authed(s.handleForkRun))
 	}
-	return mux
+	return withCORS(mux)
+}
+
+// withCORS lets a browser-based client (web/, typically served from a
+// different origin/port than nexusd during local dev -- Vite's dev server
+// on :5173 talking to nexusd on :8085) actually call this API: this
+// package's own auth is a bearer token the CLIENT chooses to attach, never
+// a cookie the browser attaches automatically, so there is no CSRF exposure
+// reflecting the request's own Origin creates (unlike cookie auth, where
+// that would matter) -- the same reasoning that makes permissive CORS
+// standard practice for a bearer-token API. Without this, every request
+// from a real browser fails outright: the browser's own preflight OPTIONS
+// request gets nexusd's default 405 (no route registers OPTIONS), which
+// surfaces to fetch() as an opaque "Failed to fetch," not the 401/403 this
+// package's own authMiddleware would otherwise produce.
+func withCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if origin := r.Header.Get("Origin"); origin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		}
+		if r.Method == http.MethodOptions {
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			reqHeaders := r.Header.Get("Access-Control-Request-Headers")
+			if reqHeaders == "" {
+				reqHeaders = "authorization, content-type"
+			}
+			w.Header().Set("Access-Control-Allow-Headers", reqHeaders)
+			w.Header().Set("Access-Control-Max-Age", "600")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // principal reads the calling identity authMiddleware already verified and

@@ -108,6 +108,7 @@ func newToolPipeline(st *store.Store, keyStore *crypto.KeyStore, chain *audit.Ch
 		builtin.UpdateCardStatus{Resolver: nexusdBoardAdapter{teams: teamsSvc}, Updater: nexusdBoardAdapter{teams: teamsSvc}},
 		builtin.ConnectorFetch{Tokens: vault, Sessions: nexusdSessionLookup{store: st}, AllowedHosts: webFetchAllowlist},
 		builtin.Retrieve{Searcher: nexusdRetrieverAdapter{retriever: retriever}},
+		builtin.AskClarification{},
 	}
 	// platform/web_crawl (README docs/build-phases.md Phase 16, task 16.1) is
 	// registered only when NEXUS_CRAWL4AI_URL is actually configured — the
