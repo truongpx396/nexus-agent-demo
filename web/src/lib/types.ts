@@ -47,6 +47,16 @@ export interface RunEvent {
   body?: unknown;
 }
 
+// sessionSummary, internal/surfaces/rest/sessions_list.go -- one row of
+// GET /v1/sessions (the web UI's session sidebar).
+export interface SessionSummary {
+  run_id: string;
+  status: string;
+  terminal_reason?: string;
+  created_at: string;
+  autonomy_level: string;
+}
+
 // ApprovalView, internal/surfaces/rest/oversight.go.
 export interface ApprovalView {
   approval_id: string;

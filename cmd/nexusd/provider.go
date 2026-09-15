@@ -44,14 +44,44 @@ func newProvider() (provider.Provider, error) {
 		// loop without a live model. Real scripted corpora live in
 		// evals/corpus/ and internal/provider/fake's own tests; this is
 		// just what an unscripted `nexusd run` demo has to say.
-		return fake.New(fake.Script{Chunks: []fake.ChunkSpec{
+		//
+		// repeatingFakeProvider, not a bare fake.New(...): fake.Provider
+		// pops one script per Stream() call and hard-errors once its
+		// (here, one-element) list is exhausted — the correct, intentional
+		// contract for a test that constructs its own scripted sequence and
+		// wants a call past the end of it to fail loudly. But this one
+		// Provider is shared for the whole process's lifetime, across every
+		// session `nexusd serve`/`--dev` ever handles — without repeating,
+		// only the very first Stream() call this process ever makes (across
+		// ALL tenants/sessions) succeeds; every message after that, forever,
+		// fails with "no script left for call #2". Wrapping it so every
+		// call gets its own fresh one-script Provider is what makes
+		// NEXUS_PROVIDER=fake an honest zero-setup interactive default
+		// rather than a single-shot demo that silently breaks after one
+		// reply.
+		return repeatingFakeProvider{script: fake.Script{Chunks: []fake.ChunkSpec{
 			{Kind: "content", Text: "Hello from the Phase 2 kernel loop demo."},
 			{Kind: "usage", InputUncached: 120, OutputTokens: 18},
 			{Kind: "done", Done: "stop"},
-		}}), nil
+		}}}, nil
 	default:
 		return nil, fmt.Errorf("unknown NEXUS_PROVIDER %q (want fake, anthropic, or litellm)", os.Getenv("NEXUS_PROVIDER"))
 	}
+}
+
+// repeatingFakeProvider adapts fake.Provider (a finite, once-through scripted
+// sequence — the right contract for a test that owns its own script list)
+// into a Provider that never runs out for a long-lived interactive process:
+// each Stream call gets a brand-new single-script fake.Provider, so the
+// SAME canned reply is available for every turn of every session, not just
+// the process's first-ever call. See newProvider's "fake" case for why this
+// exists rather than sharing one fake.New(...) instance.
+type repeatingFakeProvider struct {
+	script fake.Script
+}
+
+func (r repeatingFakeProvider) Stream(ctx context.Context, p provider.Prompt, tools []provider.ToolSchema, rc provider.RunContext) (provider.Stream, error) {
+	return fake.New(r.script).Stream(ctx, p, tools, rc)
 }
 
 // spanExporter is what newSpanExporter returns: rest.Server.Exporter's own

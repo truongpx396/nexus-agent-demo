@@ -13,7 +13,7 @@ surface-agnostic all along. **No Go code was changed to build this.**
    ```sh
    make up        # postgres + pgbouncer + redis
    make migrate   # apply migrations
-   make run       # signerd + nexusd (default: http://localhost:8080)
+   make run       # signerd + nexusd (default: http://localhost:8085)
    ```
 
 2. In this directory:
@@ -26,7 +26,7 @@ surface-agnostic all along. **No Go code was changed to build this.**
    This starts the Vite dev server (default `http://localhost:5173`).
 
 3. Open the app, click **Set up identity** in the header, and fill in:
-   - **Base URL** — where `nexusd` is listening (default `http://localhost:8080`).
+   - **Base URL** — where `nexusd` is listening (default `http://localhost:8085`).
    - **Tenant ID** / **User ID** — any UUIDs. The backend's own dev-auth
      posture (`internal/surfaces/rest/server.go`'s doc comment) reads these
      straight from the `X-Nexus-Tenant-ID` / `X-Nexus-User-ID` headers on
@@ -45,48 +45,36 @@ surface-agnostic all along. **No Go code was changed to build this.**
 
 ## What's here
 
-- **New run** (`/`) — form for `POST /v1/runs`; navigates to the run detail
-  view for the new `run_id`. Also has a "jump to a run" box and a
-  browser-local list of recently created runs, since the API has no
-  "list runs" endpoint — only `GET /v1/runs/{id}`.
-- **Run detail** (`/runs/:id`) — polls `GET /v1/runs/{id}` for status /
-  terminal reason, and streams `GET /v1/runs/{id}/events` as a live
-  timeline. Includes controls for cancel / steer / tighten-autonomy.
-- **Approvals** (`/approvals`, `/approvals/:id`) — lists approvals from
-  `GET /v1/approvals`, and renders the *decision-ready* `context` field
-  (`tool_id` / `effect_class` / `input`) on the detail view, never a bare
-  approval UUID. Grant (with optional modified-input JSON) and Deny actions.
+- **Chat** (`/`, `/runs/:id`) — a chat UI over `POST /v1/runs` (new chat) and
+  `GET /v1/runs/{id}` + `GET /v1/runs/{id}/events` (an existing thread):
+  message bubbles, an inferred "Thinking…"/"Using {tool}" status, tool-call
+  cards, a recursively-nested sub-agent view for `platform/delegate`, inline
+  approval/clarification cards, and a citations panel for `platform/retrieve`
+  results. The sidebar's session list comes from `GET /v1/sessions`
+  (`src/lib/timeline.ts` is the event-log → chat-timeline translation).
+- **Approvals** (`/approvals`, `/approvals/:id`) — a secondary, tenant-wide
+  view over `GET /v1/approvals`, independent of any one thread; renders the
+  *decision-ready* `context` field (`tool_id` / `effect_class` / `input`),
+  never a bare approval UUID. Grant (with optional modified-input JSON) and
+  Deny actions.
 
 ### SSE without `EventSource`
 
-The backend's only auth mechanism is the two headers above, read fresh per
-request — there's no cookie or query-param auth. The browser's native
-`EventSource` API cannot set custom headers, so it can't be used against
-this endpoint. Instead, `src/lib/sse.ts` + `src/lib/useRunEvents.ts`
+Auth is a bearer token (`Authorization: Bearer <token>`, minted with
+`nexusd token --tenant=<name>`), read fresh per request. The browser's
+native `EventSource` API cannot set custom headers, so it can't be used
+against this endpoint. Instead, `src/lib/sse.ts` + `src/lib/useRunEvents.ts`
 implement SSE-over-`fetch`: they open the stream with `fetch(url, {
 headers })`, read `response.body.getReader()`, and manually parse
 `event: <type>\ndata: <json>\n\n` frames out of the decoded text.
 
-## CORS note
+## CORS
 
-`internal/surfaces/rest` sets no CORS headers today (verified by reading
-`server.go` / `oversight.go` / `runctl.go` — there is no
-`Access-Control-*` header anywhere in that package). That's out of scope
-for this task to change on the Go side. In practice this means:
-
-- If the web app's origin (e.g. `http://localhost:5173`) differs from the
-  backend's origin (e.g. `http://localhost:8080`), the browser will block
-  cross-origin requests — and because this app sends custom headers
-  (`X-Nexus-Tenant-ID`, `X-Nexus-User-ID`), the browser will first send a
-  CORS preflight (`OPTIONS`) request, which this backend doesn't handle
-  either.
-- For local development, either:
-  - run a browser with web security disabled for local testing only, e.g.
-    `chromium --disable-web-security --user-data-dir=/tmp/chrome-dev`
-    (do this only against a local dev backend, never a real deployment), or
-  - use a browser extension that adds permissive CORS headers to
-    responses from `localhost:8080` during development, or
-  - serve this app's production build from the same origin/port as
-    `nexusd` via a reverse proxy, so requests are same-origin.
-- None of this requires or implies a Go-side change; it's a dev-environment
-  workaround note, not a fix.
+`internal/surfaces/rest`'s `Handler()` wraps every `/v1/*` route in a small
+`withCORS` middleware (`server.go`) that reflects the request's `Origin` and
+answers the browser's own preflight `OPTIONS` request — needed the moment
+this app is served from a different origin/port than `nexusd` (the normal
+local-dev shape: Vite on `:5173`, `nexusd` on `:8085`). Permissive by design
+and safe for a bearer-token API: the token is something the client chooses
+to attach, never a cookie the browser attaches automatically, so there's no
+CSRF exposure a stricter allowlist would actually close.
