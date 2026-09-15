@@ -48,6 +48,7 @@ func (a *nexusdSessionStore) CreateSession(ctx context.Context, req controlplane
 			SurfaceID: req.SurfaceID, UserID: req.UserID, AgentID: uuid.Nil, AgentVersion: 1,
 			HarnessDigest: req.HarnessDigest, DataLabel: req.DataLabel,
 			RouteModelID: req.RouteModelID, RouteReason: req.RouteReason, AutonomyLevel: req.Autonomy,
+			Conversational: req.Conversational,
 		}); err != nil {
 			return err
 		}

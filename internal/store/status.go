@@ -24,16 +24,29 @@ const (
 	SessionStatusSuspended = "suspended"
 	SessionStatusCompleted = "completed"
 	SessionStatusFailed    = "failed"
+	// SessionStatusAwaitingInput is a conversational run's (kernel.
+	// RunConfig.Conversational) own pause state: a plain content/empty
+	// turn suspends here instead of terminating (kernel/terminal.go's
+	// suspendForUserInput, EventAwaitingInput) — not terminal, and
+	// deliberately distinct from SessionStatusSuspended (that one means
+	// "a specific tool_use is waiting on a human decision"; this one
+	// means "the model finished talking, ordinary conversational pause").
+	// internal/runctl.Control.ResumeConversation is the only path back out
+	// of it; cmd/nexusd's idle-conversation sweep is the backstop that
+	// eventually ends one nobody ever answers.
+	SessionStatusAwaitingInput = "awaiting_input"
 )
 
 // UpdateSessionStatus writes sessions.status (and terminal_reason, once the
-// run has one) — always called in the same transaction as the event that
-// justifies the change (kernel/loop.go), which is what keeps this a
-// same-transaction projection rather than a second source of truth (see the
-// Session doc comment above).
+// run has one), plus updated_at — always called in the same transaction as
+// the event that justifies the change (kernel/loop.go), which is what keeps
+// this a same-transaction projection rather than a second source of truth
+// (see the Session doc comment above). updated_at is the idle-conversation
+// sweep's own signal (cmd/nexusd/background.go) for how long a session has
+// sat in SessionStatusAwaitingInput with nobody answering.
 func UpdateSessionStatus(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID, status string, terminalReason *string) error {
 	_, err := tx.Exec(ctx,
-		`UPDATE sessions SET status = $2, terminal_reason = $3 WHERE session_id = $1`,
+		`UPDATE sessions SET status = $2, terminal_reason = $3, updated_at = now() WHERE session_id = $1`,
 		sessionID, status, terminalReason,
 	)
 	if err != nil {

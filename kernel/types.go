@@ -226,6 +226,18 @@ type RunConfig struct {
 	// resumed/continued run — memory is only ever injected at a fresh
 	// session's start, matching "writes take effect next session").
 	MemorySources []string
+	// Conversational opts this run into pause-not-terminate semantics: a
+	// turn that classifies as plain content/empty (no tool call) suspends
+	// the session awaiting more input (suspendForUserInput,
+	// EventAwaitingInput, store.SessionStatusAwaitingInput) instead of
+	// terminating it. False (the default, and every pre-this-change
+	// caller's zero value) reproduces today's behavior exactly — a plain
+	// reply always ends the run. This is deliberately per-run, not a
+	// process-wide switch: most callers (Telegram/Zalo/email/cron, and
+	// task-shaped REST/CLI runs) want the existing one-task-per-session
+	// contract; only a caller that wants an ongoing back-and-forth (the
+	// web chat UI) sets this.
+	Conversational bool
 }
 
 // SuspendRequest is everything OnSuspend needs to durably record an

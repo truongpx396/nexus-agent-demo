@@ -74,6 +74,20 @@ type Session struct {
 	// GetSession fills it too since it's cheap to select alongside every
 	// other column already read there.
 	CreatedAt time.Time
+
+	// Conversational opts this session into kernel.RunConfig.Conversational
+	// pause-not-terminate semantics (migrations/0023_conversational_
+	// sessions.sql) -- pinned at creation, exactly like AutonomyLevel, and
+	// read back on every internal/runctl.Control.ResumeConversation call to
+	// rebuild RunConfig. False for every session before this migration.
+	Conversational bool
+
+	// UpdatedAt is written by UpdateSessionStatus on every status
+	// transition -- the idle-conversation sweep's own signal
+	// (cmd/nexusd/background.go) for how long a session has sat in
+	// SessionStatusAwaitingInput with nobody answering. Read-only here
+	// (CreateSession never sets it; the column's own DEFAULT now() does).
+	UpdatedAt time.Time
 }
 
 // CreateSession inserts a new session row. Must run inside a tenant-scoped
@@ -108,14 +122,14 @@ func CreateSession(ctx context.Context, tx pgx.Tx, s Session) error {
 			data_label, route_model_id, route_reason,
 			autonomy_level, root_session_id, depth, delegation_role,
 			forked_from_session_id, fork_seq, fork_overrides,
-			plan_id, plan_version, team_id
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
+			plan_id, plan_version, team_id, conversational
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
 		s.SessionID, s.SessionKey, s.TenantID, s.SurfaceID, s.UserID,
 		s.AgentID, s.AgentVersion, s.HarnessDigest,
 		s.DataLabel, s.RouteModelID, reason,
 		autonomy, root, s.Depth, delegationRole,
 		s.ForkedFromSessionID, s.ForkSeq, overrides,
-		s.PlanID, s.PlanVersion, s.TeamID,
+		s.PlanID, s.PlanVersion, s.TeamID, s.Conversational,
 	)
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)
@@ -135,7 +149,7 @@ func GetSession(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) (Session, e
 		       autonomy_level, root_session_id, depth, delegation_role,
 		       status, terminal_reason,
 		       forked_from_session_id, fork_seq, fork_overrides,
-		       plan_id, plan_version, team_id, created_at
+		       plan_id, plan_version, team_id, created_at, conversational, updated_at
 		FROM sessions WHERE session_id = $1`, sessionID,
 	).Scan(
 		&s.SessionID, &s.SessionKey, &s.TenantID, &s.SurfaceID, &s.UserID,
@@ -144,7 +158,7 @@ func GetSession(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) (Session, e
 		&s.AutonomyLevel, &s.RootSessionID, &s.Depth, &s.DelegationRole,
 		&s.Status, &s.TerminalReason,
 		&s.ForkedFromSessionID, &s.ForkSeq, &overrides,
-		&s.PlanID, &s.PlanVersion, &s.TeamID, &s.CreatedAt,
+		&s.PlanID, &s.PlanVersion, &s.TeamID, &s.CreatedAt, &s.Conversational, &s.UpdatedAt,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -179,7 +193,7 @@ func ListSessionsForUser(ctx context.Context, tx pgx.Tx, userID uuid.UUID, limit
 		       autonomy_level, root_session_id, depth, delegation_role,
 		       status, terminal_reason,
 		       forked_from_session_id, fork_seq, fork_overrides,
-		       plan_id, plan_version, team_id, created_at
+		       plan_id, plan_version, team_id, created_at, conversational, updated_at
 		FROM sessions
 		WHERE user_id = $1 AND delegation_role = 'root'
 		ORDER BY created_at DESC
@@ -201,7 +215,7 @@ func ListSessionsForUser(ctx context.Context, tx pgx.Tx, userID uuid.UUID, limit
 			&s.AutonomyLevel, &s.RootSessionID, &s.Depth, &s.DelegationRole,
 			&s.Status, &s.TerminalReason,
 			&s.ForkedFromSessionID, &s.ForkSeq, &overrides,
-			&s.PlanID, &s.PlanVersion, &s.TeamID, &s.CreatedAt,
+			&s.PlanID, &s.PlanVersion, &s.TeamID, &s.CreatedAt, &s.Conversational, &s.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan session: %w", err)
 		}
@@ -221,6 +235,32 @@ func ListSessionsForUser(ctx context.Context, tx pgx.Tx, userID uuid.UUID, limit
 		return nil, fmt.Errorf("list sessions for user %s: %w", userID, err)
 	}
 	return out, nil
+}
+
+// ListStaleAwaitingInputSessionIDs returns every session_id in
+// SessionStatusAwaitingInput whose updated_at is older than olderThan --
+// the idle-conversation sweep's own query (cmd/nexusd/background.go,
+// mirroring internal/teams's own listStaleActiveTeamIDs wall-clock-backstop
+// shape exactly). RLS-scoped like every read in this package: called once
+// per tenant, inside that tenant's own InTenantTx.
+func ListStaleAwaitingInputSessionIDs(ctx context.Context, tx pgx.Tx, olderThan time.Time) ([]uuid.UUID, error) {
+	rows, err := tx.Query(ctx,
+		`SELECT session_id FROM sessions WHERE status = $1 AND updated_at < $2`,
+		SessionStatusAwaitingInput, olderThan,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list stale awaiting-input sessions: %w", err)
+	}
+	defer rows.Close()
+	var out []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan stale awaiting-input session id: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
 // ListEvents returns every event for sessionID in seq order — the full

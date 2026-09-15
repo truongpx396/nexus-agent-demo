@@ -25,6 +25,7 @@ func TestBuildTerminalPayload_AllReasonsAccepted(t *testing.T) {
 		{"context_overflow", TerminalContextOverflow("prompt too long"), ReasonContextOverflow},
 		{"error", TerminalError(errors.New("boom")), ReasonError},
 		{"refused", TerminalRefused("cyber"), ReasonRefused},
+		{"idle_timeout", TerminalIdleTimeout("no reply for 30m"), ReasonIdleTimeout},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

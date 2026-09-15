@@ -93,6 +93,12 @@ type delegationRequestedPayload struct {
 	ChildSessionID uuid.UUID `json:"child_session_id"`
 }
 
+// awaitingInputPayload is EventAwaitingInput's payload -- empty on purpose,
+// same "the event type itself is the whole signal" shape EventToolLoaded
+// already has: there is nothing more specific to record about an ordinary
+// conversational pause than the fact that it happened.
+type awaitingInputPayload struct{}
+
 type budgetDecisionPayload struct {
 	Decision string `json:"decision"`
 	Reason   string `json:"reason,omitempty"`

@@ -5,7 +5,6 @@
 //
 // Every non-2xx response is a plain-text body (Go's http.Error), never a
 // JSON error envelope -- ApiError below carries that text verbatim.
-import { readSSEStream } from "./sse";
 import type {
   ApprovalView,
   CreateRunRequest,
@@ -13,7 +12,6 @@ import type {
   ForkView,
   GetRunResponse,
   ResumeOutcome,
-  RunEvent,
   SessionSummary,
   Settings,
 } from "./types";
@@ -65,6 +63,7 @@ export function createRun(s: Settings, body: CreateRunRequest): Promise<CreateRu
   if (body.difficulty) payload.difficulty = body.difficulty;
   if (body.autonomy) payload.autonomy = body.autonomy;
   if (body.budget_usd) payload.budget_usd = body.budget_usd;
+  if (body.conversational) payload.conversational = body.conversational;
   return request<CreateRunResponse>(s, "/v1/runs", {
     method: "POST",
     body: JSON.stringify(payload),
@@ -146,32 +145,4 @@ export function denyApproval(s: Settings, id: string, reason: string): Promise<R
 // backend requires).
 export function eventsURL(s: Settings, runId: string): string {
   return `${s.baseUrl}/v1/runs/${runId}/events`;
-}
-
-// fetchRunHistory drains GET /v1/runs/{id}/events to completion and returns
-// every event, without opening a live subscription (useRunEvents' job) --
-// for a run that's already terminal, the backend replays its full history
-// then closes the connection on its own (rest/run_events.go's own `write`
-// closure returns false once it forwards the terminal event), so this
-// simply resolves once that happens. Used to replay an earlier run in a
-// client-side conversation chain (lib/threads.ts) once, rather than keeping
-// a live SSE connection open per prior turn.
-export async function fetchRunHistory(s: Settings, runId: string): Promise<RunEvent[]> {
-  const res = await fetch(eventsURL(s, runId), {
-    headers: { Authorization: `Bearer ${s.token}` },
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => res.statusText);
-    throw new ApiError(res.status, text || res.statusText);
-  }
-  const events: RunEvent[] = [];
-  await readSSEStream(res, (frame) => {
-    if (frame.event === "error") return;
-    try {
-      events.push(JSON.parse(frame.data) as RunEvent);
-    } catch {
-      // unparseable frame -- skip rather than fail the whole replay
-    }
-  });
-  return events;
 }

@@ -66,6 +66,7 @@ func (a *testSessionStore) CreateSession(ctx context.Context, req controlplane.A
 			SurfaceID: req.SurfaceID, UserID: req.UserID, AgentID: uuid.Nil, AgentVersion: 1,
 			HarnessDigest: req.HarnessDigest, DataLabel: req.DataLabel,
 			RouteModelID: req.RouteModelID, RouteReason: req.RouteReason, AutonomyLevel: req.Autonomy,
+			Conversational: req.Conversational,
 		}); err != nil {
 			return err
 		}
@@ -233,7 +234,10 @@ type testRunStarter struct {
 
 func (a *testRunStarter) StartRun(_ context.Context, req rest.RunRequest) (<-chan rest.RunEvent, error) {
 	st := &kernel.RunState{TenantID: req.TenantID, SessionID: req.SessionID, Seal: kernel.SealFunc(req.Seal)}
-	cfg := kernel.RunConfig{System: "You are a helpful agent.", ModelID: req.ModelID, MaxTurns: 10, Input: req.Input}
+	cfg := kernel.RunConfig{
+		System: "You are a helpful agent.", ModelID: req.ModelID, MaxTurns: 10, Input: req.Input,
+		Conversational: req.Conversational,
+	}
 
 	ch := make(chan rest.RunEvent, 8)
 	go func() {

@@ -73,8 +73,23 @@ func (c *Control) Resume(ctx context.Context, tenantID, sessionID uuid.UUID) ite
 			yield(store.Event{}, fmt.Errorf("runctl: session %s is suspended on a pending approval or input request; resolve it (internal/oversight) rather than calling Resume", sessionID))
 			return
 		}
+		if sess.Status == store.SessionStatusAwaitingInput {
+			// A conversational session paused here deliberately (kernel/
+			// terminal.go's suspendForUserInput) — it isn't a crashed or
+			// interrupted run needing kernel.Continue's Hygiene-first
+			// re-entry, it's waiting on the human's next message. Sending
+			// that through kernel.Continue would resume with no new input
+			// at all, which isn't what Continue is for; ResumeConversation
+			// is the one correct path back out of this status.
+			yield(store.Event{}, fmt.Errorf("runctl: session %s is awaiting the next conversation turn; call ResumeConversation with the new message rather than Resume", sessionID))
+			return
+		}
 
-		cfg := kernel.RunConfig{System: c.System, Catalog: c.Catalog, MaxTurns: c.MaxTurns, AutonomyLevel: sess.AutonomyLevel, ModelID: sess.RouteModelID}
+		cfg := kernel.RunConfig{
+			System: c.System, Catalog: c.Catalog, MaxTurns: c.MaxTurns,
+			AutonomyLevel: sess.AutonomyLevel, ModelID: sess.RouteModelID,
+			Conversational: sess.Conversational,
+		}
 		for ev, err := range c.Kernel.Continue(ctx, st, cfg) {
 			if !yield(ev, err) {
 				return

@@ -44,6 +44,15 @@ func (c *Control) Steer(ctx context.Context, tenantID, sessionID uuid.UUID, inpu
 		if sess.Status == store.SessionStatusCompleted || sess.Status == store.SessionStatusFailed {
 			return fmt.Errorf("runctl: session %s is already terminal (%s); cannot steer", sessionID, sess.Status)
 		}
+		if sess.Status == store.SessionStatusAwaitingInput {
+			// Steer durably records the message for whatever resumer
+			// reaches the next turn boundary (this func's own doc comment)
+			// — but a conversational session paused in awaiting_input has
+			// no live goroutine to reach one; only ResumeConversation
+			// re-enters the loop from here. Refuse rather than silently
+			// stranding the message.
+			return fmt.Errorf("runctl: session %s is awaiting the next conversation turn; call ResumeConversation with the new message rather than Steer", sessionID)
+		}
 		if sess.Status == store.SessionStatusSuspended {
 			if _, err := c.Approvals.Invalidate(ctx, tenantID, sessionID, oversight.InvalidationSteer); err != nil {
 				return fmt.Errorf("runctl: steer: invalidate pending approval: %w", err)

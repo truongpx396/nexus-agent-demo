@@ -53,6 +53,17 @@ const (
 	// tight SLA to enforce).
 	teamBackstopSweepInterval = 5 * time.Minute
 	teamBackstopWindow        = 30 * time.Minute
+	// idleConversationSweepInterval is how often startIdleConversationSweepLoop
+	// checks every tenant for a conversational session (kernel.RunConfig.
+	// Conversational) sitting in store.SessionStatusAwaitingInput past
+	// idleConversationWindow with nobody sending the next message;
+	// idleConversationWindow is that window itself — the backstop that
+	// keeps an abandoned chat from holding its taint state, cost-gate
+	// reservations, and open SSE subscribers forever (kernel.
+	// ReasonIdleTimeout's own doc comment). Mirrors teamBackstopSweepInterval/
+	// teamBackstopWindow's own precedent exactly.
+	idleConversationSweepInterval = 5 * time.Minute
+	idleConversationWindow        = 30 * time.Minute
 )
 
 // devMode is set once, at the top of main(), from a --dev flag scanned out
