@@ -399,3 +399,41 @@ func (k *Kernel) Continue(ctx context.Context, st *RunState, cfg RunConfig) iter
 		k.runTurns(ctx, st, cfg, yield, 1)
 	}
 }
+
+// ResumeConversation continues a session a conversational run
+// (cfg.Conversational, kernel/types.go's own doc comment) paused on via
+// suspendForUserInput — the human's next message, arriving out of band
+// (internal/runctl.Control.ResumeConversation) rather than as part of the
+// same original request. Unlike Continue (re-enters the turn loop as-is,
+// for crash/steer resume from an arbitrary point) this appends a fresh
+// EventUserMessage first, exactly like Run's own opening message — the
+// same "append the human's turn, then run the loop" shape, just against a
+// session that already has a full Transcript instead of an empty one. st
+// must already be rehydrated (History/Transcript populated via
+// kernel.Rehydrate), the same contract Resume/Continue already have;
+// ResumeConversation itself does no replay or decrypt of its own.
+func (k *Kernel) ResumeConversation(ctx context.Context, st *RunState, cfg RunConfig, input string) iter.Seq2[store.Event, error] {
+	return func(yield func(store.Event, error) bool) {
+		ctx, rootSpan := k.startSpan(ctx, "kernel.resume_conversation", obs.ObservationAgent, obs.Attrs{
+			"session.id": st.SessionID.String(), "tenant.id": st.TenantID.String(),
+		})
+		defer func() { rootSpan.End(terminalSpanAttrs(st)) }()
+
+		if err := k.updateStatus(ctx, st, store.SessionStatusRunning, nil); err != nil {
+			yield(store.Event{}, err)
+			return
+		}
+
+		ev, err := k.appendEvent(ctx, st, store.EventUserMessage, store.ActorUser, nil, nil, nil, userMessagePayload{Body: input})
+		if err != nil {
+			yield(store.Event{}, err)
+			return
+		}
+		st.Transcript = append(st.Transcript, provider.TextMessage("user", input))
+		if !yield(ev, nil) {
+			return
+		}
+
+		k.runTurns(ctx, st, cfg, yield, 1)
+	}
+}

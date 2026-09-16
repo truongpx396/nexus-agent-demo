@@ -61,14 +61,15 @@ func (a *kernelRunStarter) StartRun(ctx context.Context, req rest.RunRequest) (<
 		Seal:      kernel.SealFunc(req.Seal),
 	}
 	cfg := kernel.RunConfig{
-		System:        system,
-		Catalog:       catalog,
-		LoadedTools:   loadedTools,
-		MemorySources: memorySources,
-		ModelID:       req.ModelID,
-		MaxTurns:      a.maxTurns,
-		Input:         req.Input,
-		AutonomyLevel: req.AutonomyLevel,
+		System:         system,
+		Catalog:        catalog,
+		LoadedTools:    loadedTools,
+		MemorySources:  memorySources,
+		ModelID:        req.ModelID,
+		MaxTurns:       a.maxTurns,
+		Input:          req.Input,
+		AutonomyLevel:  req.AutonomyLevel,
+		Conversational: req.Conversational,
 	}
 
 	ch := make(chan rest.RunEvent, 8)

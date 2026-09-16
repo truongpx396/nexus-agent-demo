@@ -32,6 +32,8 @@ func ReplayProjection(history []Event) Projection {
 			}
 		case EventApprovalRequested, EventInputRequested:
 			status = SessionStatusSuspended
+		case EventAwaitingInput:
+			status = SessionStatusAwaitingInput
 		case EventApprovalGranted, EventApprovalGrantedModified, EventApprovalDenied,
 			EventApprovalInvalidated, EventInputAnswered, EventInputExpired, EventInputInvalidated:
 			status = SessionStatusRunning

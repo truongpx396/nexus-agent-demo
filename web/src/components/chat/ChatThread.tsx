@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ApiError, cancelRun, createRun, fetchRunHistory, getRun, listApprovals, steerRun } from "../../lib/api";
+import { ApiError, cancelRun, createRun, getRun, listApprovals, steerRun } from "../../lib/api";
 import { addRecentRun } from "../../lib/recentRuns";
 import { useSettings } from "../../lib/settings";
 import { suggestedPrompts } from "../../lib/suggestedPrompts";
-import { appendToChain, getChain } from "../../lib/threads";
-import { buildTimeline, findAwaitingApproval, isThinking, type TimelineItem } from "../../lib/timeline";
-import type { Autonomy, ApprovalView, GetRunResponse, RunEvent } from "../../lib/types";
+import { buildTimeline, findAwaitingApproval, isThinking } from "../../lib/timeline";
+import type { Autonomy, ApprovalView, GetRunResponse } from "../../lib/types";
 import { useRunEvents } from "../../lib/useRunEvents";
 import { ApprovalCard } from "./ApprovalCard";
 import { ClarificationCard } from "./ClarificationCard";
@@ -29,7 +28,7 @@ interface Props {
 
 export function ChatThread({ runId, embedded }: Props) {
   if (!runId) return <ComposeOnly />;
-  return <LiveThread threadId={runId} embedded={Boolean(embedded)} />;
+  return <LiveThread runId={runId} embedded={Boolean(embedded)} />;
 }
 
 function ComposeOnly() {
@@ -46,7 +45,12 @@ function ComposeOnly() {
     setSubmitting(true);
     setError(null);
     try {
-      const res = await createRun(settings, { input: text, autonomy, budget_usd: budgetUsd || undefined });
+      const res = await createRun(settings, {
+        input: text,
+        autonomy,
+        budget_usd: budgetUsd || undefined,
+        conversational: true,
+      });
       addRecentRun({ runId: res.run_id, input: text, createdAt: new Date().toISOString() });
       navigate(`/runs/${res.run_id}`);
     } catch (err) {
@@ -101,51 +105,20 @@ function ComposeOnly() {
 }
 
 /**
- * A visual conversation is a client-side CHAIN of backend runs
- * (lib/threads.ts) -- the backend itself has no multi-turn session; a run
- * is one complete task from a single input to a terminal state, and
- * runctl.Steer refuses once it's terminal. threadId (the URL's :id) is
- * always the chain's first run id and never changes as the conversation
- * grows; `chain`'s LAST id is the one actually live/actionable right now.
- * Earlier runs in the chain are fetched once (fetchRunHistory) and their
- * events prepended to the live tail's own timeline, so the whole thing
- * reads as one continuous scroll.
+ * One backend session IS the conversation throughout its life --
+ * kernel.RunConfig.Conversational's pause-not-terminate semantics mean a
+ * plain reply suspends the session ("awaiting_input" status) rather than
+ * ending it, and POST .../steer transparently resumes it in place
+ * (internal/surfaces/rest/runctl.go's handleSteerRun). runId never changes
+ * as the conversation grows, and there is no client-side chaining: the
+ * live SSE subscription (useRunEvents) simply keeps delivering events
+ * across turns for as long as the session stays open.
  */
-function LiveThread({ threadId, embedded }: { threadId: string; embedded: boolean }) {
+function LiveThread({ runId, embedded }: { runId: string; embedded: boolean }) {
   const { settings, isConfigured } = useSettings();
   const navigate = useNavigate();
-  const [chain, setChain] = useState<string[]>(() => getChain(threadId));
-  const [priorEventsByRun, setPriorEventsByRun] = useState<Record<string, RunEvent[]>>({});
-  const requestedRef = useRef<Set<string>>(new Set());
 
-  useEffect(() => {
-    setChain(getChain(threadId));
-    setPriorEventsByRun({});
-    requestedRef.current = new Set();
-  }, [threadId]);
-
-  const latestRunId = chain[chain.length - 1];
-  const priorRunIds = chain.slice(0, -1);
-
-  useEffect(() => {
-    const missing = priorRunIds.filter((id) => !requestedRef.current.has(id));
-    if (missing.length === 0) return;
-    for (const id of missing) requestedRef.current.add(id);
-    (async () => {
-      for (const id of missing) {
-        try {
-          const hist = await fetchRunHistory(settings, id);
-          setPriorEventsByRun((prev) => ({ ...prev, [id]: hist }));
-        } catch {
-          // best-effort -- that turn's history is just missing from the replay, not a hard failure
-          setPriorEventsByRun((prev) => ({ ...prev, [id]: [] }));
-        }
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chain, settings.baseUrl, settings.token]);
-
-  const { events: liveEvents, state: connState, error: streamError, reconnect } = useRunEvents(settings, latestRunId);
+  const { events, state: connState, error: streamError, reconnect } = useRunEvents(settings, runId);
   const [run, setRun] = useState<GetRunResponse | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [pendingApproval, setPendingApproval] = useState<ApprovalView | null>(null);
@@ -157,11 +130,12 @@ function LiveThread({ threadId, embedded }: { threadId: string; embedded: boolea
   const status = run?.status;
   const isTerminal = status ? TERMINAL_STATUSES.has(status.toLowerCase()) : false;
   const isSuspended = status === "suspended";
+  const isAwaitingInput = status === "awaiting_input";
 
   const refreshRun = async () => {
     if (!isConfigured) return;
     try {
-      const res = await getRun(settings, latestRunId);
+      const res = await getRun(settings, runId);
       setRun(res);
       setNotFound(false);
     } catch (err) {
@@ -174,22 +148,27 @@ function LiveThread({ threadId, embedded }: { threadId: string; embedded: boolea
   };
 
   useEffect(() => {
+    setRun(null);
+    setNotFound(false);
+  }, [runId]);
+
+  useEffect(() => {
     refreshRun();
     if (isTerminal || notFound) return;
     const t = setInterval(refreshRun, POLL_INTERVAL_MS);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [latestRunId, isConfigured, status, notFound]);
+  }, [runId, isConfigured, status, notFound]);
 
   useEffect(() => {
-    if (liveEvents.some((e) => e.type === "terminal")) refreshRun();
+    if (events.some((e) => e.type === "terminal" || e.type === "awaiting_input")) refreshRun();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [liveEvents.length]);
+  }, [events.length]);
 
   const refreshPendingApproval = async () => {
     try {
       const all = await listApprovals(settings);
-      const mine = all.find((a) => a.session_id === latestRunId && a.status === "pending");
+      const mine = all.find((a) => a.session_id === runId && a.status === "pending");
       setPendingApproval(mine ?? null);
     } catch {
       // best-effort -- the tool card's own "awaiting approval" state still shows
@@ -205,15 +184,13 @@ function LiveThread({ threadId, embedded }: { threadId: string; embedded: boolea
     const t = setInterval(refreshPendingApproval, POLL_INTERVAL_MS);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSuspended, latestRunId]);
-
-  const allEvents = [...priorRunIds.flatMap((id) => priorEventsByRun[id] ?? []), ...liveEvents];
+  }, [isSuspended, runId]);
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
-  }, [allEvents.length, pendingApproval]);
+  }, [events.length, pendingApproval]);
 
-  const timeline = buildTimeline(allEvents);
+  const timeline = buildTimeline(events);
   const thinking = isThinking(status, timeline);
   const awaitingTool = findAwaitingApproval(timeline);
 
@@ -222,38 +199,9 @@ function LiveThread({ threadId, embedded }: { threadId: string; embedded: boolea
     setActionBusy(true);
     setActionError(null);
     try {
-      await steerRun(settings, latestRunId, text);
+      await steerRun(settings, runId, text);
       setComposerInput("");
       await refreshRun();
-    } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : String(err));
-    } finally {
-      setActionBusy(false);
-    }
-  };
-
-  // sendFollowUp is what keeps the conversation going once the latest run
-  // has already finished: the backend has no way to resume a terminal
-  // session (this file's own doc comment), so this starts a genuinely new
-  // run, replaying the visible user/assistant turns so far as its own
-  // input -- the same "client replays prior history" shape a stateless
-  // chat API's client already uses -- and extends the chain rather than
-  // navigating anywhere, so the URL and the on-screen scroll both stay put.
-  const sendFollowUp = async (text: string) => {
-    if (!text.trim()) return;
-    setActionBusy(true);
-    setActionError(null);
-    try {
-      const transcript = timeline
-        .filter((i): i is Extract<TimelineItem, { kind: "user" | "assistant" }> => i.kind === "user" || i.kind === "assistant")
-        .map((i) => `${i.kind === "user" ? "User" : "Assistant"}: ${i.text}`)
-        .join("\n\n");
-      const combinedInput = transcript ? `${transcript}\n\nUser: ${text}` : text;
-      const res = await createRun(settings, { input: combinedInput, autonomy: "supervised" });
-      setChain(appendToChain(threadId, res.run_id));
-      setComposerInput("");
-      setRun(null);
-      setNotFound(false);
     } catch (err) {
       setActionError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -265,7 +213,7 @@ function LiveThread({ threadId, embedded }: { threadId: string; embedded: boolea
     setActionBusy(true);
     setActionError(null);
     try {
-      await cancelRun(settings, latestRunId, "cancelled from web UI");
+      await cancelRun(settings, runId, "cancelled from web UI");
       await refreshRun();
     } catch (err) {
       setActionError(err instanceof ApiError ? err.message : String(err));
@@ -332,6 +280,12 @@ function LiveThread({ threadId, embedded }: { threadId: string; embedded: boolea
           </div>
         )}
 
+        {isAwaitingInput && !pendingApproval && (
+          <div className="msg assistant your-turn-row">
+            <span className="your-turn-label">Your turn — send a message to continue.</span>
+          </div>
+        )}
+
         {pendingApproval &&
           (isClarification ? (
             <ClarificationCard approval={pendingApproval} onResolved={onApprovalResolved} />
@@ -345,10 +299,11 @@ function LiveThread({ threadId, embedded }: { threadId: string; embedded: boolea
       {!embedded && (
         <ThreadComposer
           isSuspended={isSuspended}
+          isTerminal={isTerminal}
           busy={actionBusy}
           value={composerInput}
           onChange={setComposerInput}
-          onSubmit={() => (isTerminal ? sendFollowUp(composerInput) : doSteer(composerInput))}
+          onSubmit={() => doSteer(composerInput)}
         />
       )}
     </div>
@@ -357,12 +312,14 @@ function LiveThread({ threadId, embedded }: { threadId: string; embedded: boolea
 
 function ThreadComposer({
   isSuspended,
+  isTerminal,
   busy,
   value,
   onChange,
   onSubmit,
 }: {
   isSuspended: boolean;
+  isTerminal: boolean;
   busy: boolean;
   value: string;
   onChange: (v: string) => void;
@@ -372,6 +329,14 @@ function ThreadComposer({
     return (
       <div className="composer composer-disabled">
         <span className="hint">Waiting on the decision above.</span>
+      </div>
+    );
+  }
+
+  if (isTerminal) {
+    return (
+      <div className="composer composer-disabled">
+        <span className="hint">This conversation has ended.</span>
       </div>
     );
   }

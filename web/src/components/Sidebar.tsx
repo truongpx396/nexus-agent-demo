@@ -3,7 +3,6 @@ import { NavLink, useNavigate } from "react-router-dom";
 import { listSessions } from "../lib/api";
 import { loadRecentRuns } from "../lib/recentRuns";
 import { useSettings } from "../lib/settings";
-import { allFollowUpRunIds, getChain } from "../lib/threads";
 import type { SessionSummary } from "../lib/types";
 
 const POLL_INTERVAL_MS = 8000;
@@ -69,32 +68,21 @@ export function Sidebar() {
   );
 }
 
-// mergeThreads collapses a client-side conversation chain (lib/threads.ts --
-// "send another message" after a run finishes starts a genuinely new
-// backend session, since none can be resumed once terminal) down to ONE
-// row: the chain's first ("anchor") run id is what the row links to and
-// where the preview text comes from, but its status/recency reflect
-// whichever run in the chain is actually the latest -- so a long-running
-// conversation surfaces as "running"/most-recently-active, not stuck
-// showing its first turn's now-stale "completed".
+// mergeThreads maps GET /v1/sessions' own rows 1:1 to sidebar rows -- one
+// conversation is one backend session throughout its life (kernel.RunConfig.
+// Conversational's pause-not-terminate semantics), so there is no client-side
+// chain to collapse any more.
 function mergeThreads(remote: SessionSummary[] | null, local: ReturnType<typeof loadRecentRuns>): Thread[] {
   const previewById = new Map(local.map((r) => [r.runId, r.input]));
 
   if (remote) {
-    const byId = new Map(remote.map((s) => [s.run_id, s]));
-    const followUps = allFollowUpRunIds();
     return remote
-      .filter((s) => !followUps.has(s.run_id))
-      .map((s) => {
-        const chain = getChain(s.run_id);
-        const latest = byId.get(chain[chain.length - 1]) ?? s;
-        return {
-          runId: s.run_id,
-          status: latest.status,
-          createdAt: latest.created_at,
-          preview: previewById.get(s.run_id),
-        };
-      })
+      .map((s) => ({
+        runId: s.run_id,
+        status: s.status,
+        createdAt: s.created_at,
+        preview: previewById.get(s.run_id),
+      }))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 

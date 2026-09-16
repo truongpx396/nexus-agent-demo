@@ -44,6 +44,14 @@ const (
 
 	// Human (push)
 	EventUserMessage EventType = "user_message"
+	// EventAwaitingInput marks a conversational run (kernel.RunConfig.
+	// Conversational) pausing after a plain content/empty turn instead of
+	// terminating — kernel/terminal.go's suspendForUserInput. Distinct from
+	// EventInputRequested (an agent PULLING one schema-declared answer via
+	// oversight.Inputs, carrying zero authorization value): this is the
+	// ordinary "the model is done talking, it's the human's turn" pause a
+	// conversation naturally has between messages, not a specific question.
+	EventAwaitingInput EventType = "awaiting_input"
 
 	// Human (pull)
 	EventInputRequested   EventType = "input_requested"

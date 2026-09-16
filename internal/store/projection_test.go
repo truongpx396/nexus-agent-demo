@@ -16,6 +16,8 @@ func TestReplayProjection(t *testing.T) {
 		{"an unresolved input_requested is suspended", []EventType{EventUserMessage, EventInputRequested}, SessionStatusSuspended},
 		{"a resolved input_requested returns to running", []EventType{EventInputRequested, EventInputAnswered}, SessionStatusRunning},
 		{"budget_decision and tool_loaded never change status on their own", []EventType{EventToolLoaded, EventBudgetDecision}, SessionStatusQueued},
+		{"a conversational pause is awaiting_input, not terminal", []EventType{EventUserMessage, EventContent, EventAwaitingInput}, SessionStatusAwaitingInput},
+		{"a second turn after a conversational pause returns to running", []EventType{EventAwaitingInput, EventUserMessage}, SessionStatusRunning},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

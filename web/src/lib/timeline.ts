@@ -51,6 +51,7 @@ const TERMINAL_REASON_TEXT: Record<string, string> = {
   context_overflow: "Stopped — the conversation grew past the model's context window.",
   error: "Stopped — an error occurred.",
   refused: "The model declined to continue with this request.",
+  idle_timeout: "This conversation was closed after a long period with no reply.",
 };
 
 type SystemTone = "info" | "warn" | "error";
@@ -65,6 +66,7 @@ const TERMINAL_REASON_TONE: Record<string, SystemTone> = {
   permission_denied: "warn",
   context_overflow: "warn",
   error: "error",
+  idle_timeout: "warn",
 };
 
 function terminalNote(reason: string | undefined, detail: string | undefined, ts: string, eventId: string): TimelineItem {
@@ -185,8 +187,12 @@ export function buildTimeline(events: RunEvent[]): TimelineItem[] {
 
       default:
         // thought (never has a body -- redacted, not just skipped here),
-        // budget_decision, context_pruned, tool_loaded, memory_loaded, and
-        // every other structural/audit-only event type: not chat-relevant.
+        // budget_decision, context_pruned, tool_loaded, memory_loaded,
+        // awaiting_input (kernel.RunConfig.Conversational's pause marker --
+        // the preceding "content" item and the composer's own awaiting_input
+        // state already communicate the pause; no separate timeline item
+        // needed), and every other structural/audit-only event type: not
+        // chat-relevant.
         break;
     }
   }

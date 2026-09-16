@@ -380,6 +380,15 @@ button.danger {
   opacity: 0.6;
 }
 
+/* awaiting_input: a conversational session (kernel.RunConfig.Conversational)
+   paused between turns -- the model finished replying and it's the human's
+   turn next, distinct from status-running's "the model is working" warn
+   color and status-suspended's "a decision is pending" tone. */
+.status-awaiting_input {
+  color: var(--accent-2);
+  border-color: var(--accent-2);
+}
+
 /* suggested-prompt chips (docs/build-phases.md Phase 16, task 16.9) */
 
 .prompt-chips {
@@ -729,6 +738,10 @@ tr.row-pending {
   background: var(--accent);
 }
 
+.status-dot.status-awaiting_input {
+  background: var(--accent-2);
+}
+
 .status-dot.status-completed {
   background: var(--success);
 }
@@ -925,6 +938,22 @@ tr.row-pending {
   75% {
     content: "...";
   }
+}
+
+/* "your turn" indicator -- a conversational session paused in
+   awaiting_input, distinct from the animated thinking-row above (that one
+   means the model is working; this one means it's waiting on the human). */
+
+.your-turn-row {
+  background: transparent;
+  border: none;
+  padding: 2px 0;
+}
+
+.your-turn-label {
+  color: var(--accent-2);
+  font-size: 13px;
+  font-weight: 600;
 }
 
 /* tool call cards */

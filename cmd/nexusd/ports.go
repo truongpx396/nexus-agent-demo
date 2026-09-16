@@ -212,6 +212,29 @@ func (p *nexusdRunCtlPort) Steer(ctx context.Context, tenantID, sessionID uuid.U
 	return err
 }
 
+// ResumeConversation adapts runctl.Control.ResumeConversation's
+// iter.Seq2[store.Event, error] generator into the same <-chan rest.RunEvent
+// shape kernelRunStarter.StartRun already returns — a run outlives the HTTP
+// request that resumed it, so this drains the generator on its own goroutine
+// exactly like StartRun's does, rather than blocking handleSteerRun on it.
+func (p *nexusdRunCtlPort) ResumeConversation(ctx context.Context, tenantID, sessionID uuid.UUID, input string) (<-chan rest.RunEvent, error) {
+	events, err := p.ctl.ResumeConversation(ctx, tenantID, sessionID, input)
+	if err != nil {
+		return nil, err
+	}
+	ch := make(chan rest.RunEvent, 8)
+	go func() {
+		defer close(ch)
+		for ev, err := range events {
+			ch <- rest.RunEvent{Event: ev, Err: err}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	return ch, nil
+}
+
 func (p *nexusdRunCtlPort) TightenAutonomy(ctx context.Context, tenantID, sessionID uuid.UUID, target string) error {
 	return p.ctl.TightenAutonomy(ctx, tenantID, sessionID, target)
 }

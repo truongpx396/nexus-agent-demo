@@ -6,6 +6,8 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
+
+	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
 // ForkView is what this surface exposes for one fork — translated from
@@ -31,6 +33,13 @@ type RunCtlPort interface {
 	Steer(ctx context.Context, tenantID, sessionID uuid.UUID, input string) error
 	TightenAutonomy(ctx context.Context, tenantID, sessionID uuid.UUID, target string) error
 	Fork(ctx context.Context, tenantID, sessionID uuid.UUID, atSeq int64, modelOverride string) (ForkView, error)
+	// ResumeConversation continues a session store.SessionStatusAwaitingInput
+	// paused in (internal/runctl.Control.ResumeConversation's own doc
+	// comment) with the human's next message — the same channel-of-events
+	// shape RunStarter.StartRun returns, so handleSteerRun can dispatch it
+	// through the exact same publishUntilDone path handleCreateRun already
+	// uses.
+	ResumeConversation(ctx context.Context, tenantID, sessionID uuid.UUID, input string) (<-chan RunEvent, error)
 }
 
 type cancelRequest struct {
@@ -80,6 +89,30 @@ func (s *Server) handleSteerRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid JSON body", http.StatusBadRequest)
 		return
 	}
+
+	// A conversational session paused in awaiting_input isn't mid-run —
+	// Steer (built for nudging an ALREADY-running task) has nothing to
+	// steer. Route it through ResumeConversation instead, which re-enters
+	// the kernel loop the same way handleCreateRun's own StartRun does:
+	// same async publishUntilDone dispatch, so an SSE connection that's
+	// been open since the run first paused (it never saw EventTerminal)
+	// picks up the continuation live, with no client-side reconnect.
+	sess, err := s.getSession(r.Context(), tenantID, id)
+	if err != nil {
+		http.Error(w, "steer: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if sess.Status == store.SessionStatusAwaitingInput {
+		events, err := s.RunCtl.ResumeConversation(context.Background(), tenantID, id, req.Input) // a run outlives the HTTP request that resumed it
+		if err != nil {
+			http.Error(w, "steer: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		go s.publishUntilDone(tenantID, id, events)
+		writeJSON(w, http.StatusOK, map[string]string{"status": "steered"})
+		return
+	}
+
 	if err := s.RunCtl.Steer(r.Context(), tenantID, id, req.Input); err != nil {
 		http.Error(w, "steer: "+err.Error(), http.StatusInternalServerError)
 		return
