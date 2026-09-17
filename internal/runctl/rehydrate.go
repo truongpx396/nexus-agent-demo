@@ -43,6 +43,16 @@ func (c *Control) loadRunState(ctx context.Context, tenantID, sessionID uuid.UUI
 		return nil, store.Session{}, err
 	}
 
+	// Restore this session's Rule-of-Two taint state before anything else
+	// (Resume/ResumeConversation, both of which share this helper) can
+	// dispatch its next tool call — kernel.TaintSeeder's own doc comment on
+	// why this can't just happen lazily inside the tool executor itself.
+	if engaged, terr := kernel.RehydrateTaint(ctx, history, decrypt); terr != nil {
+		return nil, store.Session{}, terr
+	} else if seeder, ok := c.Kernel.Tools.(kernel.TaintSeeder); ok {
+		seeder.SeedTaint(sessionID, sess.AutonomyLevel, engaged)
+	}
+
 	keyID, err := currentActiveKeyID(history)
 	if err != nil {
 		return nil, store.Session{}, err

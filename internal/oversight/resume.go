@@ -136,6 +136,17 @@ func (r *Resumer) loadRunState(ctx context.Context, tenantID, sessionID uuid.UUI
 		return nil, store.Session{}, err
 	}
 
+	// Restore this session's Rule-of-Two taint state before Kernel.Resume
+	// dispatches the ONE approved/denied tool call — kernel.TaintSeeder's
+	// own doc comment on why this can't just happen lazily inside the tool
+	// executor itself (internal/runctl/rehydrate.go's own loadRunState
+	// mirrors this exactly for its own resume paths).
+	if engaged, terr := kernel.RehydrateTaint(ctx, history, decrypt); terr != nil {
+		return nil, store.Session{}, terr
+	} else if seeder, ok := r.Kernel.Tools.(kernel.TaintSeeder); ok {
+		seeder.SeedTaint(sessionID, sess.AutonomyLevel, engaged)
+	}
+
 	keyID, err := currentActiveKeyID(history)
 	if err != nil {
 		return nil, store.Session{}, err

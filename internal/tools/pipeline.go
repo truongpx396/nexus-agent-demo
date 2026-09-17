@@ -58,6 +58,18 @@ type ExecuteResult struct {
 	// like AwaitingApproval already is.
 	AwaitingDelegation bool
 	ChildSessionID     uuid.UUID
+
+	// TaintChanged/TaintEngaged mirror kernel.ToolResult's own identically
+	// named fields (kernel/types.go) — set in Execute's own step 9, the one
+	// place that has both the BEFORE and AFTER TaintState in hand.
+	// TaintChanged is true whenever this call engaged a Rule-of-Two leg the
+	// session hadn't already engaged; kernel durably records the
+	// transition (kernel/turns.go) whenever it is, regardless of the final
+	// Decision (Deny/Ask/Allow all engaged the leg for real —
+	// ResolveRuleOfTwo's own doc comment: "this call's taint is real
+	// regardless of whether the human ultimately approves it").
+	TaintChanged bool
+	TaintEngaged [3]bool
 }
 
 func errorResult(reason string) ExecuteResult { return ExecuteResult{IsError: true, Reason: reason} }
@@ -223,6 +235,35 @@ func (p *Pipeline) TaintStateFor(sessionID uuid.UUID) [3]bool {
 // entry.
 func (p *Pipeline) FoldTaint(sessionID uuid.UUID, engaged [3]bool) {
 	state := p.stateFor(sessionID, "")
+	state.taintMu.Lock()
+	defer state.taintMu.Unlock()
+	for i, e := range engaged {
+		if e {
+			state.taintState.Engaged[i] = true
+		}
+	}
+}
+
+// SeedTaint restores sessionID's taint state from the durable projection
+// (kernel.RehydrateTaint) before this session's next tool call — the
+// read-side counterpart to Execute's own TaintChanged/TaintEngaged
+// (pipeline.go's own ExecuteResult doc comment): the write half of the
+// real durable taint_transition projection TaintStateFor's own doc
+// comment above named as future work. Unlike FoldTaint (which fails
+// closed to AutonomyReadOnly when this is the first thing this process
+// has ever seen for sessionID — acceptable there, since a delegation
+// return implies the parent already ran a tool call to spawn the child in
+// the first place), SeedTaint takes autonomyLevel explicitly: it is called
+// at RESUME time, where "first thing this process has seen for this
+// session" is the NORMAL case (a fresh process after a restart/deploy),
+// not a rare one — stateFor's own "Pin is a one-time thing" contract means
+// seeding with an empty level here would wrongly and permanently pin
+// ReadOnly for a session that may actually be Supervised or Autonomous.
+// Only ever WIDENS state (ResolveRuleOfTwo's own monotonic semantics), so
+// it is always safe to call redundantly, including against a session this
+// process never actually lost (a resume on the SAME live process).
+func (p *Pipeline) SeedTaint(sessionID uuid.UUID, autonomyLevel string, engaged [3]bool) {
+	state := p.stateFor(sessionID, autonomyLevel)
 	state.taintMu.Lock()
 	defer state.taintMu.Unlock()
 	for i, e := range engaged {

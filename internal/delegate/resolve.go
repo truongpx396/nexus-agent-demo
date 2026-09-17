@@ -289,6 +289,20 @@ func (d *Delegations) loadRunState(ctx context.Context, tenantID, sessionID uuid
 		return nil, store.Session{}, err
 	}
 
+	// Restore this session's Rule-of-Two taint state before
+	// ResumeDelegation dispatches the parent's next tool call —
+	// kernel.TaintSeeder's own doc comment on why this can't just happen
+	// lazily inside the tool executor itself. Unlike
+	// internal/runctl/oversight's own equivalent seed call, this package
+	// already holds a concrete *tools.Pipeline (d.cfg.Pipeline, already
+	// used by TaintStateFor/FoldTaint above) rather than going through the
+	// interface indirection those two need.
+	if engaged, terr := kernel.RehydrateTaint(ctx, history, decrypt); terr != nil {
+		return nil, store.Session{}, terr
+	} else if d.cfg.Pipeline != nil {
+		d.cfg.Pipeline.SeedTaint(sessionID, sess.AutonomyLevel, engaged)
+	}
+
 	var keyID string
 	for i := len(history) - 1; i >= 0; i-- {
 		if history[i].KeyID != crypto.ErasureKeyID {

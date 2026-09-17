@@ -117,6 +117,7 @@ func (p *Pipeline) Execute(ctx context.Context, inv Invocation) ExecuteResult {
 	// session-key serial lock Phase 6 (README task 6.2) ships for real.
 	state := p.stateFor(inv.SessionID, inv.AutonomyLevel)
 	state.taintMu.Lock()
+	before := state.taintState.Engaged
 	req := permissions.Request{
 		ToolID:      ref.String(),
 		Namespace:   ref.Namespace,
@@ -136,6 +137,16 @@ func (p *Pipeline) Execute(ctx context.Context, inv Invocation) ExecuteResult {
 	state.taintState = result.TaintState
 	state.taintMu.Unlock()
 
+	// taintChanged/taintEngaged are set on EVERY ExecuteResult this call
+	// returns from here on, regardless of the decision gate below or how
+	// finishCall's own steps 12-16 end — the leg was engaged for real at
+	// this permission-chain resolution, whether or not the call that
+	// engaged it went on to be denied, asked about, or itself fail
+	// (ResolveRuleOfTwo's own doc comment). kernel/turns.go durably
+	// records the transition whenever TaintChanged is true.
+	taintChanged := before != result.TaintState.Engaged
+	taintEngaged := result.TaintState.Engaged
+
 	// Steps 10-11: decision gates.
 	switch result.Resolution.Decision {
 	case permissions.Deny:
@@ -143,6 +154,8 @@ func (p *Pipeline) Execute(ctx context.Context, inv Invocation) ExecuteResult {
 			IsError:          true,
 			Reason:           fmt.Sprintf("denied at layer %s: %s", result.Resolution.Layer, result.Resolution.Reason),
 			PermissionDenied: true,
+			TaintChanged:     taintChanged,
+			TaintEngaged:     taintEngaged,
 		}
 	case permissions.Ask:
 		return ExecuteResult{
@@ -152,6 +165,8 @@ func (p *Pipeline) Execute(ctx context.Context, inv Invocation) ExecuteResult {
 			AskKind:          string(result.Resolution.AskKind),
 			CanonicalDigest:  digest,
 			EffectClass:      string(descriptor.EffectClass),
+			TaintChanged:     taintChanged,
+			TaintEngaged:     taintEngaged,
 		}
 	case permissions.Allow:
 		// continue below
@@ -159,8 +174,14 @@ func (p *Pipeline) Execute(ctx context.Context, inv Invocation) ExecuteResult {
 		return errorResult(fmt.Sprintf("permission_chain_bug: Resolve returned a non-final Defer at layer %s", result.Resolution.Layer))
 	}
 
-	// Steps 12-16.
-	return p.finishCall(ctx, tool, ref, descriptor, input, digest, rc, inv, state)
+	// Steps 12-16. taintChanged/taintEngaged are set on whichever of
+	// finishCall's own several return points this call lands on, rather
+	// than threaded through every one of them individually — they all
+	// share the SAME already-resolved taint transition from step 9 above.
+	out := p.finishCall(ctx, tool, ref, descriptor, input, digest, rc, inv, state)
+	out.TaintChanged = taintChanged
+	out.TaintEngaged = taintEngaged
+	return out
 }
 
 // ExecuteApproved is Phase 5's resume-time entry point (README task 5.7):
