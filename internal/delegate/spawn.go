@@ -16,15 +16,20 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
 
-// TaintFolder is the two operations README task 8.11 needs from
+// TaintFolder is the operations this package needs from
 // internal/tools.Pipeline: read a session's current Rule-of-Two engaged
-// legs, and fold another session's legs into one. Declared here (rather
-// than depending on *tools.Pipeline directly) so this package names only
-// the two methods it actually calls — the same granularity idiom
-// internal/tools/builtin's own SkillResolver/SkillEvents already use.
+// legs, fold another session's legs into one (README task 8.11), and seed
+// a resumed parent's taint state from its own durable projection
+// (resolve.go's own loadRunState — the read half of the same durable
+// taint_transition mechanism TaintStateFor/FoldTaint's copy-at-spawn/
+// fold-at-return already lean on). Declared here (rather than depending on
+// *tools.Pipeline directly) so this package names only the methods it
+// actually calls — the same granularity idiom internal/tools/builtin's own
+// SkillResolver/SkillEvents already use.
 type TaintFolder interface {
 	TaintStateFor(sessionID uuid.UUID) [3]bool
 	FoldTaint(sessionID uuid.UUID, engaged [3]bool)
+	SeedTaint(sessionID uuid.UUID, autonomyLevel string, engaged [3]bool)
 }
 
 // Locker is the session-key serial lock (internal/queue.SessionLock,

@@ -3,6 +3,8 @@ package kernel
 import (
 	"context"
 
+	"github.com/google/uuid"
+
 	"github.com/truongpx396/nexus-agent-demo/internal/tools"
 )
 
@@ -43,7 +45,15 @@ func (p PipelineExecutor) Execute(ctx context.Context, req ToolUseRequest, rc Ex
 		EffectClass:        out.EffectClass,
 		AwaitingDelegation: out.AwaitingDelegation,
 		ChildSessionID:     out.ChildSessionID,
+		TaintChanged:       out.TaintChanged,
+		TaintEngaged:       out.TaintEngaged,
 	}
+}
+
+// SeedTaint implements kernel.TaintSeeder (kernel/types.go's own doc
+// comment) by forwarding to tools.Pipeline.SeedTaint.
+func (p PipelineExecutor) SeedTaint(sessionID uuid.UUID, autonomyLevel string, engaged [3]bool) {
+	p.Pipeline.SeedTaint(sessionID, autonomyLevel, engaged)
 }
 
 // ExecuteApproved implements kernel.ApprovedExecutor (README task 5.7) by
@@ -69,5 +79,7 @@ func (p PipelineExecutor) ExecuteApproved(ctx context.Context, req ToolUseReques
 		EffectClass:        out.EffectClass,
 		AwaitingDelegation: out.AwaitingDelegation,
 		ChildSessionID:     out.ChildSessionID,
+		TaintChanged:       out.TaintChanged,
+		TaintEngaged:       out.TaintEngaged,
 	}
 }

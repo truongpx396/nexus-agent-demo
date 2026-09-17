@@ -527,6 +527,94 @@ func TestPipeline_FoldTaint_CopyAtSpawnAndFoldOnReturn(t *testing.T) {
 	}
 }
 
+// TestPipeline_Execute_TaintChangedOnNewLegEngaged is the write half of the
+// durable taint_transition projection (kernel/turns.go reacts to
+// TaintChanged): a call that genuinely engages a NEW Rule-of-Two leg
+// reports it; a repeat of the SAME leg on the same session does not —
+// kernel only durably records an actual transition, never redundant noise
+// for the common case.
+func TestPipeline_Execute_TaintChangedOnNewLegEngaged(t *testing.T) {
+	tool := newFakeTool("platform", "read_web", EffectClassReadOnly)
+	tool.taint = Taint{ReturnsUntrusted: true}
+	h := newHarness(t, tool)
+	p := h.pipeline()
+
+	inv := h.invocation("autonomous", `{}`)
+
+	got := p.Execute(context.Background(), inv)
+	if got.IsError {
+		t.Fatalf("first call: Execute() = %+v, want a clean success", got)
+	}
+	if !got.TaintChanged {
+		t.Fatal("first call: TaintChanged = false, want true (a genuinely new leg)")
+	}
+	if got.TaintEngaged != ([3]bool{true, false, false}) {
+		t.Fatalf("first call: TaintEngaged = %v, want [true false false]", got.TaintEngaged)
+	}
+
+	got = p.Execute(context.Background(), inv) // SAME session, same tool, same leg
+	if got.TaintChanged {
+		t.Fatal("second call: TaintChanged = true, want false (this leg was already engaged)")
+	}
+	if got.TaintEngaged != ([3]bool{true, false, false}) {
+		t.Fatalf("second call: TaintEngaged = %v, want the state to stay [true false false]", got.TaintEngaged)
+	}
+}
+
+// TestPipeline_SeedTaint_WidensNeverNarrows is SeedTaint's own core
+// contract (its doc comment): ResolveRuleOfTwo's semantics are monotonic,
+// so restoring a session's durable taint state must never clear a leg
+// that was already engaged in this process's own in-memory cache.
+func TestPipeline_SeedTaint_WidensNeverNarrows(t *testing.T) {
+	tool := newFakeTool("platform", "noop", EffectClassReadOnly)
+	h := newHarness(t, tool)
+	p := h.pipeline()
+
+	sessionID := uuid.New()
+	p.SeedTaint(sessionID, "supervised", [3]bool{true, false, false})
+	if got := p.TaintStateFor(sessionID); got != ([3]bool{true, false, false}) {
+		t.Fatalf("after first seed: TaintStateFor = %v, want [true false false]", got)
+	}
+
+	p.SeedTaint(sessionID, "supervised", [3]bool{false, true, false})
+	if got := p.TaintStateFor(sessionID); got != ([3]bool{true, true, false}) {
+		t.Fatalf("after second seed: TaintStateFor = %v, want both legs engaged (widen, never replace)", got)
+	}
+
+	// A seed reporting FEWER engaged legs than the current in-memory state
+	// (e.g. a stale/short history) must never clear anything already set.
+	p.SeedTaint(sessionID, "supervised", [3]bool{false, false, false})
+	if got := p.TaintStateFor(sessionID); got != ([3]bool{true, true, false}) {
+		t.Fatalf("seeding an empty state cleared existing legs: got %v, want [true true false] unchanged", got)
+	}
+}
+
+// TestPipeline_SeedTaint_CorrectlyPinsAutonomyForANewSession guards the
+// exact bug SeedTaint's own doc comment names: calling stateFor with an
+// empty autonomy level (as FoldTaint deliberately does, acceptable there)
+// would wrongly and permanently fail-closed a session this process has
+// never otherwise touched to AutonomyReadOnly — silently denying every
+// non-read-only effect for the rest of this process's life, even for a
+// session that is actually Supervised or Autonomous. SeedTaint takes the
+// real level explicitly specifically to avoid this.
+func TestPipeline_SeedTaint_CorrectlyPinsAutonomyForANewSession(t *testing.T) {
+	tool := newFakeTool("platform", "write_file", EffectClassExternal)
+	h := newHarness(t, tool)
+	p := h.pipeline()
+
+	sessionID := uuid.New()
+	// Seed BEFORE this process has ever otherwise touched this session --
+	// exactly the resume-after-restart case this method exists for.
+	p.SeedTaint(sessionID, "autonomous", [3]bool{})
+
+	inv := h.invocation("read_only", `{}`) // deliberately wrong: stateFor's own "Pin is a one-time thing" contract means this must be ignored, since SeedTaint already pinned it
+	inv.SessionID = sessionID
+	got := p.Execute(context.Background(), inv)
+	if got.PermissionDenied {
+		t.Fatalf("Execute() = %+v, want NOT denied -- SeedTaint should have pinned autonomous, not left this session to fail closed to read_only's own deny-every-non-read-only-effect behavior", got)
+	}
+}
+
 // fakeDynamicResolver is a fully scriptable DynamicResolver (README task
 // 11.1) — the same "no builtin exercised here" isolation newFakeTool's own
 // doc comment explains, applied to internal/surfaces/mcp.Resolver's seam

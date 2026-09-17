@@ -76,6 +76,8 @@ type toolResultPayload struct {
 	EffectClass        string          `json:"effect_class,omitempty"`
 	AwaitingDelegation bool            `json:"awaiting_delegation,omitempty"`
 	ChildSessionID     uuid.UUID       `json:"child_session_id,omitzero"`
+	TaintChanged       bool            `json:"taint_changed,omitempty"`
+	TaintEngaged       [3]bool         `json:"taint_engaged,omitzero"`
 }
 
 type stuckSuspectedPayload struct {
@@ -98,6 +100,19 @@ type delegationRequestedPayload struct {
 // already has: there is nothing more specific to record about an ordinary
 // conversational pause than the fact that it happened.
 type awaitingInputPayload struct{}
+
+// taintTransitionPayload is EventTaintTransition's sealed shape for an
+// ordinary tool call's own Rule-of-Two engagement (turns.go's own dispatch
+// step) — this codebase's established convention for this event type
+// (internal/teams/events.go's own doc comment on cardReadTaintTransitionPayload:
+// "each producer defines and reads back its own payload for the event
+// types it writes; nothing reads taint_transition payloads generically
+// across packages"). Engaged is the session's CUMULATIVE Rule-of-Two legs
+// after this call, not a delta — RehydrateTaint (rehydrate.go) only ever
+// needs the MOST RECENT one.
+type taintTransitionPayload struct {
+	Engaged [3]bool `json:"engaged"`
+}
 
 type budgetDecisionPayload struct {
 	Decision string `json:"decision"`

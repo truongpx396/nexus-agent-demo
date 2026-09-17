@@ -347,6 +347,26 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 					return
 				}
 
+				// The durable half of Rule-of-Two taint state (README
+				// pattern 21's own "session taint state as a projection" --
+				// kernel.RehydrateTaint is the read half): appended
+				// regardless of what happens next (permission denied,
+				// awaiting approval/delegation, stuck) -- the leg was
+				// engaged for real the moment the permission chain resolved
+				// it (tools.ExecuteResult's own doc comment), whether or
+				// not this call's own outcome goes on to suspend or
+				// terminate the run.
+				if result.TaintChanged {
+					tev, err := k.appendEvent(ctx, st, store.EventTaintTransition, store.ActorSystem, nil, nil, nil, taintTransitionPayload{Engaged: result.TaintEngaged})
+					if err != nil {
+						yield(store.Event{}, err)
+						return
+					}
+					if !yield(tev, nil) {
+						return
+					}
+				}
+
 				if result.PermissionDenied {
 					toolID := "unknown"
 					if toolUseEvents[i].ToolID != nil {

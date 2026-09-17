@@ -132,6 +132,32 @@ func Rehydrate(ctx context.Context, history []store.Event, decrypt DecryptFunc) 
 	return transcript, toolUseIDs, nil
 }
 
+// RehydrateTaint restores a session's Rule-of-Two taint state from its
+// durable EventTaintTransition history — the read half of the projection
+// turns.go's own dispatch step (the TaintChanged branch) writes. Engaged
+// is cumulative, not a delta (taintTransitionPayload's own doc comment),
+// so only the MOST RECENT transition matters — the same "only the last
+// one matters" selective-decrypt shape ReplayFullProjection already uses
+// for EventTerminal, scanning backward rather than decrypting every
+// transition this session ever recorded. A session that never engaged any
+// leg (no EventTaintTransition in history at all) returns the zero value,
+// not an error — the ordinary case for the overwhelming majority of
+// sessions. history must already be in seq order (store.ListEvents' own
+// contract) — the same contract Rehydrate itself has.
+func RehydrateTaint(ctx context.Context, history []store.Event, decrypt DecryptFunc) ([3]bool, error) {
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].Type != store.EventTaintTransition {
+			continue
+		}
+		var p taintTransitionPayload
+		if err := decodeEvent(ctx, history[i], decrypt, &p); err != nil {
+			return [3]bool{}, err
+		}
+		return p.Engaged, nil
+	}
+	return [3]bool{}, nil
+}
+
 func decodeEvent(ctx context.Context, e store.Event, decrypt DecryptFunc, out any) error {
 	plaintext, err := decrypt(ctx, e)
 	if err != nil {

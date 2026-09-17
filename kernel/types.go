@@ -80,6 +80,18 @@ type ToolResult struct {
 	// ChildSessionID is set only alongside AwaitingDelegation: the session
 	// internal/delegate just created and started running independently.
 	ChildSessionID uuid.UUID
+
+	// TaintChanged/TaintEngaged mirror tools.ExecuteResult's own identically
+	// named fields verbatim (kernel/tools_adapter.go copies them straight
+	// across) — plain [3]bool rather than internal/permissions.TaintState,
+	// for the same reason DelegationResolution's own doc comment gives:
+	// kernel has no reason to import internal/permissions just to shuttle
+	// three bools through this struct. turns.go durably records the
+	// transition (a new EventTaintTransition) whenever TaintChanged is
+	// true — the write half of the real taint_transition projection
+	// TaintSeeder below is the read half of.
+	TaintChanged bool
+	TaintEngaged [3]bool
 }
 
 // ExecContext carries the per-run facts a ToolExecutor needs beyond one
@@ -113,6 +125,22 @@ type ToolExecutor interface {
 // tools.Pipeline.ExecuteApproved.
 type ApprovedExecutor interface {
 	ExecuteApproved(ctx context.Context, req ToolUseRequest, approvedDigest []byte, rc ExecContext) ToolResult
+}
+
+// TaintSeeder is the optional interface a ToolExecutor may also implement
+// to restore a resumed session's Rule-of-Two taint state before its next
+// tool call — mirrors ApprovedExecutor's own optional-interface pattern
+// immediately above. Every resume path (internal/runctl.Control.Resume/
+// ResumeConversation, internal/oversight.Resumer, internal/delegate's own
+// parent-resume, internal/runctl.Control.Fork) calls RehydrateTaint
+// (rehydrate.go) alongside kernel.Rehydrate and, if this interface is
+// implemented, passes the result here before doing anything else with the
+// rehydrated state — an executor with nothing to seed
+// (kernel.NotImplementedToolExecutor) needs no method for it.
+// kernel.PipelineExecutor (tools_adapter.go) implements this by calling
+// tools.Pipeline.SeedTaint.
+type TaintSeeder interface {
+	SeedTaint(sessionID uuid.UUID, autonomyLevel string, engaged [3]bool)
 }
 
 // NotImplementedToolExecutor is the only ToolExecutor Phase 2 ships. Every
