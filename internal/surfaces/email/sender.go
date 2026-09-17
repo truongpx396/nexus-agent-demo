@@ -9,6 +9,16 @@ import (
 	"github.com/google/uuid"
 )
 
+// notificationPayload mirrors internal/surfaces/telegram's own (its doc
+// comment) — the explicit, discriminated shape drainAndNotify (webhook.go)
+// builds and Send below interprets.
+type notificationPayload struct {
+	Kind      string `json:"kind"` // "approval" | "content"
+	SessionID string `json:"session_id,omitempty"`
+	ToolID    string `json:"tool_id,omitempty"`
+	Text      string `json:"text,omitempty"`
+}
+
 // Sender implements surfaces.Sender via stdlib net/smtp — no external SMTP
 // library dependency, matching this codebase's minimal-dependency style.
 // SMTP has no context-cancellation hook of its own; ctx is accepted (the
@@ -29,16 +39,8 @@ func (s *Sender) Send(ctx context.Context, surfaceID, recipient string, payload 
 		return fmt.Errorf("email: resolve SMTP config: %w", err)
 	}
 
-	var body struct {
-		SessionID string `json:"session_id"`
-		ToolID    string `json:"tool_id"`
-	}
-	text := string(payload)
-	if err := json.Unmarshal(payload, &body); err == nil {
-		text = fmt.Sprintf("Approval needed for session %s (tool: %s) — review it in the run's own approval endpoint.", body.SessionID, body.ToolID)
-	}
-
-	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: Approval needed\r\n\r\n%s\r\n", cfg.FromAddress, recipient, text)
+	subject, text := renderNotification(payload)
+	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\n\r\n%s\r\n", cfg.FromAddress, recipient, subject, text)
 
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
 	var auth smtp.Auth
@@ -49,4 +51,25 @@ func (s *Sender) Send(ctx context.Context, surfaceID, recipient string, payload 
 		return fmt.Errorf("email: send: %w", err)
 	}
 	return nil
+}
+
+// renderNotification is Send's own pure discriminator — factored out so it
+// can be tested directly: net/smtp.SendMail dials a real connection with
+// no client-injection point (unlike telegram/zalo's http.Client field), so
+// this is the one piece of Send's logic this package CAN unit-test without
+// a live SMTP server.
+func renderNotification(payload []byte) (subject, text string) {
+	text = string(payload)
+	subject = "Approval needed"
+	var body notificationPayload
+	if err := json.Unmarshal(payload, &body); err == nil {
+		switch body.Kind {
+		case "approval":
+			text = fmt.Sprintf("Approval needed for session %s (tool: %s) — review it in the run's own approval endpoint.", body.SessionID, body.ToolID)
+		case "content":
+			text = body.Text
+			subject = "Re: your message"
+		}
+	}
+	return subject, text
 }

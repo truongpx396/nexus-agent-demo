@@ -1,6 +1,6 @@
 //go:build integration
 
-package telegram
+package zalo
 
 import (
 	"bytes"
@@ -23,10 +23,10 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/migrations"
 )
 
-// setupTelegramEnv mirrors internal/crypto/keystore_integration_test.go's
-// own setupKeystoreEnv (this codebase's established per-file duplication
-// idiom for integration test scaffolding).
-func setupTelegramEnv(t *testing.T) *pgxpool.Pool {
+// setupZaloEnv mirrors internal/surfaces/telegram's own setupTelegramEnv
+// (this codebase's established per-file duplication idiom for integration
+// test scaffolding).
+func setupZaloEnv(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	ctx := context.Background()
 
@@ -76,84 +76,23 @@ func setupTelegramEnv(t *testing.T) *pgxpool.Pool {
 	return appPool
 }
 
-func TestHandleWebhook_ValidUpdateCreatesARealSessionAndStartsARun(t *testing.T) {
-	pool := setupTelegramEnv(t)
-	s := store.New(pool)
-	tenantID := uuid.New()
+func insertTestTenant(t *testing.T, s *store.Store, tenantID uuid.UUID) {
+	t.Helper()
 	if err := s.InTenantTx(context.Background(), tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `INSERT INTO tenants (tenant_id, name) VALUES ($1, 'telegram-test')`, tenantID)
+		_, err := tx.Exec(ctx, `INSERT INTO tenants (tenant_id, name) VALUES ($1, 'zalo-test')`, tenantID)
 		return err
 	}); err != nil {
 		t.Fatalf("insert tenant: %v", err)
 	}
-
-	kek, err := crypto.GenerateKEK()
-	if err != nil {
-		t.Fatalf("GenerateKEK: %v", err)
-	}
-
-	starter := &fakeStarter{}
-	srv := &Server{
-		Store:    s,
-		KeyStore: crypto.NewKeyStore(kek),
-		Starter:  starter,
-		Channels: fakeChannels{secret: "s", ok: true},
-	}
-
-	body, err := json.Marshal(map[string]any{
-		"update_id": 1,
-		"message": map[string]any{
-			"message_id": 1,
-			"from":       map[string]any{"id": 42},
-			"chat":       map[string]any{"id": 999},
-			"text":       "please help",
-		},
-	})
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	req := httptest.NewRequest(http.MethodPost, "/v1/webhooks/telegram/"+tenantID.String(), bytes.NewReader(body))
-	req.Header.Set("X-Telegram-Bot-Api-Secret-Token", "s")
-	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s, want 200", rec.Code, rec.Body.String())
-	}
-	if !starter.started {
-		t.Fatal("a valid update did not reach StartRun")
-	}
-	if starter.req.Input != "please help" {
-		t.Fatalf("RunRequest.Input = %q, want the message text", starter.req.Input)
-	}
-	if starter.req.TenantID != tenantID {
-		t.Fatalf("RunRequest.TenantID = %s, want %s", starter.req.TenantID, tenantID)
-	}
-
-	// The session this handler created must actually be durable and
-	// tagged with this surface's own id — SurfaceID:"telegram" is what
-	// lets a later audit/dashboard query attribute the run correctly.
-	var surfaceID string
-	if err := s.InTenantTx(context.Background(), tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `SELECT surface_id FROM sessions WHERE session_id = $1`, starter.req.SessionID).Scan(&surfaceID)
-	}); err != nil {
-		t.Fatalf("load created session: %v", err)
-	}
-	if surfaceID != "telegram" {
-		t.Fatalf("sessions.surface_id = %q, want %q", surfaceID, "telegram")
-	}
 }
 
-func newWebhookBody(t *testing.T, chatID int, text string) []byte {
+func newZaloWebhookBody(t *testing.T, senderID, text string) []byte {
 	t.Helper()
 	body, err := json.Marshal(map[string]any{
-		"update_id": 1,
-		"message": map[string]any{
-			"message_id": 1,
-			"from":       map[string]any{"id": 42},
-			"chat":       map[string]any{"id": chatID},
-			"text":       text,
-		},
+		"app_id":     "app-1",
+		"event_name": "user_send_text",
+		"sender":     map[string]string{"id": senderID},
+		"message":    map[string]string{"text": text},
 	})
 	if err != nil {
 		t.Fatalf("marshal webhook body: %v", err)
@@ -161,31 +100,22 @@ func newWebhookBody(t *testing.T, chatID int, text string) []byte {
 	return body
 }
 
-func postWebhook(t *testing.T, srv *Server, tenantID uuid.UUID, body []byte) *httptest.ResponseRecorder {
+func postZaloWebhook(t *testing.T, srv *Server, tenantID uuid.UUID, secret string, body []byte) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, "/v1/webhooks/telegram/"+tenantID.String(), bytes.NewReader(body))
-	req.Header.Set("X-Telegram-Bot-Api-Secret-Token", "s")
+	req := httptest.NewRequest(http.MethodPost, "/v1/webhooks/zalo/"+tenantID.String(), bytes.NewReader(body))
+	req.Header.Set("X-ZEvent-Signature", sign(body, secret))
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
 	return rec
 }
 
-// TestHandleWebhook_CreatesConversationalSessionWithDeterministicKey proves
-// what changed from TestHandleWebhook_ValidUpdateCreatesARealSessionAndStartsARun
-// (kept passing unchanged, above, as the regression guard): a fresh
-// session now carries a deterministic per-chat key and opts into
-// kernel.RunConfig.Conversational, instead of SessionKey being a copy of
-// the random session id and Conversational left false.
+// TestHandleWebhook_CreatesConversationalSessionWithDeterministicKey mirrors
+// internal/surfaces/telegram's own (its doc comment).
 func TestHandleWebhook_CreatesConversationalSessionWithDeterministicKey(t *testing.T) {
-	pool := setupTelegramEnv(t)
+	pool := setupZaloEnv(t)
 	s := store.New(pool)
 	tenantID := uuid.New()
-	if err := s.InTenantTx(context.Background(), tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `INSERT INTO tenants (tenant_id, name) VALUES ($1, 'telegram-test')`, tenantID)
-		return err
-	}); err != nil {
-		t.Fatalf("insert tenant: %v", err)
-	}
+	insertTestTenant(t, s, tenantID)
 	kek, err := crypto.GenerateKEK()
 	if err != nil {
 		t.Fatalf("GenerateKEK: %v", err)
@@ -193,7 +123,7 @@ func TestHandleWebhook_CreatesConversationalSessionWithDeterministicKey(t *testi
 	starter := &fakeStarter{}
 	srv := &Server{Store: s, KeyStore: crypto.NewKeyStore(kek), Starter: starter, Channels: fakeChannels{secret: "s", ok: true}}
 
-	rec := postWebhook(t, srv, tenantID, newWebhookBody(t, 999, "please help"))
+	rec := postZaloWebhook(t, srv, tenantID, "s", newZaloWebhookBody(t, "user-1", "please help"))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s, want 200", rec.Code, rec.Body.String())
 	}
@@ -205,31 +135,21 @@ func TestHandleWebhook_CreatesConversationalSessionWithDeterministicKey(t *testi
 	}); err != nil {
 		t.Fatalf("load created session: %v", err)
 	}
-	if sessionKey != "telegram:999" {
-		t.Fatalf("session_key = %q, want %q", sessionKey, "telegram:999")
+	if sessionKey != "zalo:user-1" {
+		t.Fatalf("session_key = %q, want %q", sessionKey, "zalo:user-1")
 	}
 	if !conversational {
 		t.Fatal("conversational = false, want true")
 	}
 }
 
-// TestHandleWebhook_SecondMessageFromSamePeerResumesSameSession is this
-// feature's own headline case: once the first message's session reaches
-// awaiting_input (simulated here — fakeStarter never actually runs the
-// kernel, so the status is set directly, exactly what a real
-// ResumeConversation-eligible session looks like), a second message from
-// the SAME chat must resume it via Resume.ResumeConversation, never start
-// a new one.
+// TestHandleWebhook_SecondMessageFromSamePeerResumesSameSession mirrors
+// internal/surfaces/telegram's own (its doc comment).
 func TestHandleWebhook_SecondMessageFromSamePeerResumesSameSession(t *testing.T) {
-	pool := setupTelegramEnv(t)
+	pool := setupZaloEnv(t)
 	s := store.New(pool)
 	tenantID := uuid.New()
-	if err := s.InTenantTx(context.Background(), tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `INSERT INTO tenants (tenant_id, name) VALUES ($1, 'telegram-test')`, tenantID)
-		return err
-	}); err != nil {
-		t.Fatalf("insert tenant: %v", err)
-	}
+	insertTestTenant(t, s, tenantID)
 	kek, err := crypto.GenerateKEK()
 	if err != nil {
 		t.Fatalf("GenerateKEK: %v", err)
@@ -241,7 +161,7 @@ func TestHandleWebhook_SecondMessageFromSamePeerResumesSameSession(t *testing.T)
 		Channels: fakeChannels{secret: "s", ok: true},
 	}
 
-	rec := postWebhook(t, srv, tenantID, newWebhookBody(t, 999, "first message"))
+	rec := postZaloWebhook(t, srv, tenantID, "s", newZaloWebhookBody(t, "user-1", "first message"))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("first message: status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -250,12 +170,6 @@ func TestHandleWebhook_SecondMessageFromSamePeerResumesSameSession(t *testing.T)
 		t.Fatal("the FIRST message for a new peer must not resume anything")
 	}
 
-	// Simulate the kernel having already run this session to
-	// awaiting_input — real production would get here via
-	// kernel.RunConfig.Conversational's own suspendForUserInput path
-	// (tested at the kernel/runctl layer in tests/integration/
-	// conversational_test.go); this test's own concern is dispatch's
-	// lookup-and-decide logic, not the kernel's own pause mechanics.
 	if err := s.InTenantTx(context.Background(), tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `UPDATE sessions SET status = $2 WHERE session_id = $1`, firstSessionID, store.SessionStatusAwaitingInput)
 		return err
@@ -263,40 +177,28 @@ func TestHandleWebhook_SecondMessageFromSamePeerResumesSameSession(t *testing.T)
 		t.Fatalf("mark session awaiting_input: %v", err)
 	}
 
-	rec = postWebhook(t, srv, tenantID, newWebhookBody(t, 999, "second message"))
+	rec = postZaloWebhook(t, srv, tenantID, "s", newZaloWebhookBody(t, "user-1", "second message"))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("second message: status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 	if !resumer.resumed {
-		t.Fatal("the second message from the SAME chat did not resume")
+		t.Fatal("the second message from the SAME sender did not resume")
 	}
 	if resumer.sessionID != firstSessionID {
 		t.Fatalf("resumed session id = %s, want the first message's own session %s", resumer.sessionID, firstSessionID)
-	}
-	if resumer.input != "second message" {
-		t.Fatalf("resumed input = %q, want %q", resumer.input, "second message")
 	}
 	if starter.req.SessionID != firstSessionID {
 		t.Fatal("StartRun was called a second time — the resumed message must never also create a fresh session")
 	}
 }
 
-// TestHandleWebhook_SamePeerAfterNonAwaitingInputStartsFreshReusingKey is
-// the dispatch decision's OTHER branch: a session found for this peer that
-// is NOT awaiting_input (still queued, in this test — running/suspended/
-// terminal all take the identical fresh-session path) must not be resumed
-// — a fresh session starts instead, reusing the SAME deterministic key so
-// the NEXT lookup finds the NEW one.
+// TestHandleWebhook_SamePeerAfterNonAwaitingInputStartsFreshReusingKey
+// mirrors internal/surfaces/telegram's own (its doc comment).
 func TestHandleWebhook_SamePeerAfterNonAwaitingInputStartsFreshReusingKey(t *testing.T) {
-	pool := setupTelegramEnv(t)
+	pool := setupZaloEnv(t)
 	s := store.New(pool)
 	tenantID := uuid.New()
-	if err := s.InTenantTx(context.Background(), tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `INSERT INTO tenants (tenant_id, name) VALUES ($1, 'telegram-test')`, tenantID)
-		return err
-	}); err != nil {
-		t.Fatalf("insert tenant: %v", err)
-	}
+	insertTestTenant(t, s, tenantID)
 	kek, err := crypto.GenerateKEK()
 	if err != nil {
 		t.Fatalf("GenerateKEK: %v", err)
@@ -308,15 +210,13 @@ func TestHandleWebhook_SamePeerAfterNonAwaitingInputStartsFreshReusingKey(t *tes
 		Channels: fakeChannels{secret: "s", ok: true},
 	}
 
-	rec := postWebhook(t, srv, tenantID, newWebhookBody(t, 999, "first message"))
+	rec := postZaloWebhook(t, srv, tenantID, "s", newZaloWebhookBody(t, "user-1", "first message"))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("first message: status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 	firstSessionID := starter.req.SessionID
-	// Left at the schema default ("queued") — never touched, unlike the
-	// resume test above.
 
-	rec = postWebhook(t, srv, tenantID, newWebhookBody(t, 999, "second message"))
+	rec = postZaloWebhook(t, srv, tenantID, "s", newZaloWebhookBody(t, "user-1", "second message"))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("second message: status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -342,22 +242,14 @@ func TestHandleWebhook_SamePeerAfterNonAwaitingInputStartsFreshReusingKey(t *tes
 	}
 }
 
-// TestServer_NotificationPayload_DecryptsContentEvent is drainAndNotify's
-// own new half (reply delivery): given a real, sealed EventContent — the
-// exact shape kernel/events.go's appendEvent produces (contentPayload{Body:
-// text}) — notificationPayload must decrypt it and build the "content"
-// kind Sender.Send renders verbatim.
+// TestServer_NotificationPayload_DecryptsContentEvent mirrors
+// internal/surfaces/telegram's own (its doc comment).
 func TestServer_NotificationPayload_DecryptsContentEvent(t *testing.T) {
-	pool := setupTelegramEnv(t)
+	pool := setupZaloEnv(t)
 	s := store.New(pool)
 	tenantID := uuid.New()
 	sessionID := uuid.New()
-	if err := s.InTenantTx(context.Background(), tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `INSERT INTO tenants (tenant_id, name) VALUES ($1, 'telegram-test')`, tenantID)
-		return err
-	}); err != nil {
-		t.Fatalf("insert tenant: %v", err)
-	}
+	insertTestTenant(t, s, tenantID)
 
 	kek, err := crypto.GenerateKEK()
 	if err != nil {

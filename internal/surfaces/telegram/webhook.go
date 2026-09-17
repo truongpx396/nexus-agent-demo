@@ -72,6 +72,13 @@ type Server struct {
 	Channels              ChannelPort
 	CatalogManifestDigest []byte
 
+	// Resume continues an existing conversational session found awaiting
+	// the next message (handleWebhook's own session-key lookup) — nil
+	// leaves that path unavailable, degrading every message to Starter's
+	// always-fresh-session behavior (this field's own zero value, which
+	// every pre-continuity caller has).
+	Resume Resumer
+
 	// Outbox, if set, backs durable at-least-once delivery of
 	// EventApprovalRequested (README task 7.14, reused unchanged) — nil
 	// leaves it unmounted. Unlike REST's own OutboxSender (a single
@@ -148,13 +155,45 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	// Task 7.13: resolved fresh from THIS update, never cached.
 	userID := uuid.NewSHA1(telegramNamespace, fmt.Appendf(nil, "%s:%d", tenantID, upd.Message.From.ID))
 	chatID := fmt.Sprintf("%d", upd.Message.Chat.ID)
+	// sessionKey is deterministic per (tenant, chat) — every message from
+	// this chat looks up the SAME key (store.GetSessionByKey), so a reply
+	// resumes the open conversation instead of always starting a new one.
+	// Tenant scoping comes from the lookup's own WHERE tenant_id=$1, not
+	// this string, so no tenant id needs to be folded in here.
+	sessionKey := "telegram:" + chatID
 
-	if _, err := s.startRun(r.Context(), tenantID, userID, chatID, upd.Message.Text); err != nil {
-		log.Error().Err(err).Any("tenant_id", tenantID).Msg("telegram: start run")
-		http.Error(w, "start run: "+err.Error(), http.StatusInternalServerError)
+	if _, err := s.dispatch(r.Context(), tenantID, userID, sessionKey, chatID, upd.Message.Text); err != nil {
+		log.Error().Err(err).Any("tenant_id", tenantID).Msg("telegram: dispatch")
+		http.Error(w, "dispatch: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+// dispatch looks up sessionKey's most recent session (store.GetSessionByKey)
+// and resumes it via Resume.ResumeConversation when it's genuinely
+// awaiting_input; every other case (no session yet, or one found but
+// running/suspended/already terminal) falls through to startRun — a fresh
+// conversational session reusing the same key, so the NEXT message finds
+// it. s.Resume == nil (no pre-continuity caller sets it) always takes the
+// fresh-session path, unchanged from before this feature existed.
+func (s *Server) dispatch(ctx context.Context, tenantID, userID uuid.UUID, sessionKey, chatID, input string) (uuid.UUID, error) {
+	if s.Resume != nil {
+		var sess store.Session
+		var found bool
+		err := s.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+			var derr error
+			sess, found, derr = store.GetSessionByKey(ctx, tx, tenantID, sessionKey)
+			return derr
+		})
+		if err != nil {
+			return uuid.Nil, fmt.Errorf("look up session for %s: %w", sessionKey, err)
+		}
+		if found && sess.Status == store.SessionStatusAwaitingInput {
+			return s.resumeRun(ctx, tenantID, sess.SessionID, chatID, input)
+		}
+	}
+	return s.startRun(ctx, tenantID, userID, sessionKey, chatID, input)
 }
 
 // startRun mirrors internal/surfaces/rest's handleCreateRun (session + DEK
@@ -163,8 +202,12 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 // Telegram share no direct dependency. chatID is the Telegram delivery
 // target for any outbox notification this run produces — carried alongside
 // (never derived from) sessionID, since the two identify different things
-// (surfaces.Outbox.Deliver's own recipient parameter).
-func (s *Server) startRun(ctx context.Context, tenantID, userID uuid.UUID, chatID, input string) (uuid.UUID, error) {
+// (surfaces.Outbox.Deliver's own recipient parameter). sessionKey is
+// dispatch's own deterministic per-chat key (kernel.RunConfig.
+// Conversational's pause-not-terminate semantics mean the NEXT message
+// from this chat can find this session again via that key while it's
+// awaiting_input).
+func (s *Server) startRun(ctx context.Context, tenantID, userID uuid.UUID, sessionKey, chatID, input string) (uuid.UUID, error) {
 	route := provider.Route(provider.DataLabelInternal, provider.DifficultySimple)
 	sessionID := uuid.New()
 	digest := harness.Digest(harness.Config{
@@ -181,17 +224,18 @@ func (s *Server) startRun(ctx context.Context, tenantID, userID uuid.UUID, chatI
 			return derr
 		}
 		return store.CreateSession(ctx, tx, store.Session{
-			SessionID:     sessionID,
-			SessionKey:    sessionID.String(),
-			TenantID:      tenantID,
-			SurfaceID:     "telegram",
-			UserID:        userID,
-			AgentVersion:  1,
-			HarnessDigest: digest,
-			DataLabel:     string(provider.DataLabelInternal),
-			RouteModelID:  route.ModelID,
-			RouteReason:   route.Reason,
-			AutonomyLevel: "supervised",
+			SessionID:      sessionID,
+			SessionKey:     sessionKey,
+			TenantID:       tenantID,
+			SurfaceID:      "telegram",
+			UserID:         userID,
+			AgentVersion:   1,
+			HarnessDigest:  digest,
+			DataLabel:      string(provider.DataLabelInternal),
+			RouteModelID:   route.ModelID,
+			RouteReason:    route.Reason,
+			AutonomyLevel:  "supervised",
+			Conversational: true,
 		})
 	})
 	if err != nil {
@@ -213,12 +257,28 @@ func (s *Server) startRun(ctx context.Context, tenantID, userID uuid.UUID, chatI
 	return sessionID, nil
 }
 
+// resumeRun continues sessionID (already confirmed awaiting_input by
+// dispatch) with the next chat message — Resume.ResumeConversation is
+// cmd/nexusd's adapter over internal/runctl.Control.ResumeConversation,
+// which rehydrates the session from its durable log itself; nothing here
+// needs to reconstruct RunConfig the way startRun's own DEK-minting/
+// harness-digest dance does.
+func (s *Server) resumeRun(ctx context.Context, tenantID, sessionID uuid.UUID, chatID, input string) (uuid.UUID, error) {
+	events, err := s.Resume.ResumeConversation(context.Background(), tenantID, sessionID, input) // a run outlives this webhook request
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("resume conversation: %w", err)
+	}
+	go s.drainAndNotify(tenantID, sessionID, chatID, events)
+	return sessionID, nil
+}
+
 // drainAndNotify is publishUntilDone's Telegram-side counterpart
-// (internal/surfaces/rest/server.go): the only consumer of StartRun's
-// event channel on this surface, delivering EventApprovalRequested through
-// the shared outbox exactly like REST's own deliverApprovalNotification —
-// a human must actually see this, unlike every other event this surface
-// has no live SSE subscriber to fan out to anyway.
+// (internal/surfaces/rest/server.go): the only consumer of a run's event
+// channel on this surface (fresh via startRun or resumed via resumeRun —
+// identical either way), delivering EventApprovalRequested AND
+// EventContent through the shared outbox — a human must actually see
+// both, unlike every other event this surface has no live SSE subscriber
+// to fan out to anyway.
 func (s *Server) drainAndNotify(tenantID, sessionID uuid.UUID, chatID string, events <-chan RunEvent) {
 	if s.Outbox == nil {
 		for range events {
@@ -228,20 +288,73 @@ func (s *Server) drainAndNotify(tenantID, sessionID uuid.UUID, chatID string, ev
 	}
 	sender := &Sender{Channels: s.Channels, TenantID: tenantID, Client: s.HTTPClient}
 	for re := range events {
-		if re.Err != nil || re.Event.Type != store.EventApprovalRequested {
+		if re.Err != nil {
 			continue
 		}
-		toolID := ""
-		if re.Event.ToolID != nil {
-			toolID = *re.Event.ToolID
-		}
-		payload, err := json.Marshal(map[string]string{"session_id": sessionID.String(), "tool_id": toolID})
-		if err != nil {
+		payload, ok := s.notificationPayload(context.Background(), tenantID, sessionID, re.Event)
+		if !ok {
 			continue
 		}
 		if err := s.Outbox.Deliver(context.Background(), tenantID, sessionID, re.Event.Seq, "telegram", chatID, payload, sender); err != nil {
-			log.Error().Err(err).Any("session_id", sessionID).Msg("telegram: deliver approval notification")
+			log.Error().Err(err).Any("session_id", sessionID).Msg("telegram: deliver notification")
 		}
+	}
+}
+
+// notificationPayload builds the payload for ONE event worth notifying the
+// user about — ok=false means this event isn't one of those (every type
+// other than approval_requested/content). EventContent's Body is sealed
+// (kernel/events.go's contentPayload, appendEvent's own doc comment: the
+// channel this surface reads carries the durable, ciphertext Event, never
+// plaintext) — decrypted here the same way
+// internal/surfaces/rest/run_events.go's toEventDTO already does, the only
+// other place in this codebase that decrypts a store.Event outside the
+// kernel itself. A decrypt failure is logged and the event skipped, never
+// crashing the drain loop — this surface has no other way to surface that
+// failure to anyone.
+func (s *Server) notificationPayload(ctx context.Context, tenantID, sessionID uuid.UUID, ev store.Event) (payload []byte, ok bool) {
+	switch ev.Type { //nolint:exhaustive // only these two event types are ever worth notifying a chat user about
+	case store.EventApprovalRequested:
+		toolID := ""
+		if ev.ToolID != nil {
+			toolID = *ev.ToolID
+		}
+		b, err := json.Marshal(notificationPayload{Kind: "approval", SessionID: sessionID.String(), ToolID: toolID})
+		if err != nil {
+			return nil, false
+		}
+		return b, true
+
+	case store.EventContent:
+		var dek crypto.DEK
+		err := s.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+			var derr error
+			dek, derr = s.KeyStore.Unwrap(ctx, tx, ev.KeyID)
+			return derr
+		})
+		if err != nil {
+			log.Error().Err(err).Any("session_id", sessionID).Msg("telegram: unwrap key for content event")
+			return nil, false
+		}
+		plaintext, err := crypto.Open(dek, ev.Payload, tenantID.String(), sessionID.String())
+		if err != nil {
+			log.Error().Err(err).Any("session_id", sessionID).Msg("telegram: decrypt content event")
+			return nil, false
+		}
+		var body struct {
+			Body string `json:"body"`
+		}
+		if err := json.Unmarshal(plaintext, &body); err != nil {
+			return nil, false
+		}
+		b, err := json.Marshal(notificationPayload{Kind: "content", Text: body.Body})
+		if err != nil {
+			return nil, false
+		}
+		return b, true
+
+	default:
+		return nil, false
 	}
 }
 

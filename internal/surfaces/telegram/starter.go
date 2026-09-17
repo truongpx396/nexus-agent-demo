@@ -37,3 +37,13 @@ type RunEvent struct {
 type RunStarter interface {
 	StartRun(ctx context.Context, req RunRequest) (<-chan RunEvent, error)
 }
+
+// Resumer continues an existing conversational session (webhook.go's own
+// resumeRun) — the same duplicated-not-imported idiom RunStarter already
+// uses: internal/runctl transitively imports kernel, which this package
+// must never import directly (tests/contract/boundaries_test.go's
+// wildcard rule over internal/surfaces/..., checked via the FULL
+// transitive import graph, not just direct imports).
+type Resumer interface {
+	ResumeConversation(ctx context.Context, tenantID, sessionID uuid.UUID, input string) (<-chan RunEvent, error)
+}

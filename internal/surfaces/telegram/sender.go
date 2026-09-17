@@ -11,6 +11,18 @@ import (
 	"github.com/google/uuid"
 )
 
+// notificationPayload is the explicit, discriminated shape drainAndNotify
+// (webhook.go) builds and Send below interprets — two real kinds now
+// (approval and content), so guessing the kind by attempting to unmarshal
+// into one specific shape (this file's own pre-continuity approach) is no
+// longer safe; Kind says which fields are meaningful.
+type notificationPayload struct {
+	Kind      string `json:"kind"` // "approval" | "content"
+	SessionID string `json:"session_id,omitempty"`
+	ToolID    string `json:"tool_id,omitempty"`
+	Text      string `json:"text,omitempty"`
+}
+
 // Sender implements surfaces.Sender by POSTing to Telegram's Bot API
 // sendMessage endpoint, using the tenant's own sealed bot token — resolved
 // per send, never cached across sends (BotTokenFor mirrors ChannelPort.
@@ -32,13 +44,15 @@ func (s *Sender) Send(ctx context.Context, surfaceID, recipient string, payload 
 		return fmt.Errorf("telegram: resolve bot token: %w", err)
 	}
 
-	var body struct {
-		SessionID string `json:"session_id"`
-		ToolID    string `json:"tool_id"`
-	}
+	var body notificationPayload
 	text := string(payload)
 	if err := json.Unmarshal(payload, &body); err == nil {
-		text = fmt.Sprintf("Approval needed for session %s (tool: %s) — review it in the run's own approval endpoint.", body.SessionID, body.ToolID)
+		switch body.Kind {
+		case "approval":
+			text = fmt.Sprintf("Approval needed for session %s (tool: %s) — review it in the run's own approval endpoint.", body.SessionID, body.ToolID)
+		case "content":
+			text = body.Text
+		}
 	}
 
 	reqBody, err := json.Marshal(map[string]string{"chat_id": recipient, "text": text})

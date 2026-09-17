@@ -47,6 +47,95 @@ func contentOnlyScript(text string) fake.Script {
 	}}
 }
 
+// --- store: GetSessionByKey, the primitive internal/surfaces/telegram
+// (and zalo, email) use for deterministic per-peer session continuity ---
+
+func TestStore_GetSessionByKey_NotFoundIsOkFalseNotError(t *testing.T) {
+	pool, cleanup := setupPostgresAndPgBouncer(t)
+	defer cleanup()
+	ctx := context.Background()
+	st := store.New(pool)
+
+	tenantID := uuid.New()
+	if err := insertTenant(ctx, st, tenantID); err != nil {
+		t.Fatalf("insert tenant: %v", err)
+	}
+
+	var found bool
+	err := st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+		var derr error
+		_, found, derr = store.GetSessionByKey(ctx, tx, tenantID, "telegram:no-such-chat")
+		return derr
+	})
+	if err != nil {
+		t.Fatalf("GetSessionByKey: %v", err)
+	}
+	if found {
+		t.Fatal("expected found=false for a key with no session")
+	}
+}
+
+func TestStore_GetSessionByKey_ReturnsMostRecentWhenKeyIsShared(t *testing.T) {
+	pool, cleanup := setupPostgresAndPgBouncer(t)
+	defer cleanup()
+	ctx := context.Background()
+	st := store.New(pool)
+
+	// newTestSession creates one session with its OWN random SessionKey
+	// (sessionID.String()); this test needs two sessions sharing the SAME
+	// key, exactly like a peer's second conversation reusing the first
+	// one's key after it went terminal — insert directly.
+	tenantID := uuid.New()
+	if err := insertTenant(ctx, st, tenantID); err != nil {
+		t.Fatalf("insert tenant: %v", err)
+	}
+	const sharedKey = "telegram:12345"
+	older := uuid.New()
+	newer := uuid.New()
+	err := st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+		for _, id := range []uuid.UUID{older, newer} {
+			if err := store.CreateSession(ctx, tx, store.Session{
+				SessionID: id, SessionKey: sharedKey, TenantID: tenantID,
+				SurfaceID: "telegram", UserID: uuid.New(), AgentVersion: 1,
+				HarnessDigest: []byte("test-digest"), DataLabel: "internal", RouteModelID: "test-model",
+				AutonomyLevel: "supervised", Conversational: true,
+			}); err != nil {
+				return err
+			}
+			// created_at has whole-second precision risk in a fast test —
+			// force ordering explicitly rather than relying on wall-clock
+			// separation between the two inserts above.
+			if _, err := tx.Exec(ctx, `UPDATE sessions SET created_at = now() WHERE session_id = $1`, id); err != nil {
+				return err
+			}
+		}
+		// newer must sort after older even at second-level timestamp
+		// resolution.
+		_, err := tx.Exec(ctx, `UPDATE sessions SET created_at = created_at + interval '1 second' WHERE session_id = $1`, newer)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("create sessions: %v", err)
+	}
+
+	var got store.Session
+	var found bool
+	err = st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+		var derr error
+		got, found, derr = store.GetSessionByKey(ctx, tx, tenantID, sharedKey)
+		return derr
+	})
+	if err != nil {
+		t.Fatalf("GetSessionByKey: %v", err)
+	}
+	if !found {
+		t.Fatal("expected found=true")
+	}
+	if got.SessionID != newer {
+		t.Fatalf("GetSessionByKey returned session %s, want the most recent one %s", got.SessionID, newer)
+	}
+}
+
 // --- kernel-level: the pause/resume mechanics themselves ---
 
 func TestKernel_ConversationalRunPausesInsteadOfTerminating(t *testing.T) {

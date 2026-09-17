@@ -37,6 +37,22 @@ func (f *fakeStarter) StartRun(_ context.Context, req RunRequest) (<-chan RunEve
 	return ch, nil
 }
 
+// fakeResumer mirrors internal/surfaces/telegram's own (its doc comment).
+type fakeResumer struct {
+	resumed   bool
+	sessionID uuid.UUID
+	input     string
+}
+
+func (f *fakeResumer) ResumeConversation(_ context.Context, _ uuid.UUID, sessionID uuid.UUID, input string) (<-chan RunEvent, error) {
+	f.resumed = true
+	f.sessionID = sessionID
+	f.input = input
+	ch := make(chan RunEvent)
+	close(ch)
+	return ch, nil
+}
+
 func TestHandleWebhook_MissingBasicAuthRefusedBeforeBodyIsEverParsed(t *testing.T) {
 	starter := &fakeStarter{}
 	s := &Server{Channels: fakeChannels{user: "bot", pass: "secret", ok: true}, Starter: starter}

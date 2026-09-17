@@ -5,6 +5,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/cron"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/email"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
@@ -20,8 +21,18 @@ import (
 // shares — this file is the only place that needs to know all five
 // surfaces' local types at once, matching kernelRunStarter's own doc
 // comment ("the only place a kernel.RunState/kernel.RunConfig gets built").
+//
+// telegram/zalo/email's own adapters also implement that surface's local
+// Resumer interface (ctl, wired only on those three — never cron, which
+// has no human peer to resume a conversation with) — the same
+// iter.Seq2-to-channel adaptation nexusdRunCtlPort.ResumeConversation
+// (ports.go) already does for REST, just retargeted at each surface's own
+// RunEvent type.
 
-type telegramStarterAdapter struct{ k *kernelRunStarter }
+type telegramStarterAdapter struct {
+	k   *kernelRunStarter
+	ctl *runctl.Control
+}
 
 func (a telegramStarterAdapter) StartRun(ctx context.Context, req telegram.RunRequest) (<-chan telegram.RunEvent, error) {
 	events, err := a.k.StartRun(ctx, rest.RunRequest{
@@ -41,7 +52,28 @@ func (a telegramStarterAdapter) StartRun(ctx context.Context, req telegram.RunRe
 	return out, nil
 }
 
-type zaloStarterAdapter struct{ k *kernelRunStarter }
+func (a telegramStarterAdapter) ResumeConversation(ctx context.Context, tenantID, sessionID uuid.UUID, input string) (<-chan telegram.RunEvent, error) {
+	events, err := a.ctl.ResumeConversation(ctx, tenantID, sessionID, input)
+	if err != nil {
+		return nil, err
+	}
+	out := make(chan telegram.RunEvent, 8)
+	go func() {
+		defer close(out)
+		for ev, err := range events {
+			out <- telegram.RunEvent{Event: ev, Err: err}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	return out, nil
+}
+
+type zaloStarterAdapter struct {
+	k   *kernelRunStarter
+	ctl *runctl.Control
+}
 
 func (a zaloStarterAdapter) StartRun(ctx context.Context, req zalo.RunRequest) (<-chan zalo.RunEvent, error) {
 	events, err := a.k.StartRun(ctx, rest.RunRequest{
@@ -61,7 +93,28 @@ func (a zaloStarterAdapter) StartRun(ctx context.Context, req zalo.RunRequest) (
 	return out, nil
 }
 
-type emailStarterAdapter struct{ k *kernelRunStarter }
+func (a zaloStarterAdapter) ResumeConversation(ctx context.Context, tenantID, sessionID uuid.UUID, input string) (<-chan zalo.RunEvent, error) {
+	events, err := a.ctl.ResumeConversation(ctx, tenantID, sessionID, input)
+	if err != nil {
+		return nil, err
+	}
+	out := make(chan zalo.RunEvent, 8)
+	go func() {
+		defer close(out)
+		for ev, err := range events {
+			out <- zalo.RunEvent{Event: ev, Err: err}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	return out, nil
+}
+
+type emailStarterAdapter struct {
+	k   *kernelRunStarter
+	ctl *runctl.Control
+}
 
 func (a emailStarterAdapter) StartRun(ctx context.Context, req email.RunRequest) (<-chan email.RunEvent, error) {
 	events, err := a.k.StartRun(ctx, rest.RunRequest{
@@ -76,6 +129,24 @@ func (a emailStarterAdapter) StartRun(ctx context.Context, req email.RunRequest)
 		defer close(out)
 		for ev := range events {
 			out <- email.RunEvent{Event: ev.Event, Err: ev.Err}
+		}
+	}()
+	return out, nil
+}
+
+func (a emailStarterAdapter) ResumeConversation(ctx context.Context, tenantID, sessionID uuid.UUID, input string) (<-chan email.RunEvent, error) {
+	events, err := a.ctl.ResumeConversation(ctx, tenantID, sessionID, input)
+	if err != nil {
+		return nil, err
+	}
+	out := make(chan email.RunEvent, 8)
+	go func() {
+		defer close(out)
+		for ev, err := range events {
+			out <- email.RunEvent{Event: ev, Err: err}
+			if err != nil {
+				return
+			}
 		}
 	}()
 	return out, nil

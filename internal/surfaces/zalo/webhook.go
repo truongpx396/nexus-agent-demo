@@ -79,6 +79,12 @@ type Server struct {
 	HTTPClient *http.Client
 
 	RateLimit *RateLimiter
+
+	// Resume continues an existing conversational session found awaiting
+	// the next message — see internal/surfaces/telegram.Server's own doc
+	// comment; nil (every pre-continuity caller) always takes the
+	// always-fresh-session path.
+	Resume Resumer
 }
 
 func (s *Server) Handler() http.Handler {
@@ -152,20 +158,45 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	userID := uuid.NewSHA1(zaloNamespace, fmt.Appendf(nil, "%s:%s", tenantID, ev.Sender.ID))
+	// sessionKey is deterministic per (tenant, sender) — see
+	// internal/surfaces/telegram/webhook.go's own doc comment on this
+	// field for the full rationale.
+	sessionKey := "zalo:" + ev.Sender.ID
 
-	if _, err := s.startRun(r.Context(), tenantID, userID, ev.Sender.ID, ev.Message.Text); err != nil {
-		log.Error().Err(err).Any("tenant_id", tenantID).Msg("zalo: start run")
-		http.Error(w, "start run: "+err.Error(), http.StatusInternalServerError)
+	if _, err := s.dispatch(r.Context(), tenantID, userID, sessionKey, ev.Sender.ID, ev.Message.Text); err != nil {
+		log.Error().Err(err).Any("tenant_id", tenantID).Msg("zalo: dispatch")
+		http.Error(w, "dispatch: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+// dispatch mirrors internal/surfaces/telegram's own (its doc comment) —
+// duplicated per this codebase's established cross-surface idiom.
+func (s *Server) dispatch(ctx context.Context, tenantID, userID uuid.UUID, sessionKey, recipientID, input string) (uuid.UUID, error) {
+	if s.Resume != nil {
+		var sess store.Session
+		var found bool
+		err := s.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+			var derr error
+			sess, found, derr = store.GetSessionByKey(ctx, tx, tenantID, sessionKey)
+			return derr
+		})
+		if err != nil {
+			return uuid.Nil, fmt.Errorf("look up session for %s: %w", sessionKey, err)
+		}
+		if found && sess.Status == store.SessionStatusAwaitingInput {
+			return s.resumeRun(ctx, tenantID, sess.SessionID, recipientID, input)
+		}
+	}
+	return s.startRun(ctx, tenantID, userID, sessionKey, recipientID, input)
 }
 
 // startRun mirrors internal/surfaces/telegram's own (its doc comment) —
 // duplicated per this codebase's established cross-surface idiom.
 // recipientID is the Zalo user id this run's own outbox delivery (if any)
 // sends back to.
-func (s *Server) startRun(ctx context.Context, tenantID, userID uuid.UUID, recipientID, input string) (uuid.UUID, error) {
+func (s *Server) startRun(ctx context.Context, tenantID, userID uuid.UUID, sessionKey, recipientID, input string) (uuid.UUID, error) {
 	route := provider.Route(provider.DataLabelInternal, provider.DifficultySimple)
 	sessionID := uuid.New()
 	digest := harness.Digest(harness.Config{
@@ -182,17 +213,18 @@ func (s *Server) startRun(ctx context.Context, tenantID, userID uuid.UUID, recip
 			return derr
 		}
 		return store.CreateSession(ctx, tx, store.Session{
-			SessionID:     sessionID,
-			SessionKey:    sessionID.String(),
-			TenantID:      tenantID,
-			SurfaceID:     "zalo",
-			UserID:        userID,
-			AgentVersion:  1,
-			HarnessDigest: digest,
-			DataLabel:     string(provider.DataLabelInternal),
-			RouteModelID:  route.ModelID,
-			RouteReason:   route.Reason,
-			AutonomyLevel: "supervised",
+			SessionID:      sessionID,
+			SessionKey:     sessionKey,
+			TenantID:       tenantID,
+			SurfaceID:      "zalo",
+			UserID:         userID,
+			AgentVersion:   1,
+			HarnessDigest:  digest,
+			DataLabel:      string(provider.DataLabelInternal),
+			RouteModelID:   route.ModelID,
+			RouteReason:    route.Reason,
+			AutonomyLevel:  "supervised",
+			Conversational: true,
 		})
 	})
 	if err != nil {
@@ -214,6 +246,19 @@ func (s *Server) startRun(ctx context.Context, tenantID, userID uuid.UUID, recip
 	return sessionID, nil
 }
 
+// resumeRun mirrors internal/surfaces/telegram's own (its doc comment).
+func (s *Server) resumeRun(ctx context.Context, tenantID, sessionID uuid.UUID, recipientID, input string) (uuid.UUID, error) {
+	events, err := s.Resume.ResumeConversation(context.Background(), tenantID, sessionID, input)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("resume conversation: %w", err)
+	}
+	go s.drainAndNotify(tenantID, sessionID, recipientID, events)
+	return sessionID, nil
+}
+
+// drainAndNotify mirrors internal/surfaces/telegram's own (its doc
+// comment) — the only consumer of a run's event channel on this surface,
+// fresh or resumed alike.
 func (s *Server) drainAndNotify(tenantID, sessionID uuid.UUID, recipientID string, events <-chan RunEvent) {
 	if s.Outbox == nil {
 		for range events {
@@ -222,20 +267,65 @@ func (s *Server) drainAndNotify(tenantID, sessionID uuid.UUID, recipientID strin
 	}
 	sender := &Sender{Channels: s.Channels, TenantID: tenantID, Client: s.HTTPClient}
 	for re := range events {
-		if re.Err != nil || re.Event.Type != store.EventApprovalRequested {
+		if re.Err != nil {
 			continue
 		}
-		toolID := ""
-		if re.Event.ToolID != nil {
-			toolID = *re.Event.ToolID
-		}
-		payload, err := json.Marshal(map[string]string{"session_id": sessionID.String(), "tool_id": toolID})
-		if err != nil {
+		payload, ok := s.notificationPayload(context.Background(), tenantID, sessionID, re.Event)
+		if !ok {
 			continue
 		}
 		if err := s.Outbox.Deliver(context.Background(), tenantID, sessionID, re.Event.Seq, "zalo", recipientID, payload, sender); err != nil {
-			log.Error().Err(err).Any("session_id", sessionID).Msg("zalo: deliver approval notification")
+			log.Error().Err(err).Any("session_id", sessionID).Msg("zalo: deliver notification")
 		}
+	}
+}
+
+// notificationPayload mirrors internal/surfaces/telegram's own (its doc
+// comment) — decrypts EventContent the same way
+// internal/surfaces/rest/run_events.go's toEventDTO does.
+func (s *Server) notificationPayload(ctx context.Context, tenantID, sessionID uuid.UUID, ev store.Event) (payload []byte, ok bool) {
+	switch ev.Type { //nolint:exhaustive // only these two event types are ever worth notifying a chat user about
+	case store.EventApprovalRequested:
+		toolID := ""
+		if ev.ToolID != nil {
+			toolID = *ev.ToolID
+		}
+		b, err := json.Marshal(notificationPayload{Kind: "approval", SessionID: sessionID.String(), ToolID: toolID})
+		if err != nil {
+			return nil, false
+		}
+		return b, true
+
+	case store.EventContent:
+		var dek crypto.DEK
+		err := s.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+			var derr error
+			dek, derr = s.KeyStore.Unwrap(ctx, tx, ev.KeyID)
+			return derr
+		})
+		if err != nil {
+			log.Error().Err(err).Any("session_id", sessionID).Msg("zalo: unwrap key for content event")
+			return nil, false
+		}
+		plaintext, err := crypto.Open(dek, ev.Payload, tenantID.String(), sessionID.String())
+		if err != nil {
+			log.Error().Err(err).Any("session_id", sessionID).Msg("zalo: decrypt content event")
+			return nil, false
+		}
+		var body struct {
+			Body string `json:"body"`
+		}
+		if err := json.Unmarshal(plaintext, &body); err != nil {
+			return nil, false
+		}
+		b, err := json.Marshal(notificationPayload{Kind: "content", Text: body.Body})
+		if err != nil {
+			return nil, false
+		}
+		return b, true
+
+	default:
+		return nil, false
 	}
 }
 
