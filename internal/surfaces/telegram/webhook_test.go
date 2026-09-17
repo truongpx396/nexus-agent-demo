@@ -35,6 +35,24 @@ func (f *fakeStarter) StartRun(_ context.Context, req RunRequest) (<-chan RunEve
 	return ch, nil
 }
 
+// fakeResumer records what ResumeConversation was called with — used to
+// prove dispatch's own resume-vs-fresh decision, mirroring fakeStarter's
+// own shape.
+type fakeResumer struct {
+	resumed   bool
+	sessionID uuid.UUID
+	input     string
+}
+
+func (f *fakeResumer) ResumeConversation(_ context.Context, _ uuid.UUID, sessionID uuid.UUID, input string) (<-chan RunEvent, error) {
+	f.resumed = true
+	f.sessionID = sessionID
+	f.input = input
+	ch := make(chan RunEvent)
+	close(ch)
+	return ch, nil
+}
+
 func TestHandleWebhook_WrongSecretRefusedBeforeBodyIsEverParsed(t *testing.T) {
 	starter := &fakeStarter{}
 	s := &Server{Channels: fakeChannels{secret: "correct-secret", ok: true}, Starter: starter}

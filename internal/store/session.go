@@ -179,6 +179,57 @@ func GetSession(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) (Session, e
 	return s, nil
 }
 
+// GetSessionByKey loads the MOST RECENT session for (tenantID, sessionKey)
+// — sessions_tenant_session_key_idx (migrations/0002_sessions.sql) backs
+// this, but session_key carries no uniqueness constraint, deliberately:
+// internal/surfaces/telegram (and zalo, email) reuse one deterministic key
+// per peer (e.g. "telegram:{chat_id}") across every session that peer ever
+// has, so an idle-timed-out or cancelled conversation's key gets reused by
+// whatever session comes next for the same peer — only the latest one is
+// ever a caller's concern. ok=false (not an error) is the ordinary "no
+// session for this peer yet" case, mirroring ChannelPort.WebhookSecret's
+// own (string, bool, error) convention in those same packages.
+func GetSessionByKey(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, sessionKey string) (Session, bool, error) {
+	var s Session
+	var reason, overrides []byte
+	err := tx.QueryRow(ctx, `
+		SELECT session_id, session_key, tenant_id, surface_id, user_id,
+		       agent_id, agent_version, harness_digest,
+		       data_label, route_model_id, route_reason,
+		       autonomy_level, root_session_id, depth, delegation_role,
+		       status, terminal_reason,
+		       forked_from_session_id, fork_seq, fork_overrides,
+		       plan_id, plan_version, team_id, created_at, conversational, updated_at
+		FROM sessions WHERE tenant_id = $1 AND session_key = $2
+		ORDER BY created_at DESC LIMIT 1`, tenantID, sessionKey,
+	).Scan(
+		&s.SessionID, &s.SessionKey, &s.TenantID, &s.SurfaceID, &s.UserID,
+		&s.AgentID, &s.AgentVersion, &s.HarnessDigest,
+		&s.DataLabel, &s.RouteModelID, &reason,
+		&s.AutonomyLevel, &s.RootSessionID, &s.Depth, &s.DelegationRole,
+		&s.Status, &s.TerminalReason,
+		&s.ForkedFromSessionID, &s.ForkSeq, &overrides,
+		&s.PlanID, &s.PlanVersion, &s.TeamID, &s.CreatedAt, &s.Conversational, &s.UpdatedAt,
+	)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return Session{}, false, nil
+		}
+		return Session{}, false, fmt.Errorf("get session by key %q: %w", sessionKey, err)
+	}
+	if len(reason) > 0 {
+		if err := json.Unmarshal(reason, &s.RouteReason); err != nil {
+			return Session{}, false, fmt.Errorf("unmarshal route_reason: %w", err)
+		}
+	}
+	if len(overrides) > 0 {
+		if err := json.Unmarshal(overrides, &s.ForkOverrides); err != nil {
+			return Session{}, false, fmt.Errorf("unmarshal fork_overrides: %w", err)
+		}
+	}
+	return s, true, nil
+}
+
 // ListSessionsForUser returns userID's own root sessions (delegation_role =
 // 'root' -- a delegated/team-member session isn't its own top-level thread;
 // it's reached through its parent's own event log via child_session_id),

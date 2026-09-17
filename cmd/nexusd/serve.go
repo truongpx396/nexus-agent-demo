@@ -216,18 +216,26 @@ func serve(ctx context.Context) error {
 	channels := &MessagingChannels{Store: st, Keys: keyStore}
 	outbox := &surfaces.Outbox{Store: st, Keys: keyStore, Chain: chain}
 
+	// One adapter value per surface satisfies both RunStarter and Resumer
+	// (surfaces_phase11.go) — passed to both the Starter: and Resume:
+	// fields below, so a fresh message and a resumed one drive the SAME
+	// underlying *runctl.Control/*kernelRunStarter pair.
+	telegramAdapter := telegramStarterAdapter{k: starter, ctl: ctl}
+	zaloAdapter := zaloStarterAdapter{k: starter, ctl: ctl}
+	emailAdapter := emailStarterAdapter{k: starter, ctl: ctl}
+
 	telegramSrv := &telegram.Server{
-		Store: st, KeyStore: keyStore, Starter: telegramStarterAdapter{k: starter}, Channels: channels,
+		Store: st, KeyStore: keyStore, Starter: telegramAdapter, Resume: telegramAdapter, Channels: channels,
 		CatalogManifestDigest: catalogManifestDigest, Outbox: outbox,
 		RateLimit: telegram.NewRateLimiter(20, time.Minute),
 	}
 	zaloSrv := &zalo.Server{
-		Store: st, KeyStore: keyStore, Starter: zaloStarterAdapter{k: starter}, Channels: channels,
+		Store: st, KeyStore: keyStore, Starter: zaloAdapter, Resume: zaloAdapter, Channels: channels,
 		CatalogManifestDigest: catalogManifestDigest, Outbox: outbox,
 		RateLimit: zalo.NewRateLimiter(20, time.Minute),
 	}
 	emailSrv := &email.Server{
-		Store: st, KeyStore: keyStore, Starter: emailStarterAdapter{k: starter}, Channels: channels,
+		Store: st, KeyStore: keyStore, Starter: emailAdapter, Resume: emailAdapter, Channels: channels,
 		CatalogManifestDigest: catalogManifestDigest, Outbox: outbox,
 		RateLimit: email.NewRateLimiter(20, time.Minute),
 	}

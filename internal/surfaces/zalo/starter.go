@@ -33,3 +33,9 @@ type RunEvent struct {
 type RunStarter interface {
 	StartRun(ctx context.Context, req RunRequest) (<-chan RunEvent, error)
 }
+
+// Resumer continues an existing conversational session (webhook.go's own
+// resumeRun) — same duplicated-not-imported idiom as RunStarter.
+type Resumer interface {
+	ResumeConversation(ctx context.Context, tenantID, sessionID uuid.UUID, input string) (<-chan RunEvent, error)
+}
