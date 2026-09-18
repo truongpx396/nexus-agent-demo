@@ -199,13 +199,14 @@ func listTenantIDs(ctx context.Context) ([]uuid.UUID, error) {
 //
 // Deliberately NOT wired here: a fresh interactive run
 // (POST /v1/runs, kernelRunStarter.StartRun) stays on its own existing
-// synchronous fast path, never enqueued — queue_jobs.payload carries no
+// synchronous fast path, never enqueued — a queued job's payload carries no
 // sealed envelope the way events.payload does (migrations/0011_queue.sql's
-// own doc comment), so it must never carry a plaintext opening message.
-// Recovering an orphaned FRESH run (one that never got far enough to
-// suspend or checkpoint) is exactly what the sweep below already covers:
-// its status is "running" either way.
-func startQueueWorkers(ctx context.Context, st *store.Store, redisClient *redis.Client, ctl *runctl.Control, delegations *delegate.Delegations, teamsSvc *teams.Service) (stop func()) {
+// own doc comment, still true of both queue.Port adapters below), so it
+// must never carry a plaintext opening message. Recovering an orphaned
+// FRESH run (one that never got far enough to suspend or checkpoint) is
+// exactly what the sweep below already covers: its status is "running"
+// either way.
+func startQueueWorkers(ctx context.Context, st *store.Store, redisClient *redis.Client, lock *queue.SessionLock, ctl *runctl.Control, delegations *delegate.Delegations, teamsSvc *teams.Service) (stop func()) {
 	adminDSN := envOr("NEXUS_ADMIN_DATABASE_URL", envOr("NEXUS_MIGRATE_DATABASE_URL", defaultMigrateDSN))
 	adminPool, err := pgxpool.New(ctx, adminDSN)
 	if err != nil {
@@ -213,10 +214,17 @@ func startQueueWorkers(ctx context.Context, st *store.Store, redisClient *redis.
 		return func() {}
 	}
 
-	port := queue.NewPostgres(adminPool)
-	lock := queue.NewSessionLock(redisClient, 30*time.Second)
+	port, err := newQueuePort(ctx, adminPool, redisClient)
+	if err != nil {
+		log.Error().Err(err).Msg("nexusd: queue: configure backend failed; the worker pool is NOT running (fresh runs still work; crash recovery does not)")
+		adminPool.Close()
+		return func() {}
+	}
 	runner := &queueRunner{ctl: ctl, delegations: delegations, teams: teamsSvc}
 
+	// recoverOrphanedSessions still queries Postgres directly (sessions
+	// live there regardless of which queue backend carries the resume
+	// job) and enqueues through the Port interface — identical either way.
 	recoverOrphanedSessions(ctx, adminPool, port)
 
 	numWorkers := 2
@@ -231,6 +239,32 @@ func startQueueWorkers(ctx context.Context, st *store.Store, redisClient *redis.
 	return func() {
 		cancel()
 		adminPool.Close()
+	}
+}
+
+// newQueuePort selects the queue backend (docs/build-phases.md Phase 18).
+// NEXUS_QUEUE_BACKEND=redis (the default, unset reproduces it) wires
+// internal/queue.RedisStream — consumer-group leasing, continuous
+// XAUTOCLAIM-based reclaim of an abandoned job from ANY dead consumer
+// rather than only the sweep below at THIS process's own next startup, and
+// no poll-driven admin-Postgres traffic for the lease/complete/fail path
+// itself. NEXUS_QUEUE_BACKEND=postgres keeps the original SKIP LOCKED
+// adapter (postgres.go) wired instead — never removed, still exercised
+// directly by tests/integration/phase6_reliability_test.go, and a
+// one-env-var rollback if the Redis backend ever needs to be ruled out
+// against a live deployment.
+func newQueuePort(ctx context.Context, adminPool *pgxpool.Pool, redisClient *redis.Client) (queue.Port, error) {
+	switch backend := envOr("NEXUS_QUEUE_BACKEND", "redis"); backend {
+	case "redis":
+		p := queue.NewRedisStream(redisClient)
+		if err := p.EnsureGroup(ctx); err != nil {
+			return nil, fmt.Errorf("ensure redis stream consumer group: %w", err)
+		}
+		return p, nil
+	case "postgres":
+		return queue.NewPostgres(adminPool), nil
+	default:
+		return nil, fmt.Errorf("unknown NEXUS_QUEUE_BACKEND %q (want \"redis\" or \"postgres\")", backend)
 	}
 }
 

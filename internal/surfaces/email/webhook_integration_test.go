@@ -88,7 +88,17 @@ func insertTestTenant(t *testing.T, s *store.Store, tenantID uuid.UUID) {
 
 func newEmailWebhookBody(t *testing.T, from, textBody string) []byte {
 	t.Helper()
-	body, err := json.Marshal(inboundMessage{From: from, TextBody: textBody})
+	// No message_id — matches every pre-delivery-dedup test fixture in this
+	// file: store.ClaimInboundDelivery's own documented empty-string
+	// behavior (always claims, never dedupes) means these keep passing
+	// unmodified. Only a test that specifically exercises dedup needs a
+	// real, distinct MessageID (newEmailWebhookBodyWithMessageID).
+	return newEmailWebhookBodyWithMessageID(t, "", from, textBody)
+}
+
+func newEmailWebhookBodyWithMessageID(t *testing.T, messageID, from, textBody string) []byte {
+	t.Helper()
+	body, err := json.Marshal(inboundMessage{From: from, TextBody: textBody, MessageID: messageID})
 	if err != nil {
 		t.Fatalf("marshal webhook body: %v", err)
 	}
@@ -284,5 +294,131 @@ func TestServer_NotificationPayload_DecryptsContentEvent(t *testing.T) {
 	}
 	if got.Kind != "content" || got.Text != "here is my reply" {
 		t.Fatalf("payload = %+v, want kind=content text=%q", got, "here is my reply")
+	}
+}
+
+// TestHandleWebhook_DuplicateMessageIDAcknowledgedWithoutASecondRun is
+// migrations/0024_inbound_deliveries.sql's own reason to exist
+// (production-readiness review: "Telegram/Zalo webhooks retry by design"
+// with nothing deduping that — the same class of provider-retry applies to
+// an inbound-parse email webhook): the SAME Message-ID delivered twice —
+// the provider itself redelivering after a slow/lost ack is the realistic
+// trigger, not a client bug — must reach StartRun exactly once.
+func TestHandleWebhook_DuplicateMessageIDAcknowledgedWithoutASecondRun(t *testing.T) {
+	pool := setupEmailEnv(t)
+	s := store.New(pool)
+	tenantID := uuid.New()
+	insertTestTenant(t, s, tenantID)
+	kek, err := crypto.GenerateKEK()
+	if err != nil {
+		t.Fatalf("GenerateKEK: %v", err)
+	}
+	starter := &fakeStarter{}
+	srv := &Server{Store: s, KeyStore: crypto.NewKeyStore(kek), Starter: starter, Channels: fakeChannels{user: "bot", pass: "secret", ok: true}}
+
+	body := newEmailWebhookBodyWithMessageID(t, "<msg-4242@example.com>", "user@example.com", "please help")
+	rec := postEmailWebhook(t, srv, tenantID, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("first delivery: status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if starter.calls != 1 {
+		t.Fatalf("calls after first delivery = %d, want 1", starter.calls)
+	}
+	firstSessionID := starter.req.SessionID
+
+	// The exact same Message-ID, redelivered — the realistic
+	// inbound-parse-provider-retry shape, not a different sender/text.
+	rec = postEmailWebhook(t, srv, tenantID, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("redelivery: status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if starter.calls != 1 {
+		t.Fatalf("calls after redelivery = %d, want still 1 (StartRun must not run twice for one Message-ID)", starter.calls)
+	}
+	if starter.req.SessionID != firstSessionID {
+		t.Fatal("a redelivered Message-ID must never reach StartRun with a different session")
+	}
+
+	var sessionCount int
+	if err := s.InTenantTx(context.Background(), tenantID, func(ctx context.Context, tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT count(*) FROM sessions WHERE session_key = $1`, "email:user@example.com").Scan(&sessionCount)
+	}); err != nil {
+		t.Fatalf("count sessions: %v", err)
+	}
+	if sessionCount != 1 {
+		t.Fatalf("sessions for email:user@example.com = %d, want exactly 1", sessionCount)
+	}
+}
+
+// TestHandleWebhook_SessionLockAcquiredAndReleasedAroundDispatch proves
+// s.Lock's own plumbing end to end: Acquire is called with the dispatched
+// sessionKey, and Release is called with the SAME token only after the
+// run's own event channel (drainAndNotify) has finished draining — closing
+// the production-readiness review's other finding, that the REST/webhook
+// direct-call path never touched SessionLock at all.
+func TestHandleWebhook_SessionLockAcquiredAndReleasedAroundDispatch(t *testing.T) {
+	pool := setupEmailEnv(t)
+	s := store.New(pool)
+	tenantID := uuid.New()
+	insertTestTenant(t, s, tenantID)
+	kek, err := crypto.GenerateKEK()
+	if err != nil {
+		t.Fatalf("GenerateKEK: %v", err)
+	}
+	starter := &fakeStarter{}
+	locker := &fakeLocker{acquireResults: []bool{true}, done: make(chan struct{})}
+	srv := &Server{Store: s, KeyStore: crypto.NewKeyStore(kek), Starter: starter, Channels: fakeChannels{user: "bot", pass: "secret", ok: true}, Lock: locker}
+
+	rec := postEmailWebhook(t, srv, tenantID, newEmailWebhookBody(t, "user@example.com", "please help"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s, want 200", rec.Code, rec.Body.String())
+	}
+
+	select {
+	case <-locker.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for Release — drainAndNotify never ran or never released the lock")
+	}
+
+	locker.mu.Lock()
+	defer locker.mu.Unlock()
+	if len(locker.acquireCalls) != 1 || locker.acquireCalls[0] != "email:user@example.com" {
+		t.Fatalf("Acquire calls = %v, want exactly one for %q", locker.acquireCalls, "email:user@example.com")
+	}
+	if len(locker.releaseCalls) != 1 {
+		t.Fatalf("Release calls = %v, want exactly one", locker.releaseCalls)
+	}
+	if locker.releaseCalls[0].sessionKey != "email:user@example.com" || locker.releaseCalls[0].token != "token-email:user@example.com" {
+		t.Fatalf("Release call = %+v, want the same session key and token Acquire returned", locker.releaseCalls[0])
+	}
+}
+
+// TestHandleWebhook_ContendedSessionLockDropsDeliveryWithoutStartingARun is
+// dispatch's own documented trade-off under lock contention: if s.Lock
+// never grants the lock (another goroutine is already driving this exact
+// session_key's turn), this delivery is acknowledged but StartRun is never
+// called — never a second concurrent turn for the same session, the whole
+// point of wiring SessionLock into this path at all.
+func TestHandleWebhook_ContendedSessionLockDropsDeliveryWithoutStartingARun(t *testing.T) {
+	pool := setupEmailEnv(t)
+	s := store.New(pool)
+	tenantID := uuid.New()
+	insertTestTenant(t, s, tenantID)
+	kek, err := crypto.GenerateKEK()
+	if err != nil {
+		t.Fatalf("GenerateKEK: %v", err)
+	}
+	starter := &fakeStarter{}
+	// Every attempt reports contention — AcquireSessionLock's own bounded
+	// retry (internal/surfaces/lock.go) exhausts all of them and gives up.
+	locker := &fakeLocker{acquireResults: []bool{false, false, false, false, false}}
+	srv := &Server{Store: s, KeyStore: crypto.NewKeyStore(kek), Starter: starter, Channels: fakeChannels{user: "bot", pass: "secret", ok: true}, Lock: locker}
+
+	rec := postEmailWebhook(t, srv, tenantID, newEmailWebhookBody(t, "user@example.com", "please help"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s, want 200 (an ack, even though nothing was dispatched)", rec.Code, rec.Body.String())
+	}
+	if starter.started {
+		t.Fatal("StartRun ran despite the session lock never being granted")
 	}
 }

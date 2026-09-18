@@ -91,6 +91,16 @@ type Server struct {
 	HTTPClient *http.Client
 
 	RateLimit *RateLimiter
+
+	// Lock, if set, serializes dispatch's own decide-then-act sequence and
+	// the turn it kicks off around sessionKey (surfaces.AcquireSessionLock)
+	// — cmd/nexusd wires the same *queue.SessionLock instance the
+	// crash-recovery queue worker already holds turns through
+	// (internal/queue/worker.go), closing the production-readiness
+	// review's finding that "the REST/webhook direct-call path bypasses
+	// [SessionLock] entirely." nil (every pre-this-fix caller and test)
+	// reproduces the prior unlocked behavior exactly.
+	Lock surfaces.Locker
 }
 
 // Handler returns the http.Handler cmd/nexusd mounts at
@@ -161,8 +171,12 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	// Tenant scoping comes from the lookup's own WHERE tenant_id=$1, not
 	// this string, so no tenant id needs to be folded in here.
 	sessionKey := "telegram:" + chatID
+	// deliveryID is Telegram's own update_id — monotonically increasing per
+	// bot, never reused — the provider-native id ClaimDelivery dedupes a
+	// redelivered update against.
+	deliveryID := fmt.Sprintf("%d", upd.UpdateID)
 
-	if _, err := s.dispatch(r.Context(), tenantID, userID, sessionKey, chatID, upd.Message.Text); err != nil {
+	if _, err := s.dispatch(r.Context(), tenantID, userID, sessionKey, deliveryID, chatID, upd.Message.Text); err != nil {
 		log.Error().Err(err).Any("tenant_id", tenantID).Msg("telegram: dispatch")
 		http.Error(w, "dispatch: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -170,14 +184,56 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// dispatch looks up sessionKey's most recent session (store.GetSessionByKey)
-// and resumes it via Resume.ResumeConversation when it's genuinely
-// awaiting_input; every other case (no session yet, or one found but
-// running/suspended/already terminal) falls through to startRun — a fresh
-// conversational session reusing the same key, so the NEXT message finds
-// it. s.Resume == nil (no pre-continuity caller sets it) always takes the
-// fresh-session path, unchanged from before this feature existed.
-func (s *Server) dispatch(ctx context.Context, tenantID, userID uuid.UUID, sessionKey, chatID, input string) (uuid.UUID, error) {
+// dispatch first claims deliveryID (surfaces.ClaimDelivery) — a provider
+// redelivery of an update this surface already accepted is acknowledged
+// (uuid.Nil, nil) without ever reaching the session lookup below, closing
+// the production-readiness review's finding that "Telegram/Zalo webhooks
+// retry by design" and nothing dedupes that. A freshly-claimed delivery
+// then acquires s.Lock (if set) around the ENTIRE decide-then-act sequence
+// that follows — including the turn dispatch kicks off, which runs to
+// completion in its own goroutine well after this function returns
+// (startRun/resumeRun's own doc comments), which is why release is a
+// closure threaded through to drainAndNotify rather than a plain defer
+// here. Lock contention (ok=false) means another goroutine is ALREADY
+// driving this exact session_key's turn; this delivery is logged and
+// dropped rather than risk a second concurrent turn for it — a rare,
+// bounded, logged trade-off, not a silent one.
+//
+// Session lookup and resume-vs-fresh: looks up sessionKey's most recent
+// session (store.GetSessionByKey) and resumes it via
+// Resume.ResumeConversation when it's genuinely awaiting_input; every
+// other case (no session yet, or one found but running/suspended/already
+// terminal) falls through to startRun — a fresh conversational session
+// reusing the same key, so the NEXT message finds it. s.Resume == nil (no
+// pre-continuity caller sets it) always takes the fresh-session path,
+// unchanged from before that feature existed.
+func (s *Server) dispatch(ctx context.Context, tenantID, userID uuid.UUID, sessionKey, deliveryID, chatID, input string) (uuid.UUID, error) {
+	claimed, err := surfaces.ClaimDelivery(ctx, s.Store, tenantID, Descriptor.SurfaceID, deliveryID, sessionKey)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("claim delivery: %w", err)
+	}
+	if !claimed {
+		log.Info().Any("tenant_id", tenantID).Str("delivery_id", deliveryID).Msg("telegram: duplicate delivery acknowledged without dispatching")
+		return uuid.Nil, nil
+	}
+
+	release := func() {}
+	if s.Lock != nil {
+		token, ok, lerr := surfaces.AcquireSessionLock(ctx, s.Lock, sessionKey)
+		if lerr != nil {
+			return uuid.Nil, fmt.Errorf("acquire session lock: %w", lerr)
+		}
+		if !ok {
+			log.Warn().Any("tenant_id", tenantID).Str("session_key", sessionKey).Msg("telegram: session lock contended; dropping this delivery rather than risk a concurrent turn")
+			return uuid.Nil, nil
+		}
+		release = func() {
+			if rerr := s.Lock.Release(context.Background(), sessionKey, token); rerr != nil {
+				log.Error().Err(rerr).Str("session_key", sessionKey).Msg("telegram: session lock release failed")
+			}
+		}
+	}
+
 	if s.Resume != nil {
 		var sess store.Session
 		var found bool
@@ -187,13 +243,14 @@ func (s *Server) dispatch(ctx context.Context, tenantID, userID uuid.UUID, sessi
 			return derr
 		})
 		if err != nil {
+			release()
 			return uuid.Nil, fmt.Errorf("look up session for %s: %w", sessionKey, err)
 		}
 		if found && sess.Status == store.SessionStatusAwaitingInput {
-			return s.resumeRun(ctx, tenantID, sess.SessionID, chatID, input)
+			return s.resumeRun(ctx, tenantID, sess.SessionID, chatID, input, release)
 		}
 	}
-	return s.startRun(ctx, tenantID, userID, sessionKey, chatID, input)
+	return s.startRun(ctx, tenantID, userID, sessionKey, chatID, input, release)
 }
 
 // startRun mirrors internal/surfaces/rest's handleCreateRun (session + DEK
@@ -207,7 +264,7 @@ func (s *Server) dispatch(ctx context.Context, tenantID, userID uuid.UUID, sessi
 // Conversational's pause-not-terminate semantics mean the NEXT message
 // from this chat can find this session again via that key while it's
 // awaiting_input).
-func (s *Server) startRun(ctx context.Context, tenantID, userID uuid.UUID, sessionKey, chatID, input string) (uuid.UUID, error) {
+func (s *Server) startRun(ctx context.Context, tenantID, userID uuid.UUID, sessionKey, chatID, input string, release func()) (uuid.UUID, error) {
 	route := provider.Route(provider.DataLabelInternal, provider.DifficultySimple)
 	sessionID := uuid.New()
 	digest := harness.Digest(harness.Config{
@@ -239,6 +296,7 @@ func (s *Server) startRun(ctx context.Context, tenantID, userID uuid.UUID, sessi
 		})
 	})
 	if err != nil {
+		release()
 		return uuid.Nil, fmt.Errorf("create session: %w", err)
 	}
 
@@ -251,9 +309,10 @@ func (s *Server) startRun(ctx context.Context, tenantID, userID uuid.UUID, sessi
 	}
 	events, err := s.Starter.StartRun(context.Background(), req) // a run outlives this webhook request
 	if err != nil {
+		release()
 		return uuid.Nil, fmt.Errorf("start run: %w", err)
 	}
-	go s.drainAndNotify(tenantID, sessionID, chatID, events)
+	go s.drainAndNotify(tenantID, sessionID, chatID, events, release)
 	return sessionID, nil
 }
 
@@ -263,12 +322,13 @@ func (s *Server) startRun(ctx context.Context, tenantID, userID uuid.UUID, sessi
 // which rehydrates the session from its durable log itself; nothing here
 // needs to reconstruct RunConfig the way startRun's own DEK-minting/
 // harness-digest dance does.
-func (s *Server) resumeRun(ctx context.Context, tenantID, sessionID uuid.UUID, chatID, input string) (uuid.UUID, error) {
+func (s *Server) resumeRun(ctx context.Context, tenantID, sessionID uuid.UUID, chatID, input string, release func()) (uuid.UUID, error) {
 	events, err := s.Resume.ResumeConversation(context.Background(), tenantID, sessionID, input) // a run outlives this webhook request
 	if err != nil {
+		release()
 		return uuid.Nil, fmt.Errorf("resume conversation: %w", err)
 	}
-	go s.drainAndNotify(tenantID, sessionID, chatID, events)
+	go s.drainAndNotify(tenantID, sessionID, chatID, events, release)
 	return sessionID, nil
 }
 
@@ -279,7 +339,8 @@ func (s *Server) resumeRun(ctx context.Context, tenantID, sessionID uuid.UUID, c
 // EventContent through the shared outbox — a human must actually see
 // both, unlike every other event this surface has no live SSE subscriber
 // to fan out to anyway.
-func (s *Server) drainAndNotify(tenantID, sessionID uuid.UUID, chatID string, events <-chan RunEvent) {
+func (s *Server) drainAndNotify(tenantID, sessionID uuid.UUID, chatID string, events <-chan RunEvent, release func()) {
+	defer release()
 	if s.Outbox == nil {
 		for range events {
 			// still drain fully: the channel must be closed by the run's own goroutine, and a receiver has to be here to let that happen
