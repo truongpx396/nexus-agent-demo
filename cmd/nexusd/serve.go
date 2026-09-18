@@ -24,6 +24,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
+	"github.com/truongpx396/nexus-agent-demo/internal/queue"
 	"github.com/truongpx396/nexus-agent-demo/internal/reliability"
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
@@ -107,6 +108,19 @@ func serve(ctx context.Context) error {
 	// for its bounded-TTL OAuth state, and newToolPipeline needs the Vault
 	// itself to wire platform/connector_fetch and the MCP dynamic resolver.
 	redisClient := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
+
+	// sessionLock is the SAME *queue.SessionLock shape startQueueWorkers'
+	// own internal one is (identical redisClient + TTL — SessionLock's key
+	// derivation is a fixed function of sessionKey, not per-instance state,
+	// so two separate values built this way ARE the same distributed lock)
+	// — wired directly into REST's steer endpoint and all three
+	// conversational webhook surfaces below, closing the
+	// production-readiness review's finding that "the REST/webhook
+	// direct-call path bypasses [SessionLock] entirely": a webhook-driven
+	// resume and a REST-driven steer (or two racing webhook deliveries) for
+	// the SAME session_key now contend for the SAME Redis key the
+	// crash-recovery queue worker already holds turns through.
+	sessionLock := queue.NewSessionLock(redisClient, 30*time.Second)
 
 	vault := &connectors.Vault{Store: st, Keys: keyStore, Providers: newConnectorRegistry(), Redis: redisClient}
 
@@ -194,6 +208,7 @@ func serve(ctx context.Context) error {
 	srv.MCP = mcpPort
 	srv.Outbox = &surfaces.Outbox{Store: st, Keys: keyStore, Chain: chain}
 	srv.OutboxSender = logSender{}
+	srv.Lock = sessionLock
 
 	srv.Exporter = spanExp
 
@@ -206,7 +221,7 @@ func serve(ctx context.Context) error {
 	stopIdleConversationSweep := startIdleConversationSweepLoop(ctx, ctl)
 	defer stopIdleConversationSweep()
 
-	stopWorkers := startQueueWorkers(ctx, st, redisClient, ctl, delegations, teamsSvc)
+	stopWorkers := startQueueWorkers(ctx, st, redisClient, sessionLock, ctl, delegations, teamsSvc)
 	defer stopWorkers()
 
 	// Phase 11: four more thin surfaces over the same kernel (README §11) —
@@ -228,16 +243,19 @@ func serve(ctx context.Context) error {
 		Store: st, KeyStore: keyStore, Starter: telegramAdapter, Resume: telegramAdapter, Channels: channels,
 		CatalogManifestDigest: catalogManifestDigest, Outbox: outbox,
 		RateLimit: telegram.NewRateLimiter(20, time.Minute),
+		Lock:      sessionLock,
 	}
 	zaloSrv := &zalo.Server{
 		Store: st, KeyStore: keyStore, Starter: zaloAdapter, Resume: zaloAdapter, Channels: channels,
 		CatalogManifestDigest: catalogManifestDigest, Outbox: outbox,
 		RateLimit: zalo.NewRateLimiter(20, time.Minute),
+		Lock:      sessionLock,
 	}
 	emailSrv := &email.Server{
 		Store: st, KeyStore: keyStore, Starter: emailAdapter, Resume: emailAdapter, Channels: channels,
 		CatalogManifestDigest: catalogManifestDigest, Outbox: outbox,
 		RateLimit: email.NewRateLimiter(20, time.Minute),
+		Lock:      sessionLock,
 	}
 	scheduler := &cron.Scheduler{
 		Store: st, KeyStore: keyStore, Starter: cronStarterAdapter{k: starter}, Tenants: adminTenantLister{},

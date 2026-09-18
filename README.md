@@ -56,7 +56,7 @@ Concretely, three collapses:
 | Collapse | Original | Demo | Why it's honest |
 |---|---|---|---|
 | **Deployment** | 3 Go binaries (`control-plane`, `runtime-worker`, `surface-gateway`) + Python helper + React app | 1 binary `nexusd` (+ `nexusctl` CLI, + `signerd` for key custody) | The control↔data-plane split stays a **Go interface** (`controlplane.Port`) with a versioned request/response shape, and the packages never import across the boundary. Splitting into processes later is a `main.go` change, not a rewrite. |
-| **Infrastructure** | NATS JetStream, gVisor/Kata warm pool, S3, KMS/HSM, external vault, PgBouncer, OTel collector, pgvector | Postgres (queue via `SKIP LOCKED`), Docker sandbox (no warm pool), local blob dir, file-backed KEK + `signerd`, PgBouncer (kept — it's load-bearing), stdout OTLP | Each sits behind a port with one adapter. The original's own cut line defers exactly these. **PgBouncer is kept** because the transaction-local RLS rule is meaningless without a transaction pooler to prove it against. |
+| **Infrastructure** | NATS JetStream, gVisor/Kata warm pool, S3, KMS/HSM, external vault, PgBouncer, OTel collector, pgvector | Queue via a Redis Streams consumer group (`internal/queue.RedisStream`, Phase 18 — `NEXUS_QUEUE_BACKEND=postgres` still selects the original `SKIP LOCKED` adapter), Docker sandbox (no warm pool), local blob dir, file-backed KEK + `signerd`, PgBouncer (kept — it's load-bearing), stdout OTLP | Each sits behind a port with one adapter. The original's own cut line defers exactly these — NATS JetStream itself stays deferred; Redis Streams closes the same "poll a table" gap this demo's already-load-bearing Redis (`SessionLock`, `cost.Gate`) can absorb without adding new infrastructure. **PgBouncer is kept** because the transaction-local RLS rule is meaningless without a transaction pooler to prove it against. |
 | **Commercial + compliance tail** | Credit ledger, billing periods, FX, price overrides, multi-region residency, BYOK, chargeback export, MCP/OAuth connectors, Telegram/Zalo, document conversion, retrieval tier, adversarial scan, adaptation proposals | Dropped (columns kept where they're schema seams) | These are business processes, not patterns. Dropping them removes ~60 of 191 FRs and zero architectural ideas. |
 
 Everything else — the kernel, the pipeline, the permission chain, the approval transaction,
@@ -90,7 +90,7 @@ flowchart TB
     end
 
     subgraph DP["Data plane"]
-        Q[(Queue port<br/>Postgres SKIP LOCKED)]
+        Q[(Queue port<br/>Redis Streams, Phase 18<br/>Postgres SKIP LOCKED kept as a config flag)]
         W[Worker pool + session-key lock]
         K[[Kernel loop<br/>classify · dispatch · pair · terminate]]
         H[Harness: prompt zones - tools - memory<br/>skills - hooks - cost - reliability]
@@ -137,7 +137,7 @@ nexus-agent-demo/
 │   ├── audit/                  # chain builder, signer client, verifier, anchor
 │   ├── crypto/                 # KEK/DEK envelope, seal/open, shred, derived-artifact reconcile
 │   ├── store/                  # events, projections, checkpoints, snapshots, claims, RLS scoping
-│   ├── queue/                  # Queue port + postgres adapter + session-key lock
+│   ├── queue/                  # Queue port + redis-streams adapter (default) + postgres adapter (NEXUS_QUEUE_BACKEND=postgres) + session-key lock
 │   ├── reliability/            # classifier, backoff, breaker, stuck detector
 │   ├── runctl/                 # steer, cancel, resume, replay, fork, tightenAutonomy
 │   ├── sandbox/                # docker exec, limits, deny-net, (optional) broker
@@ -402,6 +402,7 @@ This repo's own supplementary docs:
 |---|---|
 | [`docs/build-phases.md`](docs/build-phases.md) | The pattern coverage map, the full build plan (Phase 0 through Phase 13), the effort estimate, and the risk register — split out of this file, linked from §2. |
 | [`docs/production-readiness-review.md`](docs/production-readiness-review.md) | The audit that found F1–F15 and drove Phase 13. |
+| [`docs/webhook-concurrency-review.md`](docs/webhook-concurrency-review.md) | The follow-up audit of Phase 11's conversational webhook surfaces that found `SessionLock` wired into only the async queue worker and no inbound delivery dedup, and drove Phase 18. |
 | [`docs/constitution.md`](docs/constitution.md) | The nine principles, copied in verbatim (Phase 0, task 0.6) as the review checklist. |
 | [`docs/go-live.md`](docs/go-live.md) | The go-live checklist and what `nexusd go-live` automates versus what stays a manual review. |
 | [`docs/local-llm.md`](docs/local-llm.md) | Ollama + LiteLLM + Langfuse: a local model wired into `internal/provider.Provider`, and genuine per-run agent tracing (`internal/obs.Tracer`, `kernel/loop.go`) in a self-hosted Langfuse — the §5 deferred-adapters row, actually wired. |

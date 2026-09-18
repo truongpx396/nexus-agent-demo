@@ -6,8 +6,10 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
+	"github.com/rs/zerolog/log"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
+	"github.com/truongpx396/nexus-agent-demo/internal/surfaces"
 )
 
 // ForkView is what this surface exposes for one fork — translated from
@@ -103,12 +105,47 @@ func (s *Server) handleSteerRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if sess.Status == store.SessionStatusAwaitingInput {
+		// Lock keyed on the session's own session_key — the SAME key a
+		// webhook surface's dispatch() locks on for a conversational
+		// session (sess.SessionKey is never empty for one, since
+		// Conversational sessions are always created with it set); a
+		// plain non-conversational REST session has no session_key of its
+		// own, so its session_id stands in as an equally-unique key
+		// (handleCreateRun mints a fresh uuid.New() per session — no two
+		// sessions ever share one). Either way this closes the review's
+		// own finding that REST's steer/resume path bypassed SessionLock
+		// entirely, same as the three webhook surfaces did.
+		lockKey := sess.SessionKey
+		if lockKey == "" {
+			lockKey = sess.SessionID.String()
+		}
+		release := func() {}
+		if s.Lock != nil {
+			token, ok, lerr := surfaces.AcquireSessionLock(r.Context(), s.Lock, lockKey)
+			if lerr != nil {
+				http.Error(w, "steer: acquire session lock: "+lerr.Error(), http.StatusInternalServerError)
+				return
+			}
+			if !ok {
+				http.Error(w, "steer: session busy with another in-flight turn, try again shortly", http.StatusConflict)
+				return
+			}
+			release = func() {
+				if rerr := s.Lock.Release(context.Background(), lockKey, token); rerr != nil {
+					log.Error().Err(rerr).Str("session_key", lockKey).Msg("rest: session lock release failed")
+				}
+			}
+		}
 		events, err := s.RunCtl.ResumeConversation(context.Background(), tenantID, id, req.Input) // a run outlives the HTTP request that resumed it
 		if err != nil {
+			release()
 			http.Error(w, "steer: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		go s.publishUntilDone(tenantID, id, events)
+		go func() {
+			defer release()
+			s.publishUntilDone(tenantID, id, events)
+		}()
 		writeJSON(w, http.StatusOK, map[string]string{"status": "steered"})
 		return
 	}

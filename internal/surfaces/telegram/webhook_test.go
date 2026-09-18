@@ -5,6 +5,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,11 +25,13 @@ func (f fakeChannels) BotToken(context.Context, uuid.UUID) (string, error) { ret
 
 type fakeStarter struct {
 	started bool
+	calls   int
 	req     RunRequest
 }
 
 func (f *fakeStarter) StartRun(_ context.Context, req RunRequest) (<-chan RunEvent, error) {
 	f.started = true
+	f.calls++
 	f.req = req
 	ch := make(chan RunEvent)
 	close(ch)
@@ -51,6 +54,50 @@ func (f *fakeResumer) ResumeConversation(_ context.Context, _ uuid.UUID, session
 	ch := make(chan RunEvent)
 	close(ch)
 	return ch, nil
+}
+
+// fakeLocker is surfaces.Locker's own test double — Acquire's every call
+// result is queued up front (acquireResults), so a test can script
+// contention (ok=false) as easily as success; Release just records what it
+// was called with and, if set, closes done so a caller waiting on the
+// async drainAndNotify goroutine (the only place Release is ever called
+// from real production code) can synchronize on it instead of sleeping.
+type fakeLocker struct {
+	mu             sync.Mutex
+	acquireResults []bool // consumed in order, one per Acquire call; exhausted results are all treated as false
+	acquireCalls   []string
+	releaseCalls   []releaseCall
+	releaseErr     error
+	done           chan struct{}
+}
+
+type releaseCall struct {
+	sessionKey, token string
+}
+
+func (f *fakeLocker) Acquire(_ context.Context, sessionKey string) (string, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.acquireCalls = append(f.acquireCalls, sessionKey)
+	ok := false
+	if len(f.acquireResults) > 0 {
+		ok = f.acquireResults[0]
+		f.acquireResults = f.acquireResults[1:]
+	}
+	if !ok {
+		return "", false, nil
+	}
+	return "token-" + sessionKey, true, nil
+}
+
+func (f *fakeLocker) Release(_ context.Context, sessionKey, token string) error {
+	f.mu.Lock()
+	f.releaseCalls = append(f.releaseCalls, releaseCall{sessionKey: sessionKey, token: token})
+	f.mu.Unlock()
+	if f.done != nil {
+		close(f.done)
+	}
+	return f.releaseErr
 }
 
 func TestHandleWebhook_WrongSecretRefusedBeforeBodyIsEverParsed(t *testing.T) {

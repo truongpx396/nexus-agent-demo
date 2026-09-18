@@ -3,8 +3,11 @@
 Split out of [`README.md`](../README.md) — the architecture narrative lives there; this file is
 the fidelity ledger (§1), the task-by-task build plan (§2), including Phases 13–15, added
 2026-09-04 after [`docs/production-readiness-review.md`](production-readiness-review.md) found
-that several patterns rated **F** below were not actually at full fidelity in the shipped code,
-the effort estimate (§3), and the risk register (§4).
+that several patterns rated **F** below were not actually at full fidelity in the shipped code, and
+Phase 18, added 2026-09-18 after
+[`docs/webhook-concurrency-review.md`](webhook-concurrency-review.md) found the same kind of gap on
+the conversational webhook surfaces Phase 11 added, the effort estimate (§3), and the risk
+register (§4).
 
 ---
 
@@ -637,6 +640,49 @@ its tool's own default — task 17.3's own port comments explain why (a confirme
 machine this plan was built on, not a guess); `docker-label-exporter`'s 9101 is its own natural
 default, no collision found.
 
+### Phase 18 — Production hardening: inbound-delivery dedup, cross-surface session locking, Redis Streams queue (3 days)
+
+Not part of the original 67-pattern coverage — nothing here is a new architectural idea, and like
+Phase 13 it closes a gap between claimed and shipped behavior rather than adding one. Driven by
+[`docs/webhook-concurrency-review.md`](webhook-concurrency-review.md) (2026-09-18): Phase 11's
+conversational webhook surfaces (Telegram/Zalo/email) and REST's own steer/resume endpoint each did
+an unlocked check-then-act against `store.GetSessionByKey`/`ResumeConversation`, and nothing deduped
+a provider's own redelivered webhook — `internal/queue.SessionLock` (task 6.2) existed and was fully
+tested, but was wired into only the async crash-recovery queue worker, never the synchronous
+REST/webhook path the review's own words called out directly: "the REST/webhook direct-call path
+bypasses [SessionLock] entirely." 18.1–18.5 close that. 18.6–18.7 are an adjacent, independently
+motivated change: the queue's own backend moves from Postgres `SKIP LOCKED` to a Redis Streams
+consumer group — continuous `XAUTOCLAIM`-based reclaim of an abandoned job from whichever consumer
+last held it, replacing `recoverOrphanedSessions`' startup-only sweep, and no poll-driven admin
+-Postgres traffic on the lease/complete/fail path itself, now that this demo's Redis is already a
+load-bearing dependency (`SessionLock`, `internal/cost.Gate`) rather than new infrastructure. 18.1
+blocks 18.3; 18.6 blocks 18.7; otherwise independent.
+
+| # | Task | Closes |
+|---|---|---|
+| 18.1 | `migrations/0024_inbound_deliveries.sql` (`UNIQUE (tenant_id, surface_id, delivery_id)`) + `store.ClaimInboundDelivery` — an `INSERT ... ON CONFLICT DO NOTHING`, the whole dedup mechanism; empty `delivery_id` (a provider payload with no stable id) always claims rather than colliding on the empty string | Review finding #1: no inbound dedup on the provider's own delivery id |
+| 18.2 | `internal/surfaces.Locker` + `AcquireSessionLock` (bounded local retry, the same 200ms-retry cadence `internal/queue.Worker`'s own contended-lock path uses) and `internal/surfaces.ClaimDelivery` — the two shared seams every surface below calls, so neither is duplicated three times over | The reusable primitives 18.3/18.4 wire in |
+| 18.3 | `internal/surfaces/{telegram,zalo,email}/webhook.go`: `dispatch` claims the provider's delivery id first, then acquires `s.Lock` around the ENTIRE decide-then-act sequence — including the turn it kicks off, which runs to completion in its own goroutine well after `dispatch` returns, so `release` is a closure threaded through `startRun`/`resumeRun`/`drainAndNotify` rather than a plain `defer`. Zalo's `inboundEvent` gains a `msg_id` field (previously not parsed at all) | Review findings #1 and #2, for all three conversational webhook surfaces |
+| 18.4 | `internal/surfaces/rest/runctl.go`'s `handleSteerRun`: the same lock, keyed on the session's own `session_key` (falling back to its `session_id` for a non-conversational session, which has no `session_key` of its own) — a lock-contended steer returns `409`, never a second concurrent `ResumeConversation` | Review finding #2, for REST's own direct-call path |
+| 18.5 | `cmd/nexusd/serve.go`: one `*queue.SessionLock` instance (same Redis client, same TTL as the queue worker's own) wired into `srv.Lock` (REST) and all three webhook servers' `Lock` field — a webhook-driven resume and a REST-driven steer of the SAME conversation now contend for the SAME Redis key | Makes 18.3/18.4 live in the actual binary, not just the package |
+| 18.6 | `internal/queue/redisstream.go`: `Port` over a Redis Stream + consumer group — `XAUTOCLAIM`/`XREADGROUP` for exactly-once-lease semantics (the Streams analogue of `SKIP LOCKED`'s `FOR UPDATE`), a small Redis sorted set as a delay buffer for a future `AvailableAt`/retry (Streams has no native delayed-visibility primitive), and a capped dead-letter stream for a permanently-failed job instead of silent deletion (Streams entries are immutable, so a retry is a fresh `XADD`, never an in-place update — `postgres.go` is kept unmodified, still the adapter `tests/integration/phase6_reliability_test.go` exercises directly) | Independent: replaces poll-driven admin-Postgres queue traffic with a push-based consumer group, and continuous per-message reclaim in place of a startup-only sweep |
+| 18.7 | `cmd/nexusd/background.go`: `NEXUS_QUEUE_BACKEND=redis` (default, unset reproduces it) wires `RedisStream`; `=postgres` keeps the original adapter wired — a one-env-var rollback, not a migration with no way back | Makes 18.6 the live default while keeping the prior adapter a config flag away |
+
+**Demo**: send the same Telegram `update_id` twice in a row (a provider retry, or `curl` the webhook
+endpoint twice with an identical body) — the second call logs `"duplicate delivery acknowledged
+without dispatching"` and starts no second run; `SELECT count(*) FROM inbound_deliveries` shows
+exactly one row for it. Fire two concurrent requests at the same conversational `session_key` (two
+webhook deliveries, or a webhook resume racing a REST `POST /v1/runs/{id}/steer`) — exactly one
+proceeds, the other logs `"session lock contended"` (webhook) or receives `409` (REST steer), never
+two concurrent kernel turns for the same session. `kill -9 nexusd` mid-turn with
+`NEXUS_QUEUE_BACKEND=redis` (the default) — `XPENDING nexus:queue:jobs nexus-workers` shows the
+abandoned entry; a fresh `nexusd` process reclaims and resumes it via `XAUTOCLAIM` inside one
+`Lease` call, no restart-triggered sweep required for a DIFFERENT process to pick it up.
+**Acceptance**: `go test -tags=integration ./internal/surfaces/... ./internal/store/... ./internal/queue/...`
+passes, including the new concurrent-delivery and consumer-group-reclaim tests; setting
+`NEXUS_QUEUE_BACKEND=postgres` reproduces every Phase 6 queue behavior unchanged, proving the
+backend swap is additive, not destructive.
+
 ---
 
 ## 3. Effort summary
@@ -680,4 +726,5 @@ binary is exposed to anything but a developer's laptop.
 | **Six new surfaces (Phase 11) each grow their own bespoke auth/permission logic** | They don't get any: every new surface reuses the capability descriptor (#49) and the unmodified permission chain (#17); 11.8's conformance suite is what catches a surface that quietly special-cases itself. |
 | **Retrieval (Phase 12) becomes a second, unscoped copy of tenant knowledge that erasure can't reach** | 12.8 makes this the phase's gate, the same way 1.4 gates Phase 1: erasure must empty the retrieval index in the same transaction, not on a best-effort follow-up job. |
 | **A pattern rated F on paper isn't at full fidelity in the shipped adapter** | [`docs/production-readiness-review.md`](production-readiness-review.md) exists precisely to audit shipped code against §1's claims independently of this plan; Phase 13 closes what it found (F4/F5/F7/F8/F13/F15) before any new pattern work resumes. |
+| **A safety/reliability seam that's fully built (like `SessionLock`, task 6.2) still isn't wired into every path that needs it** | Being built and tested is not the same claim as being called — [`docs/webhook-concurrency-review.md`](webhook-concurrency-review.md) found `SessionLock` wired into only the async queue worker, never the REST/webhook synchronous path added later in Phase 11; Phase 18 closes it. The same review is why the taint-state durability gap (closed by PR #45) is called out explicitly: it sat unnoticed until a tangential thread surfaced it, for a mechanism billed as a safety invariant — a standing argument for auditing a new surface's own use of an EXISTING seam, not just the seam's own correctness in isolation. |
 
