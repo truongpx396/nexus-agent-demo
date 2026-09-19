@@ -39,11 +39,15 @@ import (
 // promtail for its own Docker service discovery.
 const dockerSocket = "/var/run/docker.sock"
 
-// composeProject scopes this exporter to one project's own containers,
-// the same project name every compose file in this repo already shares
-// (docker-compose.yml's own `name: nexus-agent-demo` directive) —
-// overridable so this same image could map a different project without a
-// code change.
+// composeProject scopes this exporter to one project's own containers —
+// the APP stack's project (docker-compose.yml's/docker-compose.local-llm.
+// yml's own `name: nexus-agent-demo` directive), deliberately NOT this
+// exporter's own project (docker-compose.observability.yml runs as the
+// separate `nexus-agent-observability`, its own header comment says
+// why): this exporter's whole job is to map the APP's containers back to
+// real names for the Infrastructure dashboard, not to report on its own
+// sibling observability containers. Overridable so this same image could
+// map a different project without a code change.
 var composeProject = envOr("COMPOSE_PROJECT", "nexus-agent-demo")
 
 func envOr(key, fallback string) string {

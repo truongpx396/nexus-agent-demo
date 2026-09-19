@@ -1,4 +1,4 @@
-.PHONY: up down build run signerd token test lint migrate seed eval eval-baseline verify-chain erase dashboard go-live web-build docker-build docker-up docker-down ollama-pull llm-up langfuse-up langfuse-lite-up llm-down agentic-up agentic-down observability-up observability-down tempo-up
+.PHONY: up down build run signerd token test lint migrate seed eval eval-baseline verify-chain erase dashboard go-live web-build docker-build docker-up docker-down ollama-pull llm-up langfuse-up langfuse-lite-up llm-down agentic-up agentic-down observability-up observability-down tempo-up profiling-up
 
 TENANT ?= acme
 
@@ -133,5 +133,9 @@ tempo-up: ## start Grafana Tempo (generic OTLP trace storage, separate opt-in pr
 	docker compose -f deploy/docker-compose.observability.yml --profile tracing up -d
 	@echo "tempo: http://localhost:3200  (OTLP grpc:4417 http:4418) -- browse via Grafana's Explore, Tempo datasource"
 
-observability-down: ## stop the prometheus + alertmanager + cadvisor + loki + promtail + grafana (+ tempo, if up) containers
-	docker compose -f deploy/docker-compose.observability.yml --profile observability --profile tracing down
+profiling-up: ## start Grafana Pyroscope (continuous profiling storage, a THIRD separate opt-in profile -- pairs with the SAME Grafana `make observability-up` runs, but neither command requires the other) -- pair with NEXUS_PYROSCOPE_ADDR=http://localhost:4040 (docs/observability.md); nexusd/signerd PUSH profiles to it, so it works whether they run via `make run` or `make docker-up`
+	docker compose -f deploy/docker-compose.observability.yml --profile profiling up -d
+	@echo "pyroscope: http://localhost:4040  (own UI, or browse via Grafana's Explore/Profiles, Pyroscope datasource) -- allow ~60s after first start for /ready"
+
+observability-down: ## stop the prometheus + alertmanager + cadvisor + loki + promtail + grafana (+ tempo/pyroscope, if up) containers
+	docker compose -f deploy/docker-compose.observability.yml --profile observability --profile tracing --profile profiling down

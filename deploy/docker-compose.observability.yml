@@ -3,14 +3,38 @@
 # docker-compose.agentic.yml before it: nothing here references, or is
 # referenced by, postgres/pgbouncer/redis/signerd/nexusd, so `make down` /
 # `make llm-down` / `make agentic-down` can never touch it, and a demo that
-# never runs `make observability-up` pays nothing. `name:` matches the other
-# compose files' own project name so containers/volumes share their naming
-# and — if brought up alongside them — their default network, though nothing
-# here depends on that: every target this file scrapes or tails is reached
-# over a published host port or a bind-mounted file, never container DNS,
+# never runs `make observability-up` pays nothing. `name:` is its OWN
+# project, `nexus-agent-observability` — deliberately NOT the app
+# stack's `nexus-agent-demo` (docker-compose.yml/docker-compose.local-llm.yml
+# both use that one), the same "own project, own group" call
+# docker-compose.agentic.yml's own `name: nexus-agent-demo-agentic` already
+# makes, so this whole stack shows up as its own container group in Docker
+# Desktop rather than folded into the app stack's. Safe to split because
+# nothing here is reached by container DNS from the app side in the first
+# place: every target this file scrapes or tails is reached over a
+# published host port or a bind-mounted file (Prometheus reaches nexusd's
+# `/metrics` over `host.docker.internal`; nexusd/signerd PUSH profiles to
+# Pyroscope over ITS published host port, `internal/obs/pyroscope.go`),
 # because nexusd/signerd are documented to run as plain host processes
 # (docs/local-llm.md's own "Ollama runs natively" reasoning), not compose
-# services, by default.
+# services, by default. Everything Grafana itself reaches by container DNS
+# (Prometheus/Loki/Alertmanager/Tempo/Pyroscope) is defined IN THIS SAME
+# FILE, so they still share one network with each other regardless of what
+# this project is named — the split changes NOTHING about reachability
+# between services in this file, only which Docker Desktop group they
+# render under and which project's own volumes they persist to.
+#
+# Two things deliberately still point at `nexus-agent-demo` (the APP
+# project), not this file's own project name, because their whole job is to
+# observe the app stack's containers, not this stack's own: the
+# `docker-label-exporter` service's `COMPOSE_PROJECT` default
+# (deploy/observability/docker-label-exporter/main.go) and Promtail's own
+# `docker` scrape job (deploy/observability/promtail-config.yml) — both
+# still correctly find postgres/pgbouncer/redis/nexusd/signerd/litellm/
+# langfuse-lite (whichever of those are up), and, as a side effect of the
+# split, no longer also pick up this stack's own prometheus/grafana/loki/
+# etc. containers — arguably the more correct scope for an "Infrastructure"
+# dashboard about the app, not about the thing watching it.
 #
 # This is metrics + logs + container resource usage + alerts by default
 # (the "observability" profile) — per-run LLM tracing already has a home
@@ -19,9 +43,15 @@
 # Grafana Tempo — generic distributed tracing that speaks the same OTLP
 # obs.OTLPExporter already exports (NEXUS_OTLP_ENDPOINT, no Langfuse-
 # specific headers/URL path needed), correlated in the SAME Grafana this
-# file already runs rather than a second one. `make observability-up`'s
-# own footprint/behavior is unchanged by Tempo's presence — it stays a
-# separate `make tempo-up`. Prometheus
+# file already runs rather than a second one. A THIRD, also independently
+# opt-in "profiling" profile adds Grafana Pyroscope — continuous CPU/memory/
+# goroutine/mutex/block profiling pushed straight from nexusd/signerd's own
+# process (internal/obs/pyroscope.go, github.com/grafana/pyroscope-go), not
+# scraped, so it needs no host-network reachability trick the way
+# Prometheus's /metrics target does. `make observability-up`'s own
+# footprint/behavior is unchanged by either Tempo's or Pyroscope's presence
+# — they stay separate `make tempo-up` / `make profiling-up` commands.
+# Prometheus
 # scrapes the golden-signal gauges nexusd's own `/metrics` endpoint has
 # exposed since README task 13.12 (cmd/nexusd/main.go's handleMetrics) —
 # this stack is the scrape target + dashboard that endpoint's own doc
@@ -35,7 +65,7 @@
 # usage for containers it can see). Either way, nothing in the request path
 # takes a new synchronous dependency on this stack being up — the platform
 # keeps working with it off, same as every other optional adapter here.
-name: nexus-agent-demo
+name: nexus-agent-observability
 
 services:
   # `docker compose --profile observability up` (make observability-up):
@@ -301,9 +331,43 @@ services:
       - "4418:4318"
       - "3200:3200"
 
+  # `docker compose --profile profiling up` (make profiling-up): continuous
+  # profiling storage + query API for internal/obs.StartPyroscope's push
+  # target (NEXUS_PYROSCOPE_ADDR). Single-binary "all" target (this image's
+  # own default command, no config file needed) — same "smallest topology
+  # that is still the real thing" call this file's own loki/tempo precedents
+  # already make. No host-network reachability concern the way Prometheus's
+  # /metrics scrape target has (see that service's own comment): nexusd/
+  # signerd PUSH profiles to this container's published port, so it works
+  # identically whether they run as host processes (`make run`) or
+  # containers (`make docker-up`) — just point NEXUS_PYROSCOPE_ADDR at
+  # localhost:4040 either way.
+  #
+  # Confirmed by direct smoke test (grafana/pyroscope:2.3.1, default "all"
+  # target, a bare named volume, no config.yaml override): first `/ready`
+  # 200 lands ~60s after container start on an empty volume — the metastore/
+  # ingester/segment-writer chain each impose their own fixed grace-period
+  # timer before reporting ready, not something this compose file's own
+  # command/config controls. `internal/obs.StartPyroscope`'s uploads simply
+  # fail (logged, not fatal, via the same zerolog adapter every other
+  # warning in this process already uses) until that window passes, then
+  # succeed on the next UploadRate tick — no restart needed on either side.
+  pyroscope:
+    profiles: ["profiling"]
+    image: grafana/pyroscope:2.3.1
+    volumes:
+      - pyroscope-data:/data
+    ports:
+      # Pyroscope's own default port, unshifted — no collision confirmed on
+      # the machine this was built on, unlike prometheus/alertmanager/
+      # cadvisor/loki/grafana above (each of those DOES have a confirmed
+      # collision, see their own port comments).
+      - "4040:4040"
+
 volumes:
   prometheus-data:
   alertmanager-data:
   loki-data:
   grafana-data:
   tempo-data:
+  pyroscope-data:
