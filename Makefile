@@ -1,6 +1,12 @@
-.PHONY: up down build run signerd token test lint migrate seed eval eval-baseline verify-chain erase dashboard go-live web-build docker-build docker-up docker-down ollama-pull llm-up langfuse-up langfuse-lite-up llm-down agentic-up agentic-down observability-up observability-down tempo-up profiling-up
+.PHONY: up down build run signerd token test lint migrate seed eval eval-baseline verify-chain erase dashboard go-live web-build docker-build docker-up docker-down ollama-pull llm-up langfuse-up langfuse-lite-up llm-down agentic-up agentic-down observability-up observability-down tempo-up profiling-up pprof-cpu pprof-heap pprof-goroutine
 
 TENANT ?= acme
+# nexusd's own pprof listener (obs.StartPprofServer, NEXUS_PPROF_ADDR) --
+# `run`/`signerd` below set this AND NEXUS_SIGNERD_PPROF_ADDR unconditionally
+# (same "zero extra steps for the common path" call already made for
+# NEXUS_LOG_FILE), so override PPROF_ADDR=127.0.0.1:6061 to point the
+# pprof-* targets at signerd instead.
+PPROF_ADDR ?= 127.0.0.1:6060
 
 # --- Infrastructure (Postgres + PgBouncer + Redis) ---
 
@@ -11,9 +17,8 @@ up: ## start postgres, pgbouncer, redis
 down: ## stop and remove infrastructure containers (volumes kept)
 	docker compose -f deploy/docker-compose.yml down
 
-docker-build: ## build the nexusd and signerd images (README task 13.3)
-	docker build --target nexusd  -t nexus-agent-demo/nexusd:latest  .
-	docker build --target signerd -t nexus-agent-demo/signerd:latest .
+docker-build: ## build the nexusd and signerd images (README task 13.3) -- THROUGH compose's own `build:` stanza, not a bare `docker build`: a bare `docker build -t nexus-agent-demo/nexusd:latest .` tags a DIFFERENT image name than compose's own auto-generated one (`nexus-agent-demo-nexusd`), which `docker-up` below actually runs -- confirmed this silently left `docker-up` serving a days-old image after a source change, since `docker compose up` never rebuilds an image that already exists unless asked. `docker compose build` is the fix, not a workaround: it builds/tags the EXACT image `up` below will use.
+	docker compose -f deploy/docker-compose.yml --profile app build
 
 docker-up: docker-build ## start nexusd + signerd (built images) against the existing infra services
 	docker compose -f deploy/docker-compose.yml --profile app up -d
@@ -28,13 +33,13 @@ build: ## build all three binaries into ./bin
 	go build -o bin/nexusctl ./cmd/nexusctl
 	go build -o bin/signerd ./cmd/signerd
 
-run: build ## run signerd in the background + nexusd in the foreground (Ctrl-C stops both) -- --dev keeps the zero-setup path (auto KEK/AuthN key, fake provider); a real deployment omits it (README task 13.1/13.11). Both also tee structured logs to .dev/*.log (NEXUS_LOG_FILE, internal/obs.InitLogger) so `make observability-up`'s Promtail has something to tail even though neither runs in Docker by default.
-	NEXUS_LOG_FILE=.dev/signerd.log ./bin/signerd & echo $$! > .dev/signerd.pid
+run: build ## run signerd in the background + nexusd in the foreground (Ctrl-C stops both) -- --dev keeps the zero-setup path (auto KEK/AuthN key, fake provider); a real deployment omits it (README task 13.1/13.11). Both also tee structured logs to .dev/*.log (NEXUS_LOG_FILE, internal/obs.InitLogger) so `make observability-up`'s Promtail has something to tail even though neither runs in Docker by default. Both also start their own loopback-only pprof listener (NEXUS_PPROF_ADDR/NEXUS_SIGNERD_PPROF_ADDR, obs.StartPprofServer) so `make pprof-cpu`/`pprof-heap`/`pprof-goroutine` work with zero setup -- unset the var (or override to empty) to go back to no pprof listener, same as NEXUS_LOG_FILE's own opt-out.
+	NEXUS_LOG_FILE=.dev/signerd.log NEXUS_SIGNERD_PPROF_ADDR=127.0.0.1:6061 ./bin/signerd & echo $$! > .dev/signerd.pid
 	@trap 'kill `cat .dev/signerd.pid` 2>/dev/null; rm -f .dev/signerd.pid' EXIT INT TERM; \
-	NEXUS_LOG_FILE=.dev/nexusd.log ./bin/nexusd --dev
+	NEXUS_LOG_FILE=.dev/nexusd.log NEXUS_PPROF_ADDR=127.0.0.1:6060 ./bin/nexusd --dev
 
 signerd: build ## run signerd alone in the foreground — nexusd's Kernel.Receipts (README task 5.2) needs it reachable at NEXUS_SIGNERD_SOCKET (default .dev/signerd.sock) before any event can append
-	NEXUS_LOG_FILE=.dev/signerd.log ./bin/signerd
+	NEXUS_LOG_FILE=.dev/signerd.log NEXUS_SIGNERD_PPROF_ADDR=127.0.0.1:6061 ./bin/signerd
 
 token: build ## mint a dev bearer token (TENANT=name, default acme) for curl/nexusctl/the web app -- nexusctl run "..." NEXUS_TOKEN=$$(make -s token)
 	./bin/nexusd --dev token --tenant=$(TENANT)
@@ -139,3 +144,20 @@ profiling-up: ## start Grafana Pyroscope (continuous profiling storage, a THIRD 
 
 observability-down: ## stop the prometheus + alertmanager + cadvisor + loki + promtail + grafana (+ tempo/pyroscope, if up) containers
 	docker compose -f deploy/docker-compose.observability.yml --profile observability --profile tracing --profile profiling down
+
+# --- On-demand profiling: pprof (docs/observability.md) --
+# `run`/`signerd` above already start this listener by default
+# (NEXUS_PPROF_ADDR/NEXUS_SIGNERD_PPROF_ADDR), loopback-only -- these three
+# just wrap `go tool pprof` against it so nobody has to remember the URL.
+# PPROF_ADDR defaults to nexusd's port (127.0.0.1:6060); point at signerd's
+# instead with `PPROF_ADDR=127.0.0.1:6061 make pprof-heap`. Each drops into
+# pprof's own interactive shell (`top`, `web`, `list <func>`, ...).
+
+pprof-cpu: ## capture a 30s CPU profile from nexusd's (or PPROF_ADDR=host:port's) pprof listener
+	go tool pprof "http://$(PPROF_ADDR)/debug/pprof/profile?seconds=30"
+
+pprof-heap: ## capture a heap (in-use memory) profile from nexusd's (or PPROF_ADDR=host:port's) pprof listener
+	go tool pprof "http://$(PPROF_ADDR)/debug/pprof/heap"
+
+pprof-goroutine: ## capture a goroutine dump from nexusd's (or PPROF_ADDR=host:port's) pprof listener -- the fastest way to spot a leak or a stuck call
+	go tool pprof "http://$(PPROF_ADDR)/debug/pprof/goroutine"

@@ -77,6 +77,17 @@ services:
       - signerd-dev:/app/.dev
     environment:
       NEXUS_SIGNERD_SOCKET: /var/run/nexus/signerd.sock
+      # 0.0.0.0, not 127.0.0.1 (unlike `make run`'s own host-process default,
+      # docs/observability.md): a loopback bind INSIDE this container is
+      # loopback to the CONTAINER, so the ports: mapping below could never
+      # reach it — Docker's port NAT can't forward to a process that isn't
+      # listening on that interface. The ports: mapping's OWN
+      # "127.0.0.1:" host-side prefix is what keeps the actual exposure
+      # loopback-only from the host's perspective, same posture as the
+      # host-process path — nothing off this machine can reach either one.
+      NEXUS_SIGNERD_PPROF_ADDR: 0.0.0.0:6061
+    ports:
+      - "127.0.0.1:6061:6061"
 
   nexusd:
     profiles: ["app"]
@@ -105,8 +116,13 @@ services:
       NEXUS_REDIS_ADDR: redis:6379
       NEXUS_SIGNERD_SOCKET: /var/run/nexus/signerd.sock
       NEXUS_HTTP_ADDR: :8085
+      # See signerd's own identical NEXUS_SIGNERD_PPROF_ADDR comment above —
+      # same 0.0.0.0-inside/loopback-published pattern, just this
+      # container's own port.
+      NEXUS_PPROF_ADDR: 0.0.0.0:6060
     ports:
       - "8085:8085"
+      - "127.0.0.1:6060:6060"
     # --dev keeps this profile a one-command demo (auto-generated KEK/AuthN
     # keys, persisted in the nexusd-dev volume across restarts) — a real
     # deployment omits it and mounts real secrets instead (README task

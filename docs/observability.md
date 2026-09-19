@@ -206,20 +206,56 @@ Separately from continuous profiling, `obs.StartPprofServer`
 "I need one flame graph right now, from one specific process" tool,
 distinct from Pyroscope's "always-on history across every process"
 continuous story above. It listens on `NEXUS_PPROF_ADDR` (`nexusd`) /
-`NEXUS_SIGNERD_PPROF_ADDR` (`signerd`), unset by default (no listener at
-all), and — this is the important part — **on a SEPARATE listener from
-`nexusd`'s main REST/webhook mux and its `/metrics` endpoint**, never
-mounted alongside them. `net/http/pprof`'s own package documentation warns
-against exposing it on a mux anything untrusted can reach:
-`/debug/pprof/profile` lets an unauthenticated caller pin a CPU core for up
-to 30s (or longer, caller-settable) with no auth gate, and `/debug/pprof/
-heap` dumps live allocation stacks — meaningfully more sensitive than the
-"unauthenticated, content-free, per-process" caveat already documented for
-`/metrics` below, so this deliberately doesn't share that endpoint's
-posture. Bind it to loopback (`127.0.0.1:6060`) for local use; a real
-deployment wanting it reachable at all would need the same network-level
-restriction (or a reverse-proxy auth gate) the `/metrics` Caveat below
-already recommends.
+`NEXUS_SIGNERD_PPROF_ADDR` (`signerd`) — `make run`/`make signerd` set both
+unconditionally to `127.0.0.1:6060`/`127.0.0.1:6061` (the same "zero extra
+steps for the common path" call already made for `NEXUS_LOG_FILE`), so
+`make pprof-cpu`/`pprof-heap`/`pprof-goroutine` work right after a plain
+`make run` with nothing to configure; unset either var in your own shell
+first if you want that path's listener off.
+
+**`make docker-up` works identically** — `docker-compose.yml`'s own
+`nexusd`/`signerd` services set the SAME two env vars, just bound to
+`0.0.0.0:6060`/`0.0.0.0:6061` INSIDE the container (a loopback bind there
+would be loopback to the container, unreachable through Docker's own port
+NAT no matter what's published) with the `ports:` mapping itself doing the
+loopback scoping instead — `"127.0.0.1:6060:6060"`, not a bare
+`"6060:6060"` — so the actual exposure from the host's own network stack is
+identical either way: loopback-only, nothing off the machine can reach it.
+`make pprof-cpu`/`pprof-heap`/`pprof-goroutine` need no `PPROF_ADDR`
+override for this path — same host-side port either way. (Confirmed this
+wasn't automatic: `docker compose up` doesn't rebuild an image that already
+exists unless asked, so a plain `docker build -t nexus-agent-demo/nexusd:
+latest .` — what `make docker-build` used to run — tagged a DIFFERENT image
+name than compose's own auto-generated one and was silently never used;
+`make docker-build` now runs `docker compose build` instead, so it always
+builds/tags the exact image `docker-up` actually starts.)
+
+And this is the important part, true on both paths — it's **on a SEPARATE
+listener from `nexusd`'s main REST/webhook mux and its `/metrics`
+endpoint**, never mounted alongside them. `net/http/
+pprof`'s own package documentation warns against exposing it on a mux
+anything untrusted can reach: `/debug/pprof/profile` lets an unauthenticated
+caller pin a CPU core for up to 30s (or longer, caller-settable) with no
+auth gate, and `/debug/pprof/heap` dumps live allocation stacks —
+meaningfully more sensitive than the "unauthenticated, content-free,
+per-process" caveat already documented for `/metrics` below, so this
+deliberately doesn't share that endpoint's posture. Loopback is what makes
+defaulting it to "on" for `make run` safe in the first place — nothing off
+the local machine can reach it; a real deployment wanting it reachable at
+all would need the same network-level restriction (or a reverse-proxy auth
+gate) the `/metrics` Caveat below already recommends, and doesn't go
+through `make run` in the first place (README task 13.1/13.11).
+
+```bash
+make pprof-cpu        # 30s CPU profile from nexusd (PPROF_ADDR=127.0.0.1:6060 by default)
+make pprof-heap       # in-use heap profile from nexusd
+make pprof-goroutine  # goroutine dump from nexusd -- fastest way to spot a leak or a stuck call
+PPROF_ADDR=127.0.0.1:6061 make pprof-heap   # same three, against signerd instead
+```
+
+Each drops into `go tool pprof`'s own interactive shell (`top`, `web` for an
+SVG call graph, `list <func>` for line-level annotation — see `go tool
+pprof -h` for the full command set).
 
 ## Alerting
 
@@ -331,8 +367,8 @@ flag to start them in the first place).
 | `NEXUS_PYROSCOPE_ADDR` | unset (profiling disabled) | Set to `http://localhost:4040` to push continuous profiles to Pyroscope (`make profiling-up`) — same value for both `nexusd` and `signerd`; each pushes under its own application name. |
 | `NEXUS_PPROF_MUTEX_FRACTION` | `0` (off) | `runtime.SetMutexProfileFraction`'s own parameter — nonzero also adds `mutex_count`/`mutex_duration` to what Pyroscope uploads and makes `nexusd`'s/`signerd`'s own `/debug/pprof/mutex` non-empty. |
 | `NEXUS_PPROF_BLOCK_RATE` | `0` (off) | `runtime.SetBlockProfileRate`'s own parameter — nonzero also adds `block_count`/`block_duration` to what Pyroscope uploads and makes `/debug/pprof/block` non-empty. |
-| `NEXUS_PPROF_ADDR` | unset (no listener) | `nexusd`'s on-demand `net/http/pprof` listener address (e.g. `127.0.0.1:6060`) — a SEPARATE listener from the main REST/webhook mux, see "On-demand profiling: pprof" above. |
-| `NEXUS_SIGNERD_PPROF_ADDR` | unset (no listener) | Same as `NEXUS_PPROF_ADDR`, for `signerd` — a distinct env var since both processes may run on the same host at once and can't share a bind address. |
+| `NEXUS_PPROF_ADDR` | `127.0.0.1:6060` for `make run`; `0.0.0.0:6060` (published loopback-only) for `make docker-up`; unset (no listener) otherwise | `nexusd`'s on-demand `net/http/pprof` listener address — a SEPARATE listener from the main REST/webhook mux, see "On-demand profiling: pprof" above. `make pprof-cpu`/`pprof-heap`/`pprof-goroutine` target `127.0.0.1:6060` by default, working against either path unmodified. |
+| `NEXUS_SIGNERD_PPROF_ADDR` | `127.0.0.1:6061` for `make signerd`/`make run`; `0.0.0.0:6061` (published loopback-only) for `make docker-up`; unset otherwise | Same as `NEXUS_PPROF_ADDR`, for `signerd` — a distinct env var since both processes may run on the same host at once and can't share a bind address. |
 
 `docker-label-exporter` (task 17.15) takes two of its own, set in
 `docker-compose.observability.yml`'s own service block rather than here —
@@ -471,5 +507,9 @@ bind address. Neither needs to change for this repo's own use.
   own** — same posture `net/http/pprof`'s own package docs describe, and
   the reason this codebase never mounts them on the mux `/metrics` and the
   REST/webhook surfaces share (see "On-demand profiling: pprof" above).
-  Bind to loopback, or a network only a trusted operator can reach — never
-  the public internet.
+  `make run`/`make signerd` default them to loopback (`127.0.0.1:...`)
+  specifically because that's what makes defaulting them to "on" safe at
+  all — nothing off the local machine can reach a loopback bind. Keep it
+  that way, or a network only a trusted operator can reach — never the
+  public internet, and never carried into a real deployment (which doesn't
+  go through `make run` in the first place).
