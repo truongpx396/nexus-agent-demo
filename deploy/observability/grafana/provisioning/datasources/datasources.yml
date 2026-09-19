@@ -38,3 +38,18 @@ datasources:
     access: proxy
     url: http://tempo:3200
     editable: false
+
+  # Pyroscope (a THIRD, separately opt-in profile from "tracing" —
+  # docker-compose.observability.yml's own pyroscope service comment) —
+  # grafana-pyroscope-datasource ships bundled in this file's pinned
+  # grafana/grafana:11.4.0 (confirmed against that image tag's own
+  # public/app/plugins/datasource directory: no GF_INSTALL_PLUGINS/
+  # GF_PLUGINS_PREINSTALL_SYNC needed, unlike a Grafana build that excludes
+  # bundled plugins). Same "Grafana tolerates an unreachable datasource
+  # fine" tolerance as the Tempo entry above if "profiling" is never
+  # brought up.
+  - name: Pyroscope
+    type: grafana-pyroscope-datasource
+    access: proxy
+    url: http://pyroscope:4040
+    editable: false

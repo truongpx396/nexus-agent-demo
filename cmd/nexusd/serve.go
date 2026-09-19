@@ -94,6 +94,48 @@ func serve(ctx context.Context) error {
 	}
 	defer shutdownSpanExp()
 
+	// Profiling (docs/observability.md's "profiling" compose profile):
+	// on-demand pprof on its OWN loopback-scoped listener (never the mux
+	// below /metrics/webhooks share — obs.StartPprofServer's own doc comment
+	// says why), plus optional continuous profiling pushed to Grafana
+	// Pyroscope. Both are opt-in and no-ops when their env vars are unset —
+	// same zero-setup posture as the span exporter above. Mutex/block
+	// sampling is a single process-wide rate shared by both consumers
+	// (obs.EnableMutexBlockProfiling's own doc comment), so it's set once
+	// here regardless of which of the two ends up using it.
+	mutexFraction := envIntOr("NEXUS_PPROF_MUTEX_FRACTION", 0)
+	blockRate := envIntOr("NEXUS_PPROF_BLOCK_RATE", 0)
+	obs.EnableMutexBlockProfiling(mutexFraction, blockRate)
+
+	shutdownPprof, err := obs.StartPprofServer(envOr("NEXUS_PPROF_ADDR", ""))
+	if err != nil {
+		return fmt.Errorf("start pprof server: %w", err)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := shutdownPprof(shutdownCtx); err != nil {
+			log.Error().Err(err).Msg("nexusd: shutdown pprof server")
+		}
+	}()
+
+	profiler, err := obs.StartPyroscope(obs.PyroscopeConfig{
+		ServerAddress:       envOr("NEXUS_PYROSCOPE_ADDR", ""),
+		ApplicationName:     "nexusd",
+		Tags:                map[string]string{"git_commit": version.GitCommit},
+		MutexBlockProfiling: mutexFraction > 0 || blockRate > 0,
+	})
+	if err != nil {
+		return fmt.Errorf("start pyroscope: %w", err)
+	}
+	if profiler != nil {
+		defer func() {
+			if err := profiler.Stop(); err != nil {
+				log.Error().Err(err).Msg("nexusd: stop pyroscope profiler")
+			}
+		}()
+	}
+
 	// Sign-only audit key custody (README task 5.1): nexusd dials
 	// signerd's unix socket and can ask it to sign, never read the key
 	// itself — internal/audit/signerkey (the package that CAN read it) is
