@@ -7,24 +7,37 @@ TENANT ?= acme
 # NEXUS_LOG_FILE), so override PPROF_ADDR=127.0.0.1:6061 to point the
 # pprof-* targets at signerd instead.
 PPROF_ADDR ?= 127.0.0.1:6060
+# Passed to every `docker compose -f deploy/docker-compose.yml` invocation
+# below so its own ${NEXUS_PROVIDER:-fake}-style interpolation (nexusd's
+# environment block) reads the repo-root .env you already maintain for
+# `make run` -- NOT the implicit .env compose would otherwise look for next
+# to the compose FILE itself (deploy/.env, which doesn't exist and isn't
+# meant to). $(wildcard .env) makes this conditional on the file actually
+# existing: an EXPLICIT --env-file that's missing is a hard compose error
+# ("couldn't find env file"), unlike the implicit auto-load's silent
+# no-op -- confirmed directly -- and a missing .env is a fully supported,
+# zero-setup state everywhere else in this codebase (.env.example's own
+# header comment), so `make up`/`make docker-up` must keep working without
+# one.
+ENV_FILE_FLAG := $(if $(wildcard .env),--env-file .env,)
 
 # --- Infrastructure (Postgres + PgBouncer + Redis) ---
 
 up: ## start postgres, pgbouncer, redis
-	docker compose -f deploy/docker-compose.yml up -d
+	docker compose -f deploy/docker-compose.yml $(ENV_FILE_FLAG) up -d
 	@echo "postgres:5433  pgbouncer:6432 (transaction pooling)  redis:6380"
 
 down: ## stop and remove infrastructure containers (volumes kept)
-	docker compose -f deploy/docker-compose.yml down
+	docker compose -f deploy/docker-compose.yml $(ENV_FILE_FLAG) down
 
 docker-build: ## build the nexusd and signerd images (README task 13.3) -- THROUGH compose's own `build:` stanza, not a bare `docker build`: a bare `docker build -t nexus-agent-demo/nexusd:latest .` tags a DIFFERENT image name than compose's own auto-generated one (`nexus-agent-demo-nexusd`), which `docker-up` below actually runs -- confirmed this silently left `docker-up` serving a days-old image after a source change, since `docker compose up` never rebuilds an image that already exists unless asked. `docker compose build` is the fix, not a workaround: it builds/tags the EXACT image `up` below will use.
-	docker compose -f deploy/docker-compose.yml --profile app build
+	docker compose -f deploy/docker-compose.yml $(ENV_FILE_FLAG) --profile app build
 
-docker-up: docker-build ## start nexusd + signerd (built images) against the existing infra services
-	docker compose -f deploy/docker-compose.yml --profile app up -d
+docker-up: docker-build ## start nexusd + signerd (built images) against the existing infra services -- picks up NEXUS_PROVIDER (litellm/anthropic/fake) from your own .env via ENV_FILE_FLAG above; NEXUS_LITELLM_BASE_URL is hardcoded to litellm's container DNS name regardless (docker-compose.yml's own comment says why -- .env's own http://localhost:4100 would be wrong from inside this container)
+	docker compose -f deploy/docker-compose.yml $(ENV_FILE_FLAG) --profile app up -d
 
 docker-down: ## stop nexusd + signerd (the --profile app containers) -- `make down` alone does NOT stop these (confirmed: plain `docker compose down` ignores profile-gated services that are still running); infra (postgres/pgbouncer/redis) stays up
-	docker compose -f deploy/docker-compose.yml --profile app down
+	docker compose -f deploy/docker-compose.yml $(ENV_FILE_FLAG) --profile app down
 
 # --- Go build / test / lint ---
 

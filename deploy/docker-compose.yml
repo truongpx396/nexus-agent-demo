@@ -120,6 +120,26 @@ services:
       # same 0.0.0.0-inside/loopback-published pattern, just this
       # container's own port.
       NEXUS_PPROF_ADDR: 0.0.0.0:6060
+      # Provider selection reads your own repo-root .env (Makefile's
+      # ENV_FILE_FLAG passes --env-file .env so this interpolation actually
+      # resolves it — compose's own IMPLICIT .env lookup would otherwise
+      # check deploy/.env, next to this file, which doesn't exist), so
+      # `NEXUS_PROVIDER=litellm` in .env Just Works here too without
+      # editing this file — defaults to fake (this profile's original,
+      # zero-network-dependency behavior) when unset. NEXUS_LITELLM_BASE_URL
+      # is hardcoded, NOT sourced from .env's own NEXUS_LITELLM_BASE_URL
+      # (http://localhost:4100, correct for a HOST process reaching
+      # litellm's published port) — from inside this container, localhost
+      # is this container, not the host; litellm:4000 is its container-DNS
+      # name and internal port, reachable because docker-compose.local-
+      # llm.yml shares this same project name and therefore this same
+      # default network (that file's own header comment already notes this
+      # network sharing exists, even though it doesn't rely on it — this is
+      # the one path in this repo that now does).
+      NEXUS_PROVIDER: ${NEXUS_PROVIDER:-fake}
+      NEXUS_LITELLM_BASE_URL: http://litellm:4000
+      NEXUS_LITELLM_MODEL: ${NEXUS_LITELLM_MODEL:-qwen2.5-local}
+      NEXUS_LITELLM_API_KEY: ${NEXUS_LITELLM_API_KEY:-}
     ports:
       - "8085:8085"
       - "127.0.0.1:6060:6060"
