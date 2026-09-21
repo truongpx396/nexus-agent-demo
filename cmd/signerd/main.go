@@ -15,7 +15,9 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/rs/zerolog/log"
 
@@ -36,6 +38,17 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
+// envIntOr mirrors cmd/nexusd/main.go's own helper of the same name — a
+// profiling knob degrades to "off" on a typo rather than failing the
+// process closed (observability concern, not a security one).
+func envIntOr(key string, fallback int) int {
+	v, err := strconv.Atoi(os.Getenv(key))
+	if err != nil {
+		return fallback
+	}
+	return v
+}
+
 func main() {
 	// See cmd/nexusd/main.go's identical call for why this comes first.
 	if err := dotenv.Load(); err != nil {
@@ -50,6 +63,44 @@ func main() {
 		fatalf("load signing key: %v", err)
 	}
 	log.Info().Any("key_id", key.KeyID).Msg("signerd: loaded signing key")
+
+	// Profiling (docs/observability.md) — same opt-in knobs cmd/nexusd/serve.go
+	// wires, under signerd's own address/app-name so the two processes never
+	// collide on a bind port or a Pyroscope application selector. signerd's
+	// own workload (sign a digest over a unix socket) is tiny, but a shared
+	// obs helper costs nothing to apply consistently across both binaries.
+	mutexFraction := envIntOr("NEXUS_PPROF_MUTEX_FRACTION", 0)
+	blockRate := envIntOr("NEXUS_PPROF_BLOCK_RATE", 0)
+	obs.EnableMutexBlockProfiling(mutexFraction, blockRate)
+
+	shutdownPprof, err := obs.StartPprofServer(envOr("NEXUS_SIGNERD_PPROF_ADDR", ""))
+	if err != nil {
+		fatalf("start pprof server: %v", err)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := shutdownPprof(shutdownCtx); err != nil {
+			log.Error().Err(err).Msg("signerd: shutdown pprof server")
+		}
+	}()
+
+	profiler, err := obs.StartPyroscope(obs.PyroscopeConfig{
+		ServerAddress:       envOr("NEXUS_PYROSCOPE_ADDR", ""),
+		ApplicationName:     "signerd",
+		Tags:                map[string]string{"git_commit": version.GitCommit},
+		MutexBlockProfiling: mutexFraction > 0 || blockRate > 0,
+	})
+	if err != nil {
+		fatalf("start pyroscope: %v", err)
+	}
+	if profiler != nil {
+		defer func() {
+			if err := profiler.Stop(); err != nil {
+				log.Error().Err(err).Msg("signerd: stop pyroscope profiler")
+			}
+		}()
+	}
 
 	socketPath := envOr("NEXUS_SIGNERD_SOCKET", defaultSocketPath)
 	if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {

@@ -92,6 +92,7 @@ func handleMetrics(st *store.Store) http.HandlerFunc {
 			{"nexus_approval_mismatch_rate", "Fraction of decided approvals that resolved approval_mismatch.", func(s obs.GoldenSignals) float64 { return s.ApprovalMismatchRate }},
 			{"nexus_unresolved_inflight_claims", "In-flight claims older than the staleness window.", func(s obs.GoldenSignals) float64 { return float64(s.UnresolvedInFlightClaims) }},
 			{"nexus_telemetry_attr_drop_rate", "Fraction of telemetry attribute keys dropped by the allowlist (not measured by this endpoint; see internal/obs.DropTracker).", func(s obs.GoldenSignals) float64 { return s.TelemetryAttrDropRate }},
+			{"nexus_taint_transition_rate", "Fraction of terminal sessions with at least one taint_transition event (constitution Principle V's Rule of Two).", func(s obs.GoldenSignals) float64 { return s.TaintTransitionRate }},
 		} {
 			writeGaugeHeader(w, m.name, m.help)
 			for tenantID, signals := range signalsByTenant {
@@ -103,6 +104,13 @@ func handleMetrics(st *store.Store) http.HandlerFunc {
 		for tenantID, toolCalls := range toolCallsByTenant {
 			for toolID, n := range toolCalls {
 				fmt.Fprintf(w, "nexus_tool_call_count{tenant_id=%q,tool_id=%q} %f\n", tenantID, toolID, float64(n)) //nolint:errcheck // best-effort write to a scrape response
+			}
+		}
+
+		writeGaugeHeader(w, "nexus_sessions_by_surface", "Session count grouped by originating surface_id (web/telegram/zalo/email/cli/api).")
+		for tenantID, signals := range signalsByTenant {
+			for surfaceID, n := range signals.SessionsBySurface {
+				fmt.Fprintf(w, "nexus_sessions_by_surface{tenant_id=%q,surface_id=%q} %f\n", tenantID, surfaceID, float64(n)) //nolint:errcheck // best-effort write to a scrape response
 			}
 		}
 

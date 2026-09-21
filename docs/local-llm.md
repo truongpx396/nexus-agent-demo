@@ -134,6 +134,24 @@ NEXUS_LANGFUSE_SECRET_KEY=sk-lf-1ce1762967990aacbff57c894cea6e39 \
 make run
 ```
 
+**`make docker-up` (containerized nexusd/signerd) works too**, no inline env
+vars needed — `docker-compose.yml`'s own `nexusd` service reads
+`NEXUS_PROVIDER`/`NEXUS_LITELLM_MODEL`/`NEXUS_LITELLM_API_KEY` from your
+repo-root `.env` (`make`'s `ENV_FILE_FLAG` passes `--env-file .env` so this
+resolves correctly), so `NEXUS_PROVIDER=litellm` in `.env` is all `.env`
+needs for this path too. `NEXUS_LITELLM_BASE_URL` is hardcoded to
+`http://litellm:4000` regardless of what's in `.env` — container DNS +
+LiteLLM's own internal port, since `.env`'s own `http://localhost:4100`
+(correct for a HOST process reaching LiteLLM's published port) would
+resolve to the nexusd container itself from inside it. `docker-compose.yml`
+and `docker-compose.local-llm.yml` share one project name/network
+specifically so this reaches LiteLLM without any extra wiring — bring
+LiteLLM up first (`make llm-up`) or after, order doesn't matter, nexusd just
+retries until it's reachable. Langfuse/OTLP tracing isn't wired into this
+path yet (`docker-compose.yml`'s own `nexusd` service doesn't pass through
+`NEXUS_OTLP_*`/`NEXUS_LANGFUSE_*`) — only the model-serving half of this
+doc's Setup applies to `make docker-up` today.
+
 `make llm-down` stops everything in `deploy/docker-compose.local-llm.yml` —
 `make down`'s own postgres/pgbouncer/redis live in a separate compose file
 (`deploy/docker-compose.yml`) entirely, so there's nothing there for this to

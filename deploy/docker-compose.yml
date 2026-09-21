@@ -77,6 +77,22 @@ services:
       - signerd-dev:/app/.dev
     environment:
       NEXUS_SIGNERD_SOCKET: /var/run/nexus/signerd.sock
+      # 0.0.0.0, not 127.0.0.1 (unlike `make run`'s own host-process default,
+      # docs/observability.md): a loopback bind INSIDE this container is
+      # loopback to the CONTAINER, so the ports: mapping below could never
+      # reach it — Docker's port NAT can't forward to a process that isn't
+      # listening on that interface. The ports: mapping's OWN
+      # "127.0.0.1:" host-side prefix is what keeps the actual exposure
+      # loopback-only from the host's perspective, same posture as the
+      # host-process path — nothing off this machine can reach either one.
+      NEXUS_SIGNERD_PPROF_ADDR: 0.0.0.0:6061
+      # See nexusd's own identical NEXUS_PYROSCOPE_ADDR comment below — same
+      # host.docker.internal redirect, just this process's own application
+      # name (StartPyroscope's own ApplicationName, set from os.Args/const
+      # in cmd/signerd, tells the two apart in Pyroscope regardless).
+      NEXUS_PYROSCOPE_ADDR: ${NEXUS_PYROSCOPE_ADDR:+http://host.docker.internal:4040}
+    ports:
+      - "127.0.0.1:6061:6061"
 
   nexusd:
     profiles: ["app"]
@@ -105,8 +121,50 @@ services:
       NEXUS_REDIS_ADDR: redis:6379
       NEXUS_SIGNERD_SOCKET: /var/run/nexus/signerd.sock
       NEXUS_HTTP_ADDR: :8085
+      # See signerd's own identical NEXUS_SIGNERD_PPROF_ADDR comment above —
+      # same 0.0.0.0-inside/loopback-published pattern, just this
+      # container's own port.
+      NEXUS_PPROF_ADDR: 0.0.0.0:6060
+      # Same "hardcode the container-correct address, ignore .env's own
+      # host-side value" call as NEXUS_LITELLM_BASE_URL below, but Pyroscope
+      # can't reuse litellm's container-DNS trick: it lives in the SEPARATE
+      # nexus-agent-observability compose project (docker-compose.
+      # observability.yml), a different default network with no shared
+      # service name to resolve. host.docker.internal is Docker Desktop's
+      # own host-loopback DNS name, reachable regardless of which compose
+      # project is on the other end, since Pyroscope's `ports:` already
+      # publishes 4040 to the host same as this repo's every other
+      # container-to-host reach (docs/observability.md). The `${VAR:+...}`
+      # form keeps this opt-in exactly like the host-process path: `.env`'s
+      # own NEXUS_PYROSCOPE_ADDR unset/commented (.env.example's default)
+      # resolves to an empty string here too, and obs.StartPyroscope's own
+      # doc comment treats "" as disabled — so `make docker-up` stays
+      # profiling-free until you uncomment NEXUS_PYROSCOPE_ADDR in `.env`
+      # (`make profiling-up`'s own opt-in), same trigger as `make run`.
+      NEXUS_PYROSCOPE_ADDR: ${NEXUS_PYROSCOPE_ADDR:+http://host.docker.internal:4040}
+      # Provider selection reads your own repo-root .env (Makefile's
+      # ENV_FILE_FLAG passes --env-file .env so this interpolation actually
+      # resolves it — compose's own IMPLICIT .env lookup would otherwise
+      # check deploy/.env, next to this file, which doesn't exist), so
+      # `NEXUS_PROVIDER=litellm` in .env Just Works here too without
+      # editing this file — defaults to fake (this profile's original,
+      # zero-network-dependency behavior) when unset. NEXUS_LITELLM_BASE_URL
+      # is hardcoded, NOT sourced from .env's own NEXUS_LITELLM_BASE_URL
+      # (http://localhost:4100, correct for a HOST process reaching
+      # litellm's published port) — from inside this container, localhost
+      # is this container, not the host; litellm:4000 is its container-DNS
+      # name and internal port, reachable because docker-compose.local-
+      # llm.yml shares this same project name and therefore this same
+      # default network (that file's own header comment already notes this
+      # network sharing exists, even though it doesn't rely on it — this is
+      # the one path in this repo that now does).
+      NEXUS_PROVIDER: ${NEXUS_PROVIDER:-fake}
+      NEXUS_LITELLM_BASE_URL: http://litellm:4000
+      NEXUS_LITELLM_MODEL: ${NEXUS_LITELLM_MODEL:-qwen2.5-local}
+      NEXUS_LITELLM_API_KEY: ${NEXUS_LITELLM_API_KEY:-}
     ports:
       - "8085:8085"
+      - "127.0.0.1:6060:6060"
     # --dev keeps this profile a one-command demo (auto-generated KEK/AuthN
     # keys, persisted in the nexusd-dev volume across restarts) — a real
     # deployment omits it and mounts real secrets instead (README task
