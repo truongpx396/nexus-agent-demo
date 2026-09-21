@@ -56,6 +56,24 @@ type GoldenSignals struct {
 	// a full go-live dashboard passes this in rather than obs computing it
 	// itself. Nil means "not measured this call."
 	HeldOutGap *float64
+	// TaintTransitionRate is the fraction of terminal sessions whose durable
+	// log carries at least one taint_transition event (store.
+	// EventTaintTransition — internal/delegate/resolve.go's delegation-copy
+	// fold and internal/teams/board.go's board-card-read fold, constitution
+	// Principle V's Rule of Two). Deliberately reads the event log rather
+	// than sessions.taint_state: that column is still an unpopulated
+	// placeholder for a later projection phase (internal/tools/pipeline.go's
+	// own doc comment — Rule-of-Two state today lives in a process-lifetime
+	// cache, not a replayed projection), while taint_transition events are
+	// already durably appended today. Same "not itself bad, but the first
+	// place a regression shows up" read as CompletionRateByReason.
+	TaintTransitionRate float64
+	// SessionsBySurface is total session count grouped by originating
+	// surface_id (migrations/0002_sessions.sql — web/telegram/zalo/email/
+	// cli/api, docs/agentic-capabilities.md's multi-surface delivery). A
+	// count, not a rate: there is no "bad" direction, just channel adoption/
+	// distribution, the same shape as ToolCallCounts's per-tool breakdown.
+	SessionsBySurface map[string]int
 }
 
 // ComputeGoldenSignals queries every signal above out of tenantID's own
@@ -83,7 +101,13 @@ func ComputeGoldenSignals(ctx context.Context, st *store.Store, tenantID uuid.UU
 		if err := queryApprovalSignals(ctx, tx, &g); err != nil {
 			return err
 		}
-		return queryUnresolvedClaims(ctx, tx, &g, staleClaimAfter)
+		if err := queryUnresolvedClaims(ctx, tx, &g, staleClaimAfter); err != nil {
+			return err
+		}
+		if err := queryTaintTransitionRate(ctx, tx, &g); err != nil {
+			return err
+		}
+		return querySessionsBySurface(ctx, tx, &g)
 	})
 	return g, err
 }
@@ -200,6 +224,38 @@ func queryUnresolvedClaims(ctx context.Context, tx pgx.Tx, g *GoldenSignals, sta
 		return fmt.Errorf("obs: count unresolved claims: %w", err)
 	}
 	return nil
+}
+
+func queryTaintTransitionRate(ctx context.Context, tx pgx.Tx, g *GoldenSignals) error {
+	var sessionsWithTransition int
+	err := tx.QueryRow(ctx,
+		`SELECT count(DISTINCT session_id) FROM events WHERE type = $1`,
+		string(store.EventTaintTransition),
+	).Scan(&sessionsWithTransition)
+	if err != nil {
+		return fmt.Errorf("obs: count taint_transition sessions: %w", err)
+	}
+	g.TaintTransitionRate = safeDiv(sessionsWithTransition, g.TotalTerminalSessions)
+	return nil
+}
+
+func querySessionsBySurface(ctx context.Context, tx pgx.Tx, g *GoldenSignals) error {
+	rows, err := tx.Query(ctx, `SELECT surface_id, count(*) FROM sessions GROUP BY surface_id`)
+	if err != nil {
+		return fmt.Errorf("obs: query sessions by surface: %w", err)
+	}
+	defer rows.Close()
+
+	g.SessionsBySurface = map[string]int{}
+	for rows.Next() {
+		var surface string
+		var n int
+		if err := rows.Scan(&surface, &n); err != nil {
+			return fmt.Errorf("obs: scan sessions by surface: %w", err)
+		}
+		g.SessionsBySurface[surface] = n
+	}
+	return rows.Err()
 }
 
 func safeDiv(numerator, denominator int) float64 {

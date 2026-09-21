@@ -5,10 +5,22 @@
   "tags": ["nexus", "golden-signals"],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "editable": true,
   "refresh": "30s",
   "time": { "from": "now-6h", "to": "now" },
+  "links": [
+    {
+      "type": "link",
+      "title": "Nexus / Cost and Tools",
+      "tooltip": "Drill into the per-tool/per-model breakdown behind a rate moving here (e.g. a cost-ceiling-breach or tool-adoption spike) — deliberately a separate dashboard, not merged: different time window (6h vs 24h) and a different review cadence (incident health vs. spend/adoption analysis).",
+      "url": "/d/nexus-cost-and-tools/nexus-cost-and-tools",
+      "icon": "dashboard",
+      "includeVars": true,
+      "keepTime": false,
+      "targetBlank": false
+    }
+  ],
   "templating": {
     "list": [
       {
@@ -199,6 +211,51 @@
       },
       "targets": [
         { "expr": "nexus_approval_mismatch_rate{tenant_id=~\"$tenant_id\"}", "legendFormat": "{{tenant_id}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "row",
+      "title": "Guardrails and channels",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 27 }
+    },
+    {
+      "id": 13,
+      "type": "gauge",
+      "title": "Taint transition rate",
+      "description": "Fraction of terminal sessions with at least one taint_transition event on their log (internal/delegate/resolve.go's delegation-copy fold, internal/teams/board.go's board-card-read fold — constitution Principle V's Rule of Two). Deliberately NOT colored green-good/red-bad like the panels above: unlike stuck_rate or cost_ceiling_breach_rate, a rising number here isn't itself a fault — it's real work touching untrusted or sensitive content across a delegation or board read, same as an industry \"guardrail fire rate\" panel. Read it as a trend to notice, not a threshold to alert on; correlate a spike against a specific session's own event log before concluding anything.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 28 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "blue", "value": null }
+          ] }
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "expr": "nexus_taint_transition_rate{tenant_id=~\"$tenant_id\"}", "legendFormat": "{{tenant_id}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 14,
+      "type": "barchart",
+      "title": "Sessions by surface",
+      "description": "Session count grouped by originating surface_id (web/telegram/zalo/email/cli/api — migrations/0002_sessions.sql, docs/agentic-capabilities.md's multi-surface delivery). A volume/adoption breakdown, not a rate — there's no \"bad\" direction here, just which channels are actually carrying traffic.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 16, "x": 8, "y": 28 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "orientation": "horizontal", "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "nexus_sessions_by_surface{tenant_id=~\"$tenant_id\"}",
+          "legendFormat": "{{tenant_id}} / {{surface_id}}",
+          "refId": "A"
+        }
       ]
     }
   ]
