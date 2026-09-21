@@ -1,0 +1,176 @@
+{
+  "uid": "nexus-profiling",
+  "title": "Nexus / Profiling",
+  "description": "Continuous CPU/memory/goroutine profiling (docs/observability.md's \"Continuous profiling: Grafana Pyroscope\" section) — nexusd/signerd push here whenever NEXUS_PYROSCOPE_ADDR is set (`make profiling-up`'s own opt-in; empty/unset means neither process dials out, so this dashboard just shows no data rather than erroring). The $service/$profileType variables below are what Explore's own ad hoc `labelSelector`/`profileTypeId` query params do by hand (internal/obs/pyroscope.go's own doc comment: profiles are process-wide, not tenant- or run-scoped, so there is no tenant filter here — correlate a slow run against a flame graph by timestamp overlap with that run's own trace/Langfuse record instead). Under `make docker-up`, deploy/docker-compose.yml redirects NEXUS_PYROSCOPE_ADDR to `host.docker.internal:4040` regardless of `.env`'s own host-side value (same reasoning as that file's NEXUS_LITELLM_BASE_URL override) since Pyroscope lives in the separate nexus-agent-observability compose project/network — no container-DNS name to share the way litellm's same-project trick works. **Reading the trend/flame-graph panels**: Pyroscope merges every profile in the picked window with a plain sum (confirmed against grafana/pyroscope#1948 — a maintainer-acknowledged, still-open gap: https://github.com/grafana/pyroscope/discussions/1948) — correct for flow types (process_cpu, alloc_objects, alloc_space, mutex/block contentions+delay: the sum IS the real total over that window), meaningless for gauge types (inuse_space, inuse_objects, goroutines: summing N snapshots of a value that isn't accumulating just multiplies by N). The two stat tiles below read the latest snapshot instead of summing, so they stay correct for either kind of profile type regardless of the window picked.",
+  "tags": ["nexus", "profiling", "pyroscope"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 5,
+  "editable": true,
+  "refresh": "30s",
+  "time": { "from": "now-30m", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "service",
+        "type": "query",
+        "datasource": "Pyroscope",
+        "label": "Service",
+        "query": {
+          "refId": "service",
+          "type": "labelValue",
+          "profileTypeId": "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+          "labelName": "service_name"
+        },
+        "refresh": 2,
+        "includeAll": false,
+        "multi": false,
+        "current": { "text": "nexusd", "value": "nexusd" }
+      },
+      {
+        "name": "profileType",
+        "type": "query",
+        "datasource": "Pyroscope",
+        "label": "Profile type",
+        "query": { "refId": "profileType", "type": "profileType" },
+        "refresh": 2,
+        "includeAll": false,
+        "multi": false,
+        "current": { "text": "process_cpu - cpu", "value": "process_cpu:cpu:nanoseconds:cpu:nanoseconds" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Live heap in use — $service",
+      "description": "Fixed to memory:inuse_space regardless of $profileType — a gauge, not a flow (Go's runtime/pprof heap sample: currently-live bytes, not accumulated since start). reduceOptions.calcs=[\"lastNotNull\"] reads the latest snapshot instead of Pyroscope's own window-sum merge, which for this profile type inflates with window length rather than reflecting real usage (see dashboard description). Sits beside its own breakdown flame graph on the right — same gauge, two views.",
+      "datasource": "Pyroscope",
+      "gridPos": { "h": 16, "w": 6, "x": 0, "y": 24 },
+      "fieldConfig": { "defaults": { "unit": "bytes", "min": 0 }, "overrides": [] },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "metrics",
+          "profileTypeId": "memory:inuse_space:bytes:space:bytes",
+          "labelSelector": "{service_name=\"$service\"}",
+          "groupBy": [],
+          "spanSelector": []
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Live goroutines — $service",
+      "description": "Fixed to the goroutines profile type regardless of $profileType — another gauge (current count, not accumulated). Same lastNotNull reasoning as the heap tile: Pyroscope's own window-sum would report 27 goroutines held steady for an hour as \"6507\", which is a snapshot-count artifact, not a real number of goroutines. Sits beside its own breakdown flame graph on the right — same gauge, two views.",
+      "datasource": "Pyroscope",
+      "gridPos": { "h": 16, "w": 6, "x": 0, "y": 40 },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "metrics",
+          "profileTypeId": "goroutines:goroutine:count:goroutine:count",
+          "labelSelector": "{service_name=\"$service\"}",
+          "groupBy": [],
+          "spanSelector": []
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "$profileType trend — $service",
+      "description": "queryType \"metrics\": the same aggregate-over-time series Explore's top pane shows, scoped to the selected service via {service_name=\"$service\"} — nexusd and signerd never share a call stack, so mixing them in one flame graph would be meaningless; this is why $service is single-select rather than includeAll like the container variable on the Infrastructure dashboard. Unlike the stat tiles further down, this plots every individual snapshot rather than reducing to one number, so it stays honest for gauge types too — just read the line itself, not any sum.",
+      "datasource": "Pyroscope",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "metrics",
+          "profileTypeId": "$profileType",
+          "labelSelector": "{service_name=\"$service\"}",
+          "groupBy": [],
+          "spanSelector": []
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "flamegraph",
+      "title": "$profileType flame graph — $service",
+      "description": "queryType \"profile\": the full flame graph for whatever window the dashboard's own time picker covers (top-right), same data Explore's bottom pane renders for a hand-edited labelSelector/profileTypeId. Its root \"Total\" is a sum across every profile merged from the window — a real total for process_cpu/alloc_*/mutex/block, but an artifact of snapshot count (not real usage) for inuse_space/inuse_objects/goroutines — see the two rows below (each a stat tile beside its own breakdown flame graph) for those instead.",
+      "datasource": "Pyroscope",
+      "gridPos": { "h": 16, "w": 24, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "profile",
+          "profileTypeId": "$profileType",
+          "labelSelector": "{service_name=\"$service\"}",
+          "groupBy": [],
+          "spanSelector": []
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "flamegraph",
+      "title": "Heap breakdown (inuse_space) — $service",
+      "description": "Fixed to memory:inuse_space regardless of $profileType. timeFrom pins the query window to the last 20s ENDING AT the dashboard's own \"to\" time — not a fixed absolute window, so scrubbing/zooming the time picker to \"from P to K\" still moves this panel to K, it just stops it from also merging everything back to P. At pyroscope-go's 15s push interval that's ~1 snapshot (occasionally 2), so the root \"Total\" is close to (not exactly) the real point-in-time value — cross-check the exact number against the \"Live heap in use\" stat tile to its left, which is always exactly the latest snapshot regardless of the time picker. The shape/proportions here are trustworthy either way.",
+      "datasource": "Pyroscope",
+      "timeFrom": "20s",
+      "hideTimeOverride": false,
+      "gridPos": { "h": 16, "w": 18, "x": 6, "y": 24 },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "profile",
+          "profileTypeId": "memory:inuse_space:bytes:space:bytes",
+          "labelSelector": "{service_name=\"$service\"}",
+          "groupBy": [],
+          "spanSelector": []
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "flamegraph",
+      "title": "Goroutine breakdown — $service",
+      "description": "Fixed to the goroutines profile type regardless of $profileType. Same timeFrom: \"20s\"-ending-at-the-dashboard's-\"to\" pin as the heap breakdown panel — moving the time picker to \"from P to K\" shows the goroutine stacks as of K (~1-2 merged snapshots), not accumulated back to P. Cross-check the exact count against the \"Live goroutines\" stat tile to its left (always the latest snapshot); read this panel for which call site is parking how large a SHARE of that count.",
+      "datasource": "Pyroscope",
+      "timeFrom": "20s",
+      "hideTimeOverride": false,
+      "gridPos": { "h": 16, "w": 18, "x": 6, "y": 40 },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "profile",
+          "profileTypeId": "goroutines:goroutine:count:goroutine:count",
+          "labelSelector": "{service_name=\"$service\"}",
+          "groupBy": [],
+          "spanSelector": []
+        }
+      ]
+    }
+  ]
+}

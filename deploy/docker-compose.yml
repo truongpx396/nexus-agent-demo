@@ -86,6 +86,11 @@ services:
       # loopback-only from the host's perspective, same posture as the
       # host-process path — nothing off this machine can reach either one.
       NEXUS_SIGNERD_PPROF_ADDR: 0.0.0.0:6061
+      # See nexusd's own identical NEXUS_PYROSCOPE_ADDR comment below — same
+      # host.docker.internal redirect, just this process's own application
+      # name (StartPyroscope's own ApplicationName, set from os.Args/const
+      # in cmd/signerd, tells the two apart in Pyroscope regardless).
+      NEXUS_PYROSCOPE_ADDR: ${NEXUS_PYROSCOPE_ADDR:+http://host.docker.internal:4040}
     ports:
       - "127.0.0.1:6061:6061"
 
@@ -120,6 +125,23 @@ services:
       # same 0.0.0.0-inside/loopback-published pattern, just this
       # container's own port.
       NEXUS_PPROF_ADDR: 0.0.0.0:6060
+      # Same "hardcode the container-correct address, ignore .env's own
+      # host-side value" call as NEXUS_LITELLM_BASE_URL below, but Pyroscope
+      # can't reuse litellm's container-DNS trick: it lives in the SEPARATE
+      # nexus-agent-observability compose project (docker-compose.
+      # observability.yml), a different default network with no shared
+      # service name to resolve. host.docker.internal is Docker Desktop's
+      # own host-loopback DNS name, reachable regardless of which compose
+      # project is on the other end, since Pyroscope's `ports:` already
+      # publishes 4040 to the host same as this repo's every other
+      # container-to-host reach (docs/observability.md). The `${VAR:+...}`
+      # form keeps this opt-in exactly like the host-process path: `.env`'s
+      # own NEXUS_PYROSCOPE_ADDR unset/commented (.env.example's default)
+      # resolves to an empty string here too, and obs.StartPyroscope's own
+      # doc comment treats "" as disabled — so `make docker-up` stays
+      # profiling-free until you uncomment NEXUS_PYROSCOPE_ADDR in `.env`
+      # (`make profiling-up`'s own opt-in), same trigger as `make run`.
+      NEXUS_PYROSCOPE_ADDR: ${NEXUS_PYROSCOPE_ADDR:+http://host.docker.internal:4040}
       # Provider selection reads your own repo-root .env (Makefile's
       # ENV_FILE_FLAG passes --env-file .env so this interpolation actually
       # resolves it — compose's own IMPLICIT .env lookup would otherwise
