@@ -1,11 +1,11 @@
 {
   "uid": "nexus-infrastructure",
   "title": "Nexus / Infrastructure",
-  "description": "Per-container CPU, memory, network, and disk IO (docs/build-phases.md Phase 17, task 17.12) — the piece application-level /metrics never covers. Sourced from cAdvisor (pointed at containerd directly — see docker-compose.observability.yml's cadvisor service comment for why) and joined against docker-label-exporter's own id->name mapping (task 17.15), since containerd's \"moby\" namespace doesn't carry Docker's own container name/compose labels. The join is also what scopes this dashboard to this project's own containers: docker-label-exporter is server-side filtered by the Docker Engine API itself, so a container it was never told about simply has no `id` to join against and drops out of every query below. Only containers actually running show up — nexusd/signerd need `make docker-up` (docker-compose.yml's --profile app), not `make run`, to appear here at all.",
+  "description": "Per-container CPU, memory, network, and disk IO (docs/build-phases.md Phase 17, task 17.12) — the piece application-level /metrics never covers. Sourced from cAdvisor (pointed at containerd directly — see docker-compose.observability.yml's cadvisor service comment for why) and joined against docker-label-exporter's own id->name mapping (task 17.15), since containerd's \"moby\" namespace doesn't carry Docker's own container name/compose labels. The join is also what scopes this dashboard to this project's own containers: docker-label-exporter is server-side filtered by the Docker Engine API itself, so a container it was never told about simply has no `id` to join against and drops out of every query below — it now watches BOTH the app project and the agentic add-on's own project (`nexus-agent-demo`,`nexus-agent-demo-agentic`), so Crawl4AI/OpenSandbox's own resource usage shows up here too once they're up, same join, zero panel changes needed. Only containers actually running show up — nexusd/signerd need `make docker-up` (docker-compose.yml's --profile app), not `make run`, to appear here at all; crawl4ai/opensandbox need `make agentic-up`.",
   "tags": ["nexus", "infrastructure", "cadvisor"],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 2,
+  "version": 3,
   "editable": true,
   "refresh": "30s",
   "time": { "from": "now-1h", "to": "now" },
