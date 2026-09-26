@@ -239,6 +239,36 @@ func serve(ctx context.Context) error {
 
 	srv.Exporter = spanExp
 
+	// Live typing-style preview over SSE, decoupled from the durable event
+	// path: k.OnChunk fires as the current turn's provider stream decodes
+	// each chunk (kernel/turns.go), well before that turn's own
+	// accumulation/classification/append — srv.PublishDelta fans it out to
+	// whichever clients are subscribed to that session's /v1/runs/{id}/events
+	// stream right now, and drops it silently for anyone who isn't (same
+	// non-blocking, best-effort delivery the durable path's own
+	// broker.publish already has). Nothing about cost reconcile, tool
+	// dispatch, or the audit chain reads this — those still only ever see
+	// the complete, accumulated turn, exactly as before this was wired.
+	k.OnChunk = func(ev kernel.ChunkEvent) {
+		switch ev.Chunk.Kind {
+		case provider.ChunkContent:
+			srv.PublishDelta(ev.SessionID, rest.DeltaDTO{Kind: "content", Text: ev.Chunk.Text})
+		case provider.ChunkToolUse:
+			srv.PublishDelta(ev.SessionID, rest.DeltaDTO{Kind: "tool_use", ToolUseID: ev.Chunk.ToolUseID, ToolName: ev.Chunk.ToolName})
+		case provider.ChunkReasoning:
+			// No Text/Opaque on this signal at all (kernel.Kernel.OnChunk's
+			// own doc comment already strips it before this closure ever
+			// sees it) — a client learns only that the model is reasoning
+			// right now, the same "event visible, body redacted" shape
+			// EventThought's own durable record has.
+			srv.PublishDelta(ev.SessionID, rest.DeltaDTO{Kind: "reasoning"})
+		case provider.ChunkUsage, provider.ChunkDone:
+			// Turn-level bookkeeping a client has no use for as a live
+			// preview — the durable EventTerminal/cost records still carry
+			// them.
+		}
+	}
+
 	stopAnchor := startAnchorLoop(ctx, st, chain)
 	defer stopAnchor()
 

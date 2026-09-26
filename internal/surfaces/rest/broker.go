@@ -8,13 +8,34 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
+// DeltaDTO is one live, best-effort preview chunk — kernel.Kernel.OnChunk's
+// ChunkEvent, translated for the wire. It is never durable and never
+// replayed from Postgres history the way an ordinary store.Event is
+// (handleEvents' history replay only ever reads store.Event rows) — a
+// subscriber that connects a moment too late simply never sees the ones it
+// missed. That's fine: the durable EventContent/EventToolUse this preview is
+// standing in for still lands right behind it, over the same channel, and
+// IS replayable. Same shape Anthropic's own content_block_delta or
+// LangChain's on_chat_model_stream chunks have relative to the final
+// assembled message/checkpoint: ephemeral by design, not a weaker copy of
+// the durable record.
+type DeltaDTO struct {
+	Kind      string `json:"kind"`                  // "content" | "tool_use" | "reasoning"
+	Text      string `json:"text,omitempty"`        // Kind == "content" — never set for "reasoning" (see kernel.Kernel.OnChunk's own doc comment)
+	ToolUseID string `json:"tool_use_id,omitempty"` // Kind == "tool_use"
+	ToolName  string `json:"tool_name,omitempty"`   // Kind == "tool_use"
+}
+
 // published is one item flowing through the broker: a durably-appended
-// event, or the error kernel.Kernel.Run yielded outside its own
-// terminal-event paths (a marshal/seal/append failure, not a modeled
-// TerminalReason).
+// event, the error kernel.Kernel.Run yielded outside its own terminal-event
+// paths (a marshal/seal/append failure, not a modeled TerminalReason), or a
+// live Delta — mutually exclusive with Event/Err, and never carries a Seq,
+// which is exactly what lets handleEvents skip its Seq-based
+// already-replayed check for one of these and forward it unconditionally.
 type published struct {
 	Event store.Event
 	Err   error
+	Delta *DeltaDTO
 }
 
 // broker is an in-memory per-session pub/sub the run's event-draining
@@ -77,6 +98,18 @@ func (b *broker) publish(sessionID uuid.UUID, p published) {
 		default:
 		}
 	}
+}
+
+// PublishDelta fans a live preview chunk out to sessionID's current
+// subscribers, the same non-blocking, no-subscriber-is-fine delivery
+// publish already gives an ordinary durable event. cmd/nexusd is the only
+// caller — kernel.Kernel.OnChunk is wired to this method in serve.go,
+// mirroring how Receipts/OnSuspend/OnDelegate are each wired to a method on
+// some other package from that same file. A session nobody is currently
+// subscribed to (the common case for a queue-resumed run with no attached
+// client) makes this a no-op, not an error.
+func (s *Server) PublishDelta(sessionID uuid.UUID, d DeltaDTO) {
+	s.broker.publish(sessionID, published{Delta: &d})
 }
 
 // closeSession closes every remaining subscriber channel for sessionID and

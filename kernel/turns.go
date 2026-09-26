@@ -197,10 +197,24 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 			switch chunk.Kind {
 			case provider.ChunkContent:
 				contentText.WriteString(chunk.Text)
+				if k.OnChunk != nil {
+					k.OnChunk(ChunkEvent{TenantID: st.TenantID, SessionID: st.SessionID, Chunk: chunk})
+				}
 			case provider.ChunkReasoning:
 				reasoningChunks = append(reasoningChunks, chunk.Opaque)
+				if k.OnChunk != nil {
+					// Opaque is deliberately never forwarded — a caller only
+					// ever learns THAT reasoning is in flight, never its
+					// content, enforced here rather than trusted to whatever
+					// OnChunk does with it (the same fail-closed posture
+					// Taint's own doc comment names for a different field).
+					k.OnChunk(ChunkEvent{TenantID: st.TenantID, SessionID: st.SessionID, Chunk: provider.Chunk{Kind: provider.ChunkReasoning}})
+				}
 			case provider.ChunkToolUse:
 				toolUses = append(toolUses, ToolUseRequest{ToolUseID: chunk.ToolUseID, ToolName: chunk.ToolName, Input: chunk.Input})
+				if k.OnChunk != nil {
+					k.OnChunk(ChunkEvent{TenantID: st.TenantID, SessionID: st.SessionID, Chunk: chunk})
+				}
 			case provider.ChunkUsage:
 				usage = chunk.Usage
 				usageReported = true

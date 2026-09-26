@@ -95,6 +95,26 @@ type Kernel struct {
 	// above already promises — this field does not change that promise, it
 	// is what an operator has to explicitly set to step outside it.
 	TraceContent bool
+
+	// OnChunk, if set, is called for every ChunkContent/ChunkToolUse/
+	// ChunkReasoning the current turn's provider stream produces, as
+	// runTurns decodes it — strictly a live preview: it runs before that
+	// turn's own accumulation, classification, or any durable event append,
+	// and nothing downstream ever reads it back. It exists so a caller
+	// (cmd/nexusd, wiring it to internal/surfaces/rest's SSE broker) can
+	// relay a typing-style preview to a client without changing when
+	// content/tool_use actually becomes durable — that still only happens
+	// once the whole turn's stream has drained, exactly as before. A
+	// ChunkReasoning passed here always has an empty Opaque (turns.go
+	// strips it before calling) — a caller learns only THAT reasoning is in
+	// flight, never its content: reasoning stays "round-tripped, never
+	// shown" (internal/provider's own doc comment) even in this preview
+	// path, the same way EventThought's own durable record is visible but
+	// its body is always redacted (internal/surfaces/rest's toEventDTO).
+	// Nil is valid — every pre-this-change test and call site — and
+	// reproduces today's buffer-then-commit behavior with no live preview
+	// at all.
+	OnChunk OnChunk
 }
 
 // startSpan opens a span through k.Tracer if one is wired, or a no-op if

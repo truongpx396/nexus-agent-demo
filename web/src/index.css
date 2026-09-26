@@ -887,6 +887,28 @@ tr.row-pending {
   overflow-x: auto;
 }
 
+.msg.assistant.draft {
+  /* Live preview of the turn in flight (useRunEvents' LiveTurnState),
+     never the durable, confirmed content this same markup renders once the
+     "content" event actually lands -- dimmed and cursor-suffixed so it
+     never reads as identical to a finished reply. */
+  opacity: 0.72;
+}
+
+.msg.assistant.draft .msg-text::after {
+  content: "▍";
+  display: inline-block;
+  margin-left: 2px;
+  color: var(--accent);
+  animation: draft-cursor 1s step-start infinite;
+}
+
+@keyframes draft-cursor {
+  50% {
+    opacity: 0;
+  }
+}
+
 .msg.system {
   align-self: center;
   max-width: 100%;
