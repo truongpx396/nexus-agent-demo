@@ -212,7 +212,7 @@ func sealFuncFor(dek crypto.DEK, tenantID, sessionID uuid.UUID) SealFunc {
 func (s *Server) publishUntilDone(tenantID, sessionID uuid.UUID, events <-chan RunEvent) {
 	defer s.broker.closeSession(sessionID)
 	for re := range events {
-		s.broker.publish(sessionID, published(re))
+		s.broker.publish(sessionID, published{Event: re.Event, Err: re.Err})
 		if s.Outbox != nil && s.OutboxSender != nil && re.Err == nil && re.Event.Type == store.EventApprovalRequested {
 			s.deliverApprovalNotification(sessionID, re.Event)
 		}
