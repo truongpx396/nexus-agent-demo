@@ -454,15 +454,26 @@ func TestRunCtl_ResumeConversation_Succeeds(t *testing.T) {
 
 	// A fresh Control -- no in-memory RunState carried over from the Run()
 	// call above -- must rehydrate this session from the durable log.
+	// ResumeConversation itself now only durably appends the message and
+	// (with Queue nil here) would enqueue nothing -- it no longer drives
+	// the turn loop itself (internal/runctl/converse.go's own doc
+	// comment). The turn loop continuing is exactly what a queue worker's
+	// Control.Resume call does in production (cmd/nexusd/background.go's
+	// queueRunner.Run) -- called directly here since this test has no
+	// queue behind it.
 	ctl := &runctl.Control{Store: st, Keys: keys, Kernel: k, System: "test", MaxTurns: 5}
-	events, err := ctl.ResumeConversation(ctx, tenantID, sessionID, "tell me more")
+	appended, err := ctl.ResumeConversation(ctx, tenantID, sessionID, "tell me more")
 	if err != nil {
 		t.Fatalf("ResumeConversation refused a genuinely awaiting_input session: %v", err)
 	}
+	if appended.Type != store.EventUserMessage {
+		t.Fatalf("ResumeConversation's own appended event type = %v, want user_message", appended.Type)
+	}
+
 	var last store.Event
-	for ev, err := range events {
+	for ev, err := range ctl.Resume(ctx, tenantID, sessionID) {
 		if err != nil {
-			t.Fatalf("ResumeConversation() yielded error: %v", err)
+			t.Fatalf("Resume() yielded error: %v", err)
 		}
 		last = ev
 	}
@@ -623,22 +634,29 @@ func (p *testRunCtlPort) Fork(context.Context, uuid.UUID, uuid.UUID, int64, stri
 	return rest.ForkView{}, fmt.Errorf("test control plane: Fork not wired")
 }
 
-func (p *testRunCtlPort) ResumeConversation(ctx context.Context, tenantID, sessionID uuid.UUID, input string) (<-chan rest.RunEvent, error) {
-	events, err := p.ctl.ResumeConversation(ctx, tenantID, sessionID, input)
-	if err != nil {
-		return nil, err
+// ResumeConversation mirrors production's shape (runctl.Control.
+// ResumeConversation now only durably appends the message and enqueues a
+// queue.KindConverse job — internal/runctl/converse.go's own doc comment)
+// but this test double has no queue worker behind it, unlike production's
+// nexusdRunCtlPort (cmd/nexusd/ports.go). It plays that role itself,
+// driving the continuation via the same call cmd/nexusd/background.go's
+// queueRunner.Run makes for a real leased job (Control.Resume), just
+// inline in a goroutine rather than through internal/queue at all — this
+// test is exercising REST's multi-turn wiring/continuity, not queue
+// mechanics (tests/integration/phase6_reliability_test.go's own job).
+func (p *testRunCtlPort) ResumeConversation(ctx context.Context, tenantID, sessionID uuid.UUID, input string) error {
+	if _, err := p.ctl.ResumeConversation(ctx, tenantID, sessionID, input); err != nil {
+		return err
 	}
-	ch := make(chan rest.RunEvent, 8)
 	go func() {
-		defer close(ch)
-		for ev, err := range events {
-			ch <- rest.RunEvent{Event: ev, Err: err}
+		for ev, err := range p.ctl.Resume(context.Background(), tenantID, sessionID) {
+			_ = ev
 			if err != nil {
 				return
 			}
 		}
 	}()
-	return ch, nil
+	return nil
 }
 
 func getRunStatus(t *testing.T, client *http.Client, baseURL, token, runID string) string {

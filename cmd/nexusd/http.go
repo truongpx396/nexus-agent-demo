@@ -13,6 +13,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
+	"github.com/truongpx396/nexus-agent-demo/internal/queue"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
@@ -148,9 +149,12 @@ func handleHealthz(w http.ResponseWriter, _ *http.Request) {
 // handleReadyz reports ready only once every dependency this process
 // actually needs to serve a request is reachable: Postgres (through
 // PgBouncer, the same pool serve() itself uses), Redis (the cost gate's
-// counter store), and signerd (the audit chain's only path to a signature —
-// runGoLive's item 2b already performs this exact check, once, at CLI time;
-// this is the same check as a live HTTP probe).
+// counter store) AND its own queue consumer group (queue.CheckReady —
+// "Redis answers a PING" isn't the same as "the job queue this process
+// enqueues into/leases from actually exists"), and signerd (the audit
+// chain's only path to a signature — runGoLive's item 2b already performs
+// this exact check, once, at CLI time; this is the same check as a live
+// HTTP probe).
 func handleReadyz(pool *pgxpool.Pool, redisClient *redis.Client, signer *audit.SignerClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
@@ -160,6 +164,10 @@ func handleReadyz(pool *pgxpool.Pool, redisClient *redis.Client, signer *audit.S
 		}
 		if err := redisClient.Ping(ctx).Err(); err != nil {
 			http.Error(w, "redis not reachable: "+err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		if err := queue.CheckReady(ctx, redisClient); err != nil {
+			http.Error(w, "queue not ready: "+err.Error(), http.StatusServiceUnavailable)
 			return
 		}
 		if _, _, err := signer.PublicKey(ctx); err != nil {

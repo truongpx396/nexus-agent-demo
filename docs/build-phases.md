@@ -54,7 +54,7 @@ Legend: **F** = full fidelity · **S** = simplified but structurally identical �
 | 38 | `Money` as exact integers + explicit currency, rounding once | **F** | `internal/cost/money.go` | No binary float anywhere in the path |
 | 39 | `budget_decision` for every gate resolution, including `skip` | **F** | `internal/cost/gate.go` | An unenforced ceiling is visibly distinct from a ceiling with room |
 | 40 | Every model call metered — including compaction, safety leg, judge, titles | **F** | `internal/cost/meter.go` | "Off the paying loop" = cheaper model, never unmetered |
-| 41 | Durable queue + session-key serial lock + stateless workers | **S** | `internal/queue/` | Port + Postgres `SKIP LOCKED` adapter; Redis lock on `session_key` |
+| 41 | Durable queue + session-key serial lock + stateless workers | **S** | `internal/queue/` | Port + Redis Streams consumer-group adapter (`XAUTOCLAIM` for reclaim — Postgres `SKIP LOCKED` was the original adapter, retired in `migrations/0024_retire_queue_jobs.sql`); Redis lock on `session_key` |
 | 42 | Typed failure classification, logged backoff+jitter, circuit break at 3 | **F** | `internal/reliability/` | Silent retry is impossible by construction |
 | 43 | Stuck detection escalating from `stuck_suspected` to terminate | **F** | `internal/reliability/stuck.go` | Second corroborating trip terminates |
 | 44 | Sandbox: hard CPU/mem/PID/wall limits, network default-deny | **S** | `internal/sandbox/` | Docker + `--network none` + rlimits; `isolation` field carries `gvisor`/`kata` as unshipped values |
@@ -251,7 +251,7 @@ Then substitute an argument after the grant → `approval_mismatch`.
 
 | # | Task | Proves |
 |---|---|---|
-| 6.1 | `queue/` — port + Postgres `SKIP LOCKED` adapter + admission control; worker pool pulls jobs | FR-046 |
+| 6.1 | `queue/` — port + Redis Streams consumer-group adapter (`XAUTOCLAIM` reclaims an abandoned lease — the original Postgres `SKIP LOCKED` adapter's own `lease_expires_at` was written but never read, so this is a genuine capability, not a lateral port; retired in `migrations/0024_retire_queue_jobs.sql`) + admission control; worker pool pulls jobs | FR-046 |
 | 6.2 | Session-key serial lock in Redis (per-session serial, cross-session concurrent) | FR-046 |
 | 6.3 | `Checkpoint` — covered seq, open claim, held reservation, sandbox handle, pending approval digest, in-flight provider request id, open delegations, `harness_digest` | FR-024, FR-126 |
 | 6.4 | `Snapshot` — disposable projection cache; **test: deleting every snapshot changes nothing but hydration time** | FR-126 |
@@ -342,7 +342,7 @@ no-widening discipline as delegation (Phase 8).
 | 9.1 | `internal/teams/` — `Team{team_id, tenant_id, roster []AgentID, budget_envelope_id, status}`; **roster is fixed at creation**, no mid-run recruitment — the same no-widening discipline as the autonomy ratchet (3.7) and skill intersection (7.4) | New scope, bounded like delegation |
 | 9.2 | `sessions.team_id` (nullable) + `delegation_role = 'team_member'`; each member is an **ordinary session** — reuses the session-key serial lock (6.2) for per-member concurrency, no new locking primitive for the loop | Schema-additive over Phase 1 |
 | 9.3 | `board_cards` — RLS-scoped: `status ∈ {open, claimed, in_progress, done, blocked}`, `taint_state` copied from the writer at creation (8.11's copy-at-spawn pattern), `injection_scan_status ∈ {pending, clean, flagged}` | Same admission discipline as skills (7.3), applied to a new artifact |
-| 9.4 | `claim_card` — the **same Postgres `SKIP LOCKED`** claim query `internal/queue/` already runs for job dispatch (6.1); no new concurrency primitive invented | Reuses 6.1 |
+| 9.4 | `claim_card` — Postgres `SELECT ... FOR UPDATE SKIP LOCKED`, the same admission/claim concept `internal/queue/` uses for job dispatch (6.1) — its OWN query, independent of 6.1's now-Redis-Streams-backed adapter; no new concurrency primitive invented | Reuses 6.1's concept |
 | 9.5 | `read_board` / `claim_card` / `write_card` / `update_card_status` — four ordinary `Tool`s through the same 16-step pipeline; `Taint()` defaults all-`TRUE` like every tool, so autonomy level and the Rule of Two gate board actions exactly as they gate `delegate` (8.9) | No new ABI |
 | 9.6 | **Read-time taint fold** — the one genuinely new mechanism this phase needs: reading a card folds its `taint_state` into the reader's own `taint_state` projection, same shape as delegation's return-time fold (8.11) but triggered by a read instead of a return | Closes the laundering path a shared board would otherwise reopen |
 | 9.7 | `write_card` scans the body through the **same injection/exfiltration scanner memory already uses** (7.1) before flipping `injection_scan_status` to `clean`; a `flagged` card is never surfaced to another peer's context — fail closed | Reuses 7.1 |
@@ -456,7 +456,7 @@ whether any of this may run against real traffic; the rest are independent and m
 | # | Task | Closes |
 |---|---|---|
 | 13.1 | `[P]` Real per-tenant AuthN: a signed-JWT dev issuer (target: per-tenant OIDC) replaces the `X-Nexus-Tenant-ID`/`X-Nexus-User-ID` header read; the principal comes only from verified claims | F1 — the `AuthN` box README.md §3's diagram already draws but never wires |
-| 13.2 | `[P]` `http.Server` with `ReadHeaderTimeout`/`ReadTimeout`/`WriteTimeout`/`IdleTimeout`; `signal.NotifyContext` driving `Shutdown(ctx)` so every `defer` in `serve()` (queue workers, cron, audit-anchor loop, team backstop) actually runs; `/healthz` (liveness) split from `/readyz` (Postgres + Redis + signerd socket reachable) | F2 |
+| 13.2 | `[P]` `http.Server` with `ReadHeaderTimeout`/`ReadTimeout`/`WriteTimeout`/`IdleTimeout`; `signal.NotifyContext` driving `Shutdown(ctx)` so every `defer` in `serve()` (queue workers, cron, audit-anchor loop, team backstop) actually runs; `/healthz` (liveness) split from `/readyz` (Postgres + Redis + the queue's own consumer group + signerd socket reachable) | F2 |
 | 13.3 | `[P]` Multi-stage distroless `Dockerfile` for `nexusd` + `signerd` (migrations already embedded via `migrations/embed.go`, so the image is self-contained); a compose profile running both against the existing infra services in `deploy/docker-compose.yml` | F3 |
 | 13.4 | `provider.Message` carries typed content blocks with `tool_use_id` instead of a flat string — restores the paired `tool_use`/`tool_result` invariant (#4) all the way to the wire, not just inside the kernel; blocks 13.7 | F5 |
 | 13.5 | `[P]` `System` becomes `[]{type,text,cache_control}` with an ephemeral breakpoint closing the stable zone; integration test asserts `InputCacheRead > 0` on turn two of a multi-turn session | F4 — the wire-level half of #7 that was never sent |
@@ -503,7 +503,7 @@ other and marked `[P]`.
 |---|---|---|
 | 15.1 | `[P]` OTLP exporter behind the existing `obs.Exporter` interface — #36 upgraded from stdout to a real sink, the filtering guarantee unchanged; the golden-signal dashboard's queries exposed on `/metrics` | F13 |
 | 15.2 | `[P]` `CapDrop: ["ALL"]`, `ReadonlyRootfs: true`, `SecurityOpt: ["no-new-privileges"]`, and a non-root `User` on every sandbox container, alongside #44's existing `--network none` and resource limits | F10 |
-| 15.3 | `[P]` `pgxpool.ParseConfig` with explicit sizing reconciled against PgBouncer's pool; `bufio.Scanner.Buffer` raised past the 64KB default on the SSE reader; one load test against `POST /v1/runs` on `provider/fake` to put a measured number on the queue/pooler ceiling | F14 |
+| 15.3 | `[P]` `pgxpool.ParseConfig` with explicit sizing reconciled against PgBouncer's pool; `bufio.Scanner.Buffer` raised past the 64KB default on the SSE reader; one load test against `POST /v1/runs` on `provider/fake` to put a measured number on the pooler ceiling and the Redis Streams consumer group's own throughput ceiling | F14 |
 | 15.4 | `[P]` `internal/controlplane`: the `Port` interface + `v1` request/response shapes README.md §2's collapse table already names; the two rules in `tests/contract/boundaries_test.go` that currently `t.Skipf` on this package activate | F15 — #62 moves from **K** to actually kept |
 
 **Demo**: a sandboxed tool container run with `docker inspect` shows dropped capabilities, a

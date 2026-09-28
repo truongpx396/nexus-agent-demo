@@ -24,6 +24,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
+	"github.com/truongpx396/nexus-agent-demo/internal/queue"
 	"github.com/truongpx396/nexus-agent-demo/internal/reliability"
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
@@ -150,6 +151,16 @@ func serve(ctx context.Context) error {
 	// itself to wire platform/connector_fetch and the MCP dynamic resolver.
 	redisClient := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
 
+	// internal/queue's Redis Streams adapter (the retired Postgres
+	// queue_jobs table's successor) — built here, ahead of kernelRunStarter
+	// and runctl.Control below, both of which need to enqueue a queued run
+	// (README task 6.1's own successor) once they've durably seeded/
+	// appended it.
+	queuePort, err := queue.NewRedisStreams(ctx, redisClient)
+	if err != nil {
+		return fmt.Errorf("configure queue: %w", err)
+	}
+
 	vault := &connectors.Vault{Store: st, Keys: keyStore, Providers: newConnectorRegistry(), Redis: redisClient}
 
 	// Built here, ahead of newToolPipeline (moved up from its original
@@ -193,6 +204,8 @@ func serve(ctx context.Context) error {
 		maxTurns:    25,
 		memory:      memStore,
 		store:       st,
+		queue:       queuePort,
+		redisClient: redisClient,
 	}
 
 	// Wire's own doc comment: must land before the first real dispatch —
@@ -214,6 +227,7 @@ func serve(ctx context.Context) error {
 	ctl := &runctl.Control{
 		Store: st, Keys: keyStore, Chain: chain, Approvals: approvals, Inputs: inputs, Kernel: k,
 		System: starter.system, Catalog: catalog, MaxTurns: starter.maxTurns, CatalogManifestDigest: catalogManifestDigest,
+		Queue: queuePort,
 	}
 
 	// teamsSvc.Wire's own doc comment: must land before the first real
@@ -228,6 +242,12 @@ func serve(ctx context.Context) error {
 
 	srv := rest.NewServer(starter, st, keyStore, catalogManifestDigest)
 	srv.Verifier = verifier
+	// Redis Pub/Sub-backed EventBus (broker.go's own doc comment on why this
+	// surface needs one now): every publish reaches every nexusd process,
+	// not just whichever one produced it — required once a run's turn loop
+	// may execute on a different process (internal/queue's worker pool)
+	// than whichever process holds the client's own SSE connection.
+	srv.Bus = redisEventBus{client: redisClient}
 	srv.Oversight = &nexusdOversightPort{approvals: approvals, resumer: resumer, delegations: delegations, teams: teamsSvc}
 	srv.Grants = grants
 	srv.ControlPlane = newControlPlane(st, gate, chain, approvals, grants)
@@ -278,8 +298,11 @@ func serve(ctx context.Context) error {
 	stopIdleConversationSweep := startIdleConversationSweepLoop(ctx, ctl)
 	defer stopIdleConversationSweep()
 
-	stopWorkers := startQueueWorkers(ctx, st, redisClient, ctl, delegations, teamsSvc)
+	stopWorkers := startQueueWorkers(ctx, redisClient, queuePort, srv, ctl, delegations, teamsSvc)
 	defer stopWorkers()
+
+	stopEventBus := startEventBus(ctx, redisClient, srv)
+	defer stopEventBus()
 
 	// Phase 11: four more thin surfaces over the same kernel (README §11) —
 	// each gets the SAME session-creation-then-StartRun sequence REST uses,
@@ -292,9 +315,9 @@ func serve(ctx context.Context) error {
 	// (surfaces_phase11.go) — passed to both the Starter: and Resume:
 	// fields below, so a fresh message and a resumed one drive the SAME
 	// underlying *runctl.Control/*kernelRunStarter pair.
-	telegramAdapter := telegramStarterAdapter{k: starter, ctl: ctl}
-	zaloAdapter := zaloStarterAdapter{k: starter, ctl: ctl}
-	emailAdapter := emailStarterAdapter{k: starter, ctl: ctl}
+	telegramAdapter := telegramStarterAdapter{k: starter, ctl: ctl, redisClient: redisClient}
+	zaloAdapter := zaloStarterAdapter{k: starter, ctl: ctl, redisClient: redisClient}
+	emailAdapter := emailStarterAdapter{k: starter, ctl: ctl, redisClient: redisClient}
 
 	telegramSrv := &telegram.Server{
 		Store: st, KeyStore: keyStore, Starter: telegramAdapter, Resume: telegramAdapter, Channels: channels,

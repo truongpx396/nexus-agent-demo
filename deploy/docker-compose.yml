@@ -48,9 +48,23 @@ services:
 
   redis:
     image: redis:7
+    # --appendonly yes: internal/queue's Redis Streams adapter
+    # (redis_streams.go, the retired Postgres queue_jobs table's successor)
+    # makes Redis a durable job queue, not just the session lock/cost-gate
+    # cache it used to be — the stock image ships with NO persistence at
+    # all (no AOF, no RDB save points, no volume), so a container restart
+    # used to lose nothing that mattered and would now silently drop every
+    # in-flight job. --appendfsync everysec is the standard durability/
+    # throughput tradeoff (fsync at most once a second, so a crash can lose
+    # up to ~1s of writes) — `always` fsyncs every write for a stronger
+    # guarantee at a real latency cost; this is a deliberate, named choice
+    # for a demo, not a production sizing decision.
+    command: redis-server --appendonly yes --appendfsync everysec
     ports:
       # Host port 6380, not 6379: same reason as postgres above.
       - "6380:6379"
+    volumes:
+      - redis-data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -173,6 +187,7 @@ services:
 
 volumes:
   postgres-data:
+  redis-data:
   signerd-socket:
   signerd-dev:
   nexusd-dev:
