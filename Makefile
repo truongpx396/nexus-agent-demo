@@ -1,4 +1,4 @@
-.PHONY: up down build run signerd token test lint migrate seed eval eval-baseline verify-chain erase dashboard go-live web-build docker-build docker-up docker-down ollama-pull llm-up langfuse-up langfuse-lite-up llm-down agentic-up agentic-down observability-up observability-down tempo-up profiling-up pprof-cpu pprof-heap pprof-goroutine
+.PHONY: up down build run signerd token test lint pr-size migrate seed eval eval-baseline verify-chain erase dashboard go-live web-build docker-build docker-up docker-down ollama-pull llm-up langfuse-up langfuse-lite-up llm-down agentic-up agentic-down observability-up observability-down tempo-up profiling-up pprof-cpu pprof-heap pprof-goroutine
 
 TENANT ?= acme
 # nexusd's own pprof listener (obs.StartPprofServer, NEXUS_PPROF_ADDR) --
@@ -62,6 +62,9 @@ test: ## unit + property tests (no external services required)
 
 lint: ## static analysis (golangci-lint 2.5.0, matches the source repo's pin)
 	golangci-lint run ./...
+
+pr-size: ## changed-line count of this branch vs origin/main (limit 1000, excl. lockfiles/web/dist/baseline.json) -- the same check CI's pr-size workflow enforces; BASE=<ref> to compare against something else, PR_SIZE_LIMIT=<n> to override the limit
+	@scripts/pr-size.sh $(BASE)
 
 # --- Data plane operations (stubs until their owning phase lands) ---
 

@@ -1,0 +1,51 @@
+name: pr-size
+
+# Its own workflow, not a job in ci.yml: it has to re-run when the
+# `large-pr` label is added or removed (labeled/unlabeled), and ci.yml's
+# integration + eval jobs are far too expensive to re-run on a label change.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-size-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  pr-size:
+    runs-on: ubuntu-latest
+    steps:
+      # Full history: the script diffs against the merge base with the base
+      # branch, which a shallow clone cannot compute.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # The limit (1000 changed lines) and the file exclusions live in
+      # scripts/pr-size.sh so `make pr-size` and the Claude pre-PR hook agree
+      # with this gate. The `large-pr` label is the escape hatch for a change
+      # that is big but mechanical (a rename, a file split); say why in the
+      # PR description.
+      - name: Check PR size
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          LARGE_PR: ${{ contains(github.event.pull_request.labels.*.name, 'large-pr') }}
+        run: |
+          set +e
+          scripts/pr-size.sh "origin/${BASE_REF}"
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            exit 0
+          fi
+          if [ "$rc" -eq 1 ]; then
+            if [ "$LARGE_PR" = "true" ]; then
+              echo "::warning::PR is over the size limit but carries the large-pr label."
+              exit 0
+            fi
+            echo "::error::PR is over the size limit. Split it into smaller PRs, or add the large-pr label (and explain why in the description) if it is a mechanical change."
+            exit 1
+          fi
+          exit "$rc"
