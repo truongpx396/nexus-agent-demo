@@ -31,6 +31,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -39,16 +40,22 @@ import (
 // promtail for its own Docker service discovery.
 const dockerSocket = "/var/run/docker.sock"
 
-// composeProject scopes this exporter to one project's own containers —
-// the APP stack's project (docker-compose.yml's/docker-compose.local-llm.
-// yml's own `name: nexus-agent-demo` directive), deliberately NOT this
-// exporter's own project (docker-compose.observability.yml runs as the
-// separate `nexus-agent-observability`, its own header comment says
-// why): this exporter's whole job is to map the APP's containers back to
-// real names for the Infrastructure dashboard, not to report on its own
-// sibling observability containers. Overridable so this same image could
-// map a different project without a code change.
-var composeProject = envOr("COMPOSE_PROJECT", "nexus-agent-demo")
+// composeProjects scopes this exporter to a comma-separated list of
+// projects' own containers — the APP stack's project (docker-compose.yml's/
+// docker-compose.local-llm.yml's own `name: nexus-agent-demo` directive)
+// plus the agentic add-on's own separate project (docker-compose.agentic.
+// yml's `name: nexus-agent-demo-agentic` — Crawl4AI/OpenSandbox are still
+// app-driven work, not observability-of-observability, so they belong on
+// the same "Infrastructure" dashboard once `make agentic-up` brings them
+// up; an unlisted project just contributes zero containers, same tolerant
+// posture as every profile-gated service on this dashboard already has).
+// Deliberately NOT this exporter's own project (docker-compose.
+// observability.yml runs as the separate `nexus-agent-observability`, its
+// own header comment says why): this exporter's whole job is to map the
+// APP's containers back to real names, not to report on its own sibling
+// observability containers. Overridable so this same image could map a
+// different project set without a code change.
+var composeProjects = strings.Split(envOr("COMPOSE_PROJECT", "nexus-agent-demo,nexus-agent-demo-agentic"), ",")
 
 func envOr(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
@@ -78,13 +85,24 @@ func newDockerClient() *http.Client {
 }
 
 // listContainers calls the Docker Engine API's own container list,
-// server-side filtered to this compose project's label — the daemon does
+// server-side filtered to composeProjects' own labels — the daemon does
 // the filtering (it has always had this metadata correctly, independent
 // of the containerd-snapshotter storage backend cAdvisor's containerd
-// factory can't read it from), not this exporter.
+// factory can't read it from), not this exporter. Multiple values under
+// the SAME "label" filter key are OR'd by the Docker Engine API itself
+// (confirmed against the Engine API's own filters.go), so this returns
+// every project's containers in one call rather than needing one request
+// per project.
 func listContainers(ctx context.Context, client *http.Client) ([]dockerContainer, error) {
-	filters := fmt.Sprintf(`{"label":["com.docker.compose.project=%s"]}`, composeProject)
-	u := "http://unix/containers/json?filters=" + url.QueryEscape(filters)
+	labelFilters := make([]string, len(composeProjects))
+	for i, project := range composeProjects {
+		labelFilters[i] = fmt.Sprintf("com.docker.compose.project=%s", project)
+	}
+	filtersJSON, err := json.Marshal(map[string][]string{"label": labelFilters})
+	if err != nil {
+		return nil, fmt.Errorf("encode container list filters: %w", err)
+	}
+	u := "http://unix/containers/json?filters=" + url.QueryEscape(string(filtersJSON))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
@@ -150,6 +168,6 @@ func main() {
 		_, _ = w.Write([]byte("ok"))
 	})
 
-	log.Printf("docker-label-exporter listening on %s (compose project %q)", addr, composeProject)
+	log.Printf("docker-label-exporter listening on %s (compose projects %q)", addr, composeProjects)
 	log.Fatal(http.ListenAndServe(addr, mux)) //nolint:gosec // internal-only, no TLS/timeouts needed for a scrape-only sidecar behind the compose network
 }

@@ -24,16 +24,19 @@
 # between services in this file, only which Docker Desktop group they
 # render under and which project's own volumes they persist to.
 #
-# Two things deliberately still point at `nexus-agent-demo` (the APP
-# project), not this file's own project name, because their whole job is to
-# observe the app stack's containers, not this stack's own: the
-# `docker-label-exporter` service's `COMPOSE_PROJECT` default
-# (deploy/observability/docker-label-exporter/main.go) and Promtail's own
-# `docker` scrape job (deploy/observability/promtail-config.yml) — both
-# still correctly find postgres/pgbouncer/redis/nexusd/signerd/litellm/
-# langfuse-lite (whichever of those are up), and, as a side effect of the
-# split, no longer also pick up this stack's own prometheus/grafana/loki/
-# etc. containers — arguably the more correct scope for an "Infrastructure"
+# Two things deliberately still point at the APP project(s), not this
+# file's own project name, because their whole job is to observe the app
+# stack's containers, not this stack's own: the `docker-label-exporter`
+# service's `COMPOSE_PROJECT` default (deploy/observability/docker-label-
+# exporter/main.go — now a comma-separated `nexus-agent-demo,nexus-agent-
+# demo-agentic`, since Crawl4AI/OpenSandbox are app-driven work too, not
+# observability-of-observability) and Promtail's own `docker` scrape job
+# (deploy/observability/promtail-config.yml, still single-project — a
+# separate call about log tailing, not this one) — both still correctly
+# find postgres/pgbouncer/redis/nexusd/signerd/litellm/langfuse-lite
+# (whichever of those are up), and, as a side effect of the split, no
+# longer also pick up this stack's own prometheus/grafana/loki/etc.
+# containers — arguably the more correct scope for an "Infrastructure"
 # dashboard about the app, not about the thing watching it.
 #
 # This is metrics + logs + container resource usage + alerts by default
