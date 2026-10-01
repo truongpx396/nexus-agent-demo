@@ -44,7 +44,7 @@ func TestParseBusChannel_RoundTripsEventsAndDeltas(t *testing.T) {
 		t.Fatalf("ParseBusChannel(DeltasChannel(id)) = (%s, delta=%v, ok=%v), want (%s, true, true)", gotID, isDelta, ok, sessionID)
 	}
 
-	if _, _, ok := ParseBusChannel("nexus:something-else:"+sessionID.String()); ok {
+	if _, _, ok := ParseBusChannel("nexus:something-else:" + sessionID.String()); ok {
 		t.Fatal("ParseBusChannel accepted an unrecognized channel prefix")
 	}
 	if _, _, ok := ParseBusChannel("nexus:events:not-a-uuid"); ok {
