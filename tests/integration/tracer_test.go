@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -42,9 +43,20 @@ type spySpan struct {
 	endAttrs   obs.Attrs
 	input      string
 	output     string
+
+	// ended is closed by End. Receiving from it orders every write the
+	// ending goroutine made before End (this span's and any earlier span's
+	// fields) before whatever the receiver reads next.
+	ended   chan struct{}
+	endOnce sync.Once
 }
 
-func (s *spySpan) End(attrs obs.Attrs) { s.endAttrs = attrs }
+func (s *spySpan) End(attrs obs.Attrs) {
+	s.endOnce.Do(func() {
+		s.endAttrs = attrs
+		close(s.ended)
+	})
+}
 
 func (s *spySpan) SetContent(input, output string) { s.input, s.output = input, output }
 
@@ -62,11 +74,41 @@ type spyTracer struct {
 
 func (t *spyTracer) StartSpan(ctx context.Context, name string, kind obs.ObservationType, attrs obs.Attrs) (context.Context, obs.Span) {
 	parent, _ := ctx.Value(spyCtxKey{}).(*spySpan)
-	s := &spySpan{name: name, kind: kind, parent: parent, startAttrs: attrs}
+	s := &spySpan{name: name, kind: kind, parent: parent, startAttrs: attrs, ended: make(chan struct{})}
 	t.mu.Lock()
 	t.spans = append(t.spans, s)
 	t.mu.Unlock()
 	return context.WithValue(ctx, spyCtxKey{}, s), s
+}
+
+// spansAfterRootEnds waits for the run's root span to end, then returns
+// every span recorded. The SSE stream closing proves the terminal event was
+// written, NOT that the run goroutine has finished: Kernel.Run ends its root
+// span in a defer, after its last yield, so reading a span's endAttrs as soon
+// as the stream closes races with that End (the race detector caught it).
+// The root's End is the last thing the run goroutine does, so receiving on
+// its ended channel orders every span write the run made before the reads
+// that follow.
+func (t *spyTracer) spansAfterRootEnds(tb testing.TB) []*spySpan {
+	tb.Helper()
+	t.mu.Lock()
+	snapshot := append([]*spySpan(nil), t.spans...)
+	t.mu.Unlock()
+	for _, s := range snapshot {
+		if s.kind != obs.ObservationAgent {
+			continue
+		}
+		select {
+		case <-s.ended:
+		case <-time.After(10 * time.Second):
+			tb.Fatalf("root span %q never ended", s.name)
+		}
+	}
+	// Re-snapshot only after the wait: nothing starts a span after the root
+	// ends, so this is the complete set.
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]*spySpan(nil), t.spans...)
 }
 
 // Detach/Attach: reuses the same spyCtxKey StartSpan already keys off of —
@@ -166,8 +208,9 @@ func TestKernelTracerProducesRootGenerationToolTree(t *testing.T) {
 
 	// GET /v1/runs/{id}/events (SSE) reads until the server closes the
 	// connection after writing the terminal event (rest_run_test.go's own
-	// readSSEFrames doc comment) — the run has genuinely finished, and every
-	// span it produced has already been recorded, by the time this returns.
+	// readSSEFrames doc comment). That proves the terminal event is out, not
+	// that the run goroutine is done: Kernel.Run ends its root span in a defer
+	// after its last yield, so spansAfterRootEnds below waits for that.
 	eventsReq, _ := http.NewRequest(http.MethodGet, httpSrv.URL+"/v1/runs/"+created.RunID+"/events", nil)
 	eventsReq.Header.Set("Authorization", "Bearer "+token)
 	eventsResp, err := client.Do(eventsReq)
@@ -182,9 +225,7 @@ func TestKernelTracerProducesRootGenerationToolTree(t *testing.T) {
 		t.Fatal("no SSE frames received")
 	}
 
-	tracer.mu.Lock()
-	spans := append([]*spySpan(nil), tracer.spans...)
-	tracer.mu.Unlock()
+	spans := tracer.spansAfterRootEnds(t)
 
 	var roots, generations, tools []*spySpan
 	for _, s := range spans {
@@ -226,6 +267,34 @@ func TestKernelTracerProducesRootGenerationToolTree(t *testing.T) {
 	// test — content must stay off unless explicitly requested.
 	if generations[0].input != "" || generations[0].output != "" || tools[0].input != "" || tools[0].output != "" {
 		t.Error("Kernel.TraceContent is false: no span should carry input/output content")
+	}
+}
+
+// TestSpansAfterRootEndsOrdersTheRootsEnd reproduces, without Docker, the
+// interleaving the REST round trip hit: the consumer learns the run is over
+// while the run goroutine is still about to end its root span from a defer.
+// Under -race, reading endAttrs without the wait is flagged; the helper must
+// make the read both safe and complete.
+func TestSpansAfterRootEndsOrdersTheRootsEnd(t *testing.T) {
+	tracer := &spyTracer{}
+	ctx, root := tracer.StartSpan(context.Background(), "kernel.run", obs.ObservationAgent, nil)
+	_, tool := tracer.StartSpan(ctx, "tool.call", obs.ObservationTool, nil)
+
+	go func() { // the run goroutine, already past its last yield
+		time.Sleep(50 * time.Millisecond)
+		tool.End(obs.Attrs{"outcome": "ok"})
+		root.End(obs.Attrs{"terminal_reason": "completed"}) // the deferred End runs last
+	}()
+
+	spans := tracer.spansAfterRootEnds(t)
+	if len(spans) != 2 {
+		t.Fatalf("got %d spans, want 2", len(spans))
+	}
+	if got := spans[0].endAttrs["terminal_reason"]; got != "completed" {
+		t.Errorf("root terminal_reason = %q, want %q", got, "completed")
+	}
+	if got := spans[1].endAttrs["outcome"]; got != "ok" {
+		t.Errorf("tool outcome = %q, want %q", got, "ok")
 	}
 }
 
@@ -318,9 +387,7 @@ func TestKernelTracerContentOptIn(t *testing.T) {
 		t.Fatal("no SSE frames received")
 	}
 
-	tracer.mu.Lock()
-	spans := append([]*spySpan(nil), tracer.spans...)
-	tracer.mu.Unlock()
+	spans := tracer.spansAfterRootEnds(t)
 
 	var generation, tool *spySpan
 	for _, s := range spans {
