@@ -212,58 +212,94 @@ func (k *Kernel) Run(ctx context.Context, st *RunState, cfg RunConfig) iter.Seq2
 		})
 		defer func() { rootSpan.End(terminalSpanAttrs(st)) }()
 
-		if err := k.updateStatus(ctx, st, store.SessionStatusRunning, nil); err != nil {
-			yield(store.Event{}, err)
+		if !k.seed(ctx, st, cfg, yield) {
 			return
 		}
-
-		for _, toolID := range cfg.LoadedTools {
-			ev, err := k.appendEvent(ctx, st, store.EventToolLoaded, store.ActorSystem, &toolID, nil, nil, toolLoadedPayload{ToolID: toolID})
-			if err != nil {
-				yield(store.Event{}, err)
-				return
-			}
-			// Deliberately NOT added to st.Transcript: the model already
-			// sees the resident catalog via cfg.Catalog on every
-			// Provider.Stream call (promptctx's two-zone builder), so this
-			// is an audit record of what was pinned, not something the
-			// model needs to read as a message.
-			if !yield(ev, nil) {
-				return
-			}
-		}
-
-		if len(cfg.MemorySources) > 0 {
-			ev, err := k.appendEvent(ctx, st, store.EventMemoryLoaded, store.ActorSystem, nil, nil, nil, memoryLoadedPayload{Sources: cfg.MemorySources})
-			if err != nil {
-				yield(store.Event{}, err)
-				return
-			}
-			// Deliberately NOT added to st.Transcript, same reasoning as
-			// EventToolLoaded above: the memory text is already folded into
-			// cfg.System (memory.Snapshot's caller does this before Run is
-			// ever called — README task 7.1's "injected at session start"),
-			// so this is the audit record of what was pinned, not something
-			// the model needs to read as a message.
-			if !yield(ev, nil) {
-				return
-			}
-		}
-
-		if cfg.Input != "" {
-			ev, err := k.appendEvent(ctx, st, store.EventUserMessage, store.ActorUser, nil, nil, nil, userMessagePayload{Body: cfg.Input})
-			if err != nil {
-				yield(store.Event{}, err)
-				return
-			}
-			st.Transcript = append(st.Transcript, provider.TextMessage("user", cfg.Input))
-			if !yield(ev, nil) {
-				return
-			}
-		}
-
 		k.runTurns(ctx, st, cfg, yield, 1)
 	}
+}
+
+// Seed durably appends a fresh run's pre-turn-loop events — status flipped
+// to running, EventToolLoaded per resident tool, an optional
+// EventMemoryLoaded, and cfg.Input's own EventUserMessage — without
+// entering the turn loop itself. Run is now exactly Seed's own preamble
+// (via the shared, unexported seed) followed by runTurns.
+//
+// This is the synchronous half of a queued fresh-run-start
+// (cmd/nexusd's kernelRunStarter.StartRun): the caller runs Seed inline
+// with the HTTP request that asked for a new run (a couple of cheap,
+// deterministic Postgres writes — the same cost class as the session+DEK
+// writes internal/surfaces/rest's handleCreateRun already does inline),
+// then enqueues a queue.KindStart job carrying only ids, never this
+// method's own plaintext cfg.Input. Whichever worker picks that job up
+// later re-enters the turn loop via internal/runctl.Control.Resume ->
+// kernel.Kernel.Continue — the same "rehydrate arbitrary existing history,
+// then continue" path a crash-recovered session already uses, rather than
+// teaching Run a second "history already partially exists" mode.
+func (k *Kernel) Seed(ctx context.Context, st *RunState, cfg RunConfig) iter.Seq2[store.Event, error] {
+	return func(yield func(store.Event, error) bool) {
+		ctx, rootSpan := k.startSpan(ctx, "kernel.seed", obs.ObservationAgent, obs.Attrs{
+			"session.id": st.SessionID.String(), "tenant.id": st.TenantID.String(),
+		})
+		defer func() { rootSpan.End(terminalSpanAttrs(st)) }()
+		k.seed(ctx, st, cfg, yield)
+	}
+}
+
+// seed is Run/Seed's shared preamble. Returns false the moment yield does
+// (caller stop) or an error is yielded — Run's own signal to skip runTurns
+// rather than enter it after an already-failed/stopped seed.
+func (k *Kernel) seed(ctx context.Context, st *RunState, cfg RunConfig, yield func(store.Event, error) bool) bool {
+	if err := k.updateStatus(ctx, st, store.SessionStatusRunning, nil); err != nil {
+		yield(store.Event{}, err)
+		return false
+	}
+
+	for _, toolID := range cfg.LoadedTools {
+		ev, err := k.appendEvent(ctx, st, store.EventToolLoaded, store.ActorSystem, &toolID, nil, nil, toolLoadedPayload{ToolID: toolID})
+		if err != nil {
+			yield(store.Event{}, err)
+			return false
+		}
+		// Deliberately NOT added to st.Transcript: the model already
+		// sees the resident catalog via cfg.Catalog on every
+		// Provider.Stream call (promptctx's two-zone builder), so this
+		// is an audit record of what was pinned, not something the
+		// model needs to read as a message.
+		if !yield(ev, nil) {
+			return false
+		}
+	}
+
+	if len(cfg.MemorySources) > 0 {
+		ev, err := k.appendEvent(ctx, st, store.EventMemoryLoaded, store.ActorSystem, nil, nil, nil, memoryLoadedPayload{Sources: cfg.MemorySources})
+		if err != nil {
+			yield(store.Event{}, err)
+			return false
+		}
+		// Deliberately NOT added to st.Transcript, same reasoning as
+		// EventToolLoaded above: the memory text is already folded into
+		// cfg.System (memory.Snapshot's caller does this before Run is
+		// ever called — README task 7.1's "injected at session start"),
+		// so this is the audit record of what was pinned, not something
+		// the model needs to read as a message.
+		if !yield(ev, nil) {
+			return false
+		}
+	}
+
+	if cfg.Input != "" {
+		ev, err := k.appendEvent(ctx, st, store.EventUserMessage, store.ActorUser, nil, nil, nil, userMessagePayload{Body: cfg.Input})
+		if err != nil {
+			yield(store.Event{}, err)
+			return false
+		}
+		st.Transcript = append(st.Transcript, provider.TextMessage("user", cfg.Input))
+		if !yield(ev, nil) {
+			return false
+		}
+	}
+	return true
 }
 
 // Resume continues a session a run suspended on an approval (kernel/

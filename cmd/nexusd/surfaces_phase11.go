@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/cron"
@@ -24,14 +25,17 @@ import (
 //
 // telegram/zalo/email's own adapters also implement that surface's local
 // Resumer interface (ctl, wired only on those three — never cron, which
-// has no human peer to resume a conversation with) — the same
-// iter.Seq2-to-channel adaptation nexusdRunCtlPort.ResumeConversation
-// (ports.go) already does for REST, just retargeted at each surface's own
-// RunEvent type.
+// has no human peer to resume a conversation with) via
+// resumeConversationEvents (eventbus.go) — every one of them needs the
+// full "every event until terminal" channel, the same
+// subscribe-before-append-and-enqueue shape kernelRunStarter.StartRun
+// itself now uses (runner.go), since none of these three surfaces has a
+// broker/SSE mechanism of its own to fall back on the way REST does.
 
 type telegramStarterAdapter struct {
-	k   *kernelRunStarter
-	ctl *runctl.Control
+	k           *kernelRunStarter
+	ctl         *runctl.Control
+	redisClient *redis.Client
 }
 
 func (a telegramStarterAdapter) StartRun(ctx context.Context, req telegram.RunRequest) (<-chan telegram.RunEvent, error) {
@@ -53,26 +57,24 @@ func (a telegramStarterAdapter) StartRun(ctx context.Context, req telegram.RunRe
 }
 
 func (a telegramStarterAdapter) ResumeConversation(ctx context.Context, tenantID, sessionID uuid.UUID, input string) (<-chan telegram.RunEvent, error) {
-	events, err := a.ctl.ResumeConversation(ctx, tenantID, sessionID, input)
+	events, err := resumeConversationEvents(ctx, a.redisClient, a.ctl, tenantID, sessionID, input)
 	if err != nil {
 		return nil, err
 	}
 	out := make(chan telegram.RunEvent, 8)
 	go func() {
 		defer close(out)
-		for ev, err := range events {
-			out <- telegram.RunEvent{Event: ev, Err: err}
-			if err != nil {
-				return
-			}
+		for ev := range events {
+			out <- telegram.RunEvent{Event: ev.Event, Err: ev.Err}
 		}
 	}()
 	return out, nil
 }
 
 type zaloStarterAdapter struct {
-	k   *kernelRunStarter
-	ctl *runctl.Control
+	k           *kernelRunStarter
+	ctl         *runctl.Control
+	redisClient *redis.Client
 }
 
 func (a zaloStarterAdapter) StartRun(ctx context.Context, req zalo.RunRequest) (<-chan zalo.RunEvent, error) {
@@ -94,26 +96,24 @@ func (a zaloStarterAdapter) StartRun(ctx context.Context, req zalo.RunRequest) (
 }
 
 func (a zaloStarterAdapter) ResumeConversation(ctx context.Context, tenantID, sessionID uuid.UUID, input string) (<-chan zalo.RunEvent, error) {
-	events, err := a.ctl.ResumeConversation(ctx, tenantID, sessionID, input)
+	events, err := resumeConversationEvents(ctx, a.redisClient, a.ctl, tenantID, sessionID, input)
 	if err != nil {
 		return nil, err
 	}
 	out := make(chan zalo.RunEvent, 8)
 	go func() {
 		defer close(out)
-		for ev, err := range events {
-			out <- zalo.RunEvent{Event: ev, Err: err}
-			if err != nil {
-				return
-			}
+		for ev := range events {
+			out <- zalo.RunEvent{Event: ev.Event, Err: ev.Err}
 		}
 	}()
 	return out, nil
 }
 
 type emailStarterAdapter struct {
-	k   *kernelRunStarter
-	ctl *runctl.Control
+	k           *kernelRunStarter
+	ctl         *runctl.Control
+	redisClient *redis.Client
 }
 
 func (a emailStarterAdapter) StartRun(ctx context.Context, req email.RunRequest) (<-chan email.RunEvent, error) {
@@ -135,18 +135,15 @@ func (a emailStarterAdapter) StartRun(ctx context.Context, req email.RunRequest)
 }
 
 func (a emailStarterAdapter) ResumeConversation(ctx context.Context, tenantID, sessionID uuid.UUID, input string) (<-chan email.RunEvent, error) {
-	events, err := a.ctl.ResumeConversation(ctx, tenantID, sessionID, input)
+	events, err := resumeConversationEvents(ctx, a.redisClient, a.ctl, tenantID, sessionID, input)
 	if err != nil {
 		return nil, err
 	}
 	out := make(chan email.RunEvent, 8)
 	go func() {
 		defer close(out)
-		for ev, err := range events {
-			out <- email.RunEvent{Event: ev, Err: err}
-			if err != nil {
-				return
-			}
+		for ev := range events {
+			out <- email.RunEvent{Event: ev.Event, Err: ev.Err}
 		}
 	}()
 	return out, nil

@@ -23,7 +23,7 @@ Five architectural strata, connected by hard contracts:
 |---|---|---|
 | **Surfaces** | CLI / REST / chat / web / email / cron / Telegram / Zalo / agent-ingress | Thin translators. Zero control flow. Declare a capability descriptor. |
 | **Control plane** | AuthN (per-tenant OIDC), RBAC, rate limits, budgets, routing | Deterministic, auditable. Separately deployable behind a versioned contract. |
-| **Data plane** | Durable queue → stateless worker → kernel loop → harness → sandbox | All state externalized. Can move into a customer VPC by configuration. |
+| **Data plane** | Durable queue (Redis Streams) → stateless worker → kernel loop → harness → sandbox | All state externalized. Can move into a customer VPC by configuration. |
 | **Kernel** | `observe → think → act`, one async generator | Typed response classification; typed terminal reason; paired `tool_use`/`tool_result`. |
 | **Trust surface** | RLS, vault, envelope encryption, hash-chained audit, content-free telemetry, approval, sandbox, Rule of Two | Day-one, co-equal perimeter controls — never a retrofit. |
 
@@ -56,7 +56,7 @@ Concretely, three collapses:
 | Collapse | Original | Demo | Why it's honest |
 |---|---|---|---|
 | **Deployment** | 3 Go binaries (`control-plane`, `runtime-worker`, `surface-gateway`) + Python helper + React app | 1 binary `nexusd` (+ `nexusctl` CLI, + `signerd` for key custody) | The control↔data-plane split stays a **Go interface** (`controlplane.Port`) with a versioned request/response shape, and the packages never import across the boundary. Splitting into processes later is a `main.go` change, not a rewrite. |
-| **Infrastructure** | NATS JetStream, gVisor/Kata warm pool, S3, KMS/HSM, external vault, PgBouncer, OTel collector, pgvector | Postgres (queue via `SKIP LOCKED`), Docker sandbox (no warm pool), local blob dir, file-backed KEK + `signerd`, PgBouncer (kept — it's load-bearing), stdout OTLP | Each sits behind a port with one adapter. The original's own cut line defers exactly these. **PgBouncer is kept** because the transaction-local RLS rule is meaningless without a transaction pooler to prove it against. |
+| **Infrastructure** | NATS JetStream, gVisor/Kata warm pool, S3, KMS/HSM, external vault, PgBouncer, OTel collector, pgvector | Redis Streams (`internal/queue/redis_streams.go` — a consumer group + `XAUTOCLAIM`; Postgres `SKIP LOCKED` was the original demo's own stand-in, retired in `migrations/0024_retire_queue_jobs.sql`), Docker sandbox (no warm pool), local blob dir, file-backed KEK + `signerd`, PgBouncer (kept — it's load-bearing), stdout OTLP | Each sits behind a port with one adapter — `internal/queue.Port`'s own doc comment names this exact swap as the reason it exists. The original's own cut line still defers NATS JetStream; Redis Streams is a second, closer-to-production demo stand-in ahead of it, not the final word. **PgBouncer is kept** because the transaction-local RLS rule is meaningless without a transaction pooler to prove it against. |
 | **Commercial + compliance tail** | Credit ledger, billing periods, FX, price overrides, multi-region residency, BYOK, chargeback export, MCP/OAuth connectors, Telegram/Zalo, document conversion, retrieval tier, adversarial scan, adaptation proposals | Dropped (columns kept where they're schema seams) | These are business processes, not patterns. Dropping them removes ~60 of 191 FRs and zero architectural ideas. |
 
 Everything else — the kernel, the pipeline, the permission chain, the approval transaction,
@@ -137,7 +137,7 @@ nexus-agent-demo/
 │   ├── audit/                  # chain builder, signer client, verifier, anchor
 │   ├── crypto/                 # KEK/DEK envelope, seal/open, shred, derived-artifact reconcile
 │   ├── store/                  # events, projections, checkpoints, snapshots, claims, RLS scoping
-│   ├── queue/                  # Queue port + postgres adapter + session-key lock
+│   ├── queue/                  # Queue port + Redis Streams adapter + session-key lock
 │   ├── reliability/            # classifier, backoff, breaker, stuck detector
 │   ├── runctl/                 # steer, cancel, resume, replay, fork, tightenAutonomy
 │   ├── sandbox/                # docker exec, limits, deny-net, (optional) broker
@@ -225,10 +225,12 @@ Plus, all with `tenant_id` + RLS: `checkpoints`, `snapshots`, `idempotency_claim
 `tools`, `tool_profiles`, `catalog_manifests`, `effect_classes`, `approval_policies`,
 `skills`, `skill_bundle_files`, `memories`, `derived_artifacts`, `sandboxes`,
 `surfaces`, `surface_identities`, `delivery_records`, `delegations`,
-`orchestration_plans`, `content_access_grants`, `queue_jobs`.
+`orchestration_plans`, `content_access_grants`.
 
-~32 tables. The original has ~50; the 18 dropped are billing, FX, connectors, integration
-adapters, and the eval entities (which live in `evals/` as files here, not rows).
+~31 tables. The original has ~50; the dropped set is billing, FX, connectors, integration
+adapters, the eval entities (which live in `evals/` as files here, not rows), and — as of
+`migrations/0024_retire_queue_jobs.sql` — the job queue itself, now a Redis Streams
+consumer group (`internal/queue/redis_streams.go`) instead of a Postgres table.
 
 Phases 11–12 add their own tables when they ship — `oauth_tokens` (`tenant_id`, `user_id`,
 `provider`, sealed under the same per-tenant DEK as any encrypted payload) and
