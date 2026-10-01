@@ -16,6 +16,7 @@ go.work.sum
 /cmd/nexusd/nexusd
 /cmd/nexusctl/nexusctl
 /cmd/signerd/signerd
+/deploy/observability/docker-label-exporter/docker-label-exporter
 
 # --- Local env / secrets ---
 .env
@@ -42,6 +43,9 @@ deploy/redis-data/
 /evals/results/
 /evals/.cache/
 *.eval.log
+
+# --- Claude Code (settings.json and rules/ are shared; local overrides are not) ---
+.claude/settings.local.json
 
 # --- IDE / OS ---
 .idea/

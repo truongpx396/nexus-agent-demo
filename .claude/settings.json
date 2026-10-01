@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(go build *)",
+      "Bash(go vet *)",
+      "Bash(go test *)",
+      "Bash(go list *)",
+      "Bash(go env *)",
+      "Bash(goimports *)",
+      "Bash(golangci-lint run *)",
+      "Bash(golangci-lint --version)",
+      "Bash(make build)",
+      "Bash(make test)",
+      "Bash(make lint)",
+      "Bash(make eval)",
+      "Bash(make pr-size*)",
+      "Bash(scripts/pr-size.sh*)",
+      "Bash(npm run lint)",
+      "Bash(npm run build)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git show *)",
+      "Bash(git rev-parse *)",
+      "Bash(git branch --show-current)",
+      "Bash(docker ps *)",
+      "Bash(docker logs *)",
+      "Bash(docker compose*ps*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.dev/*.key)",
+      "Read(./.dev/signer/**)",
+      "Read(./secrets/**)",
+      "Read(**/*.pem)",
+      "Edit(./evals/testdata/baseline.json)",
+      "Bash(docker compose*down*-v*)",
+      "Bash(docker compose*down*--volumes*)",
+      "Bash(docker volume rm *)",
+      "Bash(docker volume prune*)",
+      "Bash(docker system prune*)",
+      "Bash(git push*--force*)",
+      "Bash(git push* -f*)",
+      "Bash(git reset --hard*)",
+      "Bash(git clean *)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/post-edit-go.sh",
+            "timeout": 30,
+            "statusMessage": "goimports + size check"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(gh pr create*)",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/pr-size-check.sh",
+            "timeout": 30,
+            "statusMessage": "Checking PR size"
+          }
+        ]
+      }
+    ]
+  }
+}

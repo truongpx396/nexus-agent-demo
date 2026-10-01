@@ -14,6 +14,7 @@ go test -race -tags=integration ./...                              # integration
 go test -tags=integration ./tests/integration -run TestName -v     # single integration test
 golangci-lint run --build-tags=integration ./...                   # what CI runs (v2.5.0)
 make eval                       # eval release gate (also a CI job)
+make pr-size                    # changed lines vs origin/main; CI's pr-size workflow fails above 1000 (see Conventions)
 go build ./... && go vet ./... && golangci-lint run --build-tags=integration ./... && go test ./...   # pre-"done" check
 ```
 
@@ -49,13 +50,19 @@ Web: `cd web && npm ci && npm run dev | lint | build` (oxlint, `tsc -b`).
 - **Import boundaries** (`tests/contract/boundaries_test.go`; the check is transitive, so an indirect import also fails): `kernel/` must not import `internal/surfaces` or `internal/controlplane`; surfaces must not import `kernel/`; `controlplane` must not import `sandbox`/`memory`/`provider`; the three `cmd/*` binaries must not import each other; `cmd/nexusd` must not import `internal/audit/signerkey` (the private-key package — nexusd signs only through `audit.SignerClient`). `cmd/nexusd` is the composition root and the one package allowed to import both `kernel` and the surfaces.
 - **Exhaustive switches**: switches over `kernel.TerminalReason` and response classification must list every case — `exhaustive` runs with `default-signifies-exhaustive: false`, so a `default:` does not satisfy it. Add the case.
 - **No float in money**: `internal/cost` uses integer money; `money_notfloat_test.go` fails on any `float32`/`float64` token in the package.
+- **File size**: a non-test Go file may not exceed 500 lines (`tests/contract/filesize_test.go`; `_test.go` and generated files are exempt, and `lineCapExempt` is empty on purpose). When you cross it, split by responsibility — see Conventions.
 - **Lint bans**: `fmt.Print*` outside `cmd/` (log with zerolog via `internal/obs`; the lint message says slog, but the codebase uses zerolog) and `math/rand` anywhere (use `crypto/rand`).
 - **Telemetry is content-free**: span attributes pass a deny-by-default allowlist (`internal/obs/allowlist.go`). Never put prompt or tool content into spans or logs.
 - **Optional `Kernel` hooks are nil-valid** (`Receipts`, `OnSuspend`, `OnDelegate`, `Stuck`, …): nil means "that control isn't wired", which is how minimal kernels are built in tests. New hooks must follow that convention.
 
 ## Conventions
 
-- Split large Go files by responsibility **within the same package** (e.g. `cmd/nexusd`: `serve.go`, `ports.go`, `cli_*.go`; `kernel`: `turns.go`, `events.go`, `terminal.go`) — never into a new package or sub-package; the boundary test is package-granular and the repo already follows this. Aim for ~150–400 lines per file, copy the full import block and run `goimports -w` to prune.
+- Split large Go files by responsibility **within the same package** (e.g. `cmd/nexusd`: `serve.go`, `ports.go`, `cli_*.go`; `kernel`: `turns.go`, `events.go`, `terminal.go`) — never into a new package or sub-package; the boundary test is package-granular and the repo already follows this. Aim for ~150–400 lines per file (500 is the enforced cap, above), copy the full import block and run `goimports -w` to prune. `kernel/turns.go` → `kernel/metering.go` is the worked example: a pure move, verified with `go build` and the package's tests.
+- Keep PRs under **1,000 changed lines** (insertions + deletions; lockfiles, `web/dist`, `evals/testdata/baseline.json` and the vendored Spec Kit scaffolding don't count). `make pr-size` measures your branch; `.github/workflows/pr-size.yml` fails the PR above the limit. Split a bigger feature into stacked PRs. A change that is big but mechanical (a rename, a file split) gets the `large-pr` label and a sentence in the description saying why. The limit and exclusions live in `scripts/pr-size.sh`.
 - Prompts, tools, skills and models are production config: changing one is a deploy and must clear the eval gate.
 
 Path-specific rules for `migrations/` and `evals/` are in `.claude/rules/`.
+
+## Claude Code setup
+
+`.claude/settings.json` is shared: a permission allowlist for the verification commands above, deny rules for secrets (`.env`, `.dev/*.key`, `.dev/signer/`, `*.pem`), destructive commands (`docker compose … down -v`, force-push, `git reset --hard`) and hand-editing `evals/testdata/baseline.json`, plus two hooks in `.claude/hooks/`: after a Go edit, `goimports -w` and a nudge if the file passed the line cap; before `gh pr create`, an advisory PR-size check. The hooks need `jq`, and `goimports` (`go install golang.org/x/tools/cmd/goimports@latest`) for formatting. Personal overrides go in `.claude/settings.local.json` (gitignored). Read denies stop the Read tool only, not `cat` through Bash.
