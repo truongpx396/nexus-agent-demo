@@ -20,11 +20,11 @@ import (
 const (
 	streamKey      = "nexus:queue:jobs"
 	groupName      = "nexus:queue:workers"
-	delayedKey     = "nexus:queue:delayed"   // ZSET: member = job JSON, score = retry-at unix ms
-	deadKey        = "nexus:queue:dead"      // plain stream, no group — permanent failures, for operator inspection
-	entryKeyPrefix = "nexus:queue:entry:"    // job_id -> {entry_id, job JSON}, HASH, set only while leased
-	entryKeyTTL    = 24 * time.Hour          // safety net so a forgotten claim can't leak forever
-	leaseBlock     = 200 * time.Millisecond  // shorter than Worker's own default PollEvery (500ms) so Lease never overruns the next tick
+	delayedKey     = "nexus:queue:delayed"  // ZSET: member = job JSON, score = retry-at unix ms
+	deadKey        = "nexus:queue:dead"     // plain stream, no group — permanent failures, for operator inspection
+	entryKeyPrefix = "nexus:queue:entry:"   // job_id -> {entry_id, job JSON}, HASH, set only while leased
+	entryKeyTTL    = 24 * time.Hour         // safety net so a forgotten claim can't leak forever
+	leaseBlock     = 200 * time.Millisecond // shorter than Worker's own default PollEvery (500ms) so Lease never overruns the next tick
 	promoteBatch   = 10
 )
 
@@ -215,13 +215,15 @@ func (r *RedisStreams) claim(ctx context.Context, owner string, msg redis.XMessa
 // promoteDelayed moves every delay-buffer member whose retry-at has
 // elapsed back onto the live stream. ZRem's return value is what keeps two
 // workers racing this in the same tick from double-promoting: both may see
-// the same due member from ZRangeByScore's read below, but Redis
+// the same due member from ZRANGE BYSCORE's read below, but Redis
 // serializes the ZRem calls that follow, so only the one that actually
 // removes it (result 1, not 0) is allowed to XAdd it back — the other sees
 // 0 and skips, no Lua script needed for that ordering to be race-free.
 func (r *RedisStreams) promoteDelayed(ctx context.Context) error {
 	max := strconv.FormatInt(time.Now().UnixMilli(), 10)
-	due, err := r.client.ZRangeByScore(ctx, delayedKey, &redis.ZRangeBy{Min: "-inf", Max: max, Count: promoteBatch}).Result()
+	// ZRANGE ... BYSCORE (Redis 6.2+, the deployment and tests run redis:7)
+	// replaces the deprecated ZRANGEBYSCORE; same range, same LIMIT 0 N.
+	due, err := r.client.ZRangeArgs(ctx, redis.ZRangeArgs{Key: delayedKey, Start: "-inf", Stop: max, ByScore: true, Count: promoteBatch}).Result()
 	if err != nil {
 		return fmt.Errorf("list due delayed jobs: %w", err)
 	}
