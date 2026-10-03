@@ -144,10 +144,27 @@ func TestHandleWebhook_ValidUpdateCreatesARealSessionAndStartsARun(t *testing.T)
 	}
 }
 
+// nextUpdateID hands out a fresh, process-wide-unique Telegram update_id per
+// call — real Telegram update_ids are monotonically increasing per bot and
+// never reused, and dispatch's own delivery dedup (surfaces.ClaimDelivery)
+// now keys on exactly this value, so two DIFFERENT messages in a test must
+// never share one the way a literal constant would.
+var nextUpdateIDCounter int64
+
+func nextUpdateID() int64 {
+	nextUpdateIDCounter++
+	return nextUpdateIDCounter
+}
+
 func newWebhookBody(t *testing.T, chatID int, text string) []byte {
 	t.Helper()
+	return newWebhookBodyWithUpdateID(t, nextUpdateID(), chatID, text)
+}
+
+func newWebhookBodyWithUpdateID(t *testing.T, updateID int64, chatID int, text string) []byte {
+	t.Helper()
 	body, err := json.Marshal(map[string]any{
-		"update_id": 1,
+		"update_id": updateID,
 		"message": map[string]any{
 			"message_id": 1,
 			"from":       map[string]any{"id": 42},
@@ -394,5 +411,62 @@ func TestServer_NotificationPayload_DecryptsContentEvent(t *testing.T) {
 	}
 	if got.Kind != "content" || got.Text != "here is my reply" {
 		t.Fatalf("payload = %+v, want kind=content text=%q", got, "here is my reply")
+	}
+}
+
+// TestHandleWebhook_DuplicateUpdateIDAcknowledgedWithoutASecondRun is
+// migrations/0025_inbound_deliveries.sql's own reason to exist
+// (production-readiness review: "Telegram/Zalo webhooks retry by design"
+// with nothing deduping that): the SAME update_id delivered twice — Telegram
+// itself redelivering after a slow/lost ack is the realistic trigger, not a
+// client bug — must reach StartRun exactly once.
+func TestHandleWebhook_DuplicateUpdateIDAcknowledgedWithoutASecondRun(t *testing.T) {
+	pool := setupTelegramEnv(t)
+	s := store.New(pool)
+	tenantID := uuid.New()
+	if err := s.InTenantTx(context.Background(), tenantID, func(ctx context.Context, tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `INSERT INTO tenants (tenant_id, name) VALUES ($1, 'telegram-test')`, tenantID)
+		return err
+	}); err != nil {
+		t.Fatalf("insert tenant: %v", err)
+	}
+	kek, err := crypto.GenerateKEK()
+	if err != nil {
+		t.Fatalf("GenerateKEK: %v", err)
+	}
+	starter := &fakeStarter{}
+	srv := &Server{Store: s, KeyStore: crypto.NewKeyStore(kek), Starter: starter, Channels: fakeChannels{secret: "s", ok: true}}
+
+	body := newWebhookBodyWithUpdateID(t, 4242, 999, "please help")
+	rec := postWebhook(t, srv, tenantID, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("first delivery: status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if starter.calls != 1 {
+		t.Fatalf("calls after first delivery = %d, want 1", starter.calls)
+	}
+	firstSessionID := starter.req.SessionID
+
+	// The exact same update_id, redelivered — the realistic Telegram-retry
+	// shape, not a different chat/text.
+	rec = postWebhook(t, srv, tenantID, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("redelivery: status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if starter.calls != 1 {
+		t.Fatalf("calls after redelivery = %d, want still 1 (StartRun must not run twice for one update_id)", starter.calls)
+	}
+	if starter.req.SessionID != firstSessionID {
+		t.Fatal("a redelivered update_id must never reach StartRun with a different session")
+	}
+
+	var sessionCount int
+	if err := s.InTenantTx(context.Background(), tenantID, func(ctx context.Context, tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT count(*) FROM sessions WHERE session_key = $1`, "telegram:999").Scan(&sessionCount)
+	}); err != nil {
+		t.Fatalf("count sessions: %v", err)
+	}
+	if sessionCount != 1 {
+		t.Fatalf("sessions for telegram:999 = %d, want exactly 1", sessionCount)
 	}
 }

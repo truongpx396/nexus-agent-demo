@@ -88,11 +88,21 @@ func insertTestTenant(t *testing.T, s *store.Store, tenantID uuid.UUID) {
 
 func newZaloWebhookBody(t *testing.T, senderID, text string) []byte {
 	t.Helper()
+	// No msg_id — matches every pre-delivery-dedup test fixture in this
+	// file: store.ClaimInboundDelivery's own documented empty-string
+	// behavior (always claims, never dedupes) means these keep passing
+	// unmodified. Only a test that specifically exercises dedup needs a
+	// real, distinct msg_id (newZaloWebhookBodyWithMsgID).
+	return newZaloWebhookBodyWithMsgID(t, "", senderID, text)
+}
+
+func newZaloWebhookBodyWithMsgID(t *testing.T, msgID, senderID, text string) []byte {
+	t.Helper()
 	body, err := json.Marshal(map[string]any{
 		"app_id":     "app-1",
 		"event_name": "user_send_text",
 		"sender":     map[string]string{"id": senderID},
-		"message":    map[string]string{"text": text},
+		"message":    map[string]string{"text": text, "msg_id": msgID},
 	})
 	if err != nil {
 		t.Fatalf("marshal webhook body: %v", err)
@@ -286,5 +296,57 @@ func TestServer_NotificationPayload_DecryptsContentEvent(t *testing.T) {
 	}
 	if got.Kind != "content" || got.Text != "here is my reply" {
 		t.Fatalf("payload = %+v, want kind=content text=%q", got, "here is my reply")
+	}
+}
+
+// TestHandleWebhook_DuplicateMsgIDAcknowledgedWithoutASecondRun is
+// migrations/0025_inbound_deliveries.sql's own reason to exist
+// (production-readiness review: "Telegram/Zalo webhooks retry by design"
+// with nothing deduping that): the SAME msg_id delivered twice — Zalo
+// itself redelivering after a slow/lost ack is the realistic trigger, not a
+// client bug — must reach StartRun exactly once.
+func TestHandleWebhook_DuplicateMsgIDAcknowledgedWithoutASecondRun(t *testing.T) {
+	pool := setupZaloEnv(t)
+	s := store.New(pool)
+	tenantID := uuid.New()
+	insertTestTenant(t, s, tenantID)
+	kek, err := crypto.GenerateKEK()
+	if err != nil {
+		t.Fatalf("GenerateKEK: %v", err)
+	}
+	starter := &fakeStarter{}
+	srv := &Server{Store: s, KeyStore: crypto.NewKeyStore(kek), Starter: starter, Channels: fakeChannels{secret: "s", ok: true}}
+
+	body := newZaloWebhookBodyWithMsgID(t, "msg-4242", "user-999", "please help")
+	rec := postZaloWebhook(t, srv, tenantID, "s", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("first delivery: status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if starter.calls != 1 {
+		t.Fatalf("calls after first delivery = %d, want 1", starter.calls)
+	}
+	firstSessionID := starter.req.SessionID
+
+	// The exact same msg_id, redelivered — the realistic Zalo-retry shape,
+	// not a different sender/text.
+	rec = postZaloWebhook(t, srv, tenantID, "s", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("redelivery: status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if starter.calls != 1 {
+		t.Fatalf("calls after redelivery = %d, want still 1 (StartRun must not run twice for one msg_id)", starter.calls)
+	}
+	if starter.req.SessionID != firstSessionID {
+		t.Fatal("a redelivered msg_id must never reach StartRun with a different session")
+	}
+
+	var sessionCount int
+	if err := s.InTenantTx(context.Background(), tenantID, func(ctx context.Context, tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT count(*) FROM sessions WHERE session_key = $1`, "zalo:user-999").Scan(&sessionCount)
+	}); err != nil {
+		t.Fatalf("count sessions: %v", err)
+	}
+	if sessionCount != 1 {
+		t.Fatalf("sessions for zalo:user-999 = %d, want exactly 1", sessionCount)
 	}
 }

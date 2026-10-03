@@ -161,8 +161,12 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	// Tenant scoping comes from the lookup's own WHERE tenant_id=$1, not
 	// this string, so no tenant id needs to be folded in here.
 	sessionKey := "telegram:" + chatID
+	// deliveryID is Telegram's own update_id — monotonically increasing per
+	// bot, never reused — the provider-native id ClaimDelivery dedupes a
+	// redelivered update against.
+	deliveryID := fmt.Sprintf("%d", upd.UpdateID)
 
-	if _, err := s.dispatch(r.Context(), tenantID, userID, sessionKey, chatID, upd.Message.Text); err != nil {
+	if _, err := s.dispatch(r.Context(), tenantID, userID, sessionKey, deliveryID, chatID, upd.Message.Text); err != nil {
 		log.Error().Err(err).Any("tenant_id", tenantID).Msg("telegram: dispatch")
 		http.Error(w, "dispatch: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -170,14 +174,30 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// dispatch looks up sessionKey's most recent session (store.GetSessionByKey)
-// and resumes it via Resume.ResumeConversation when it's genuinely
-// awaiting_input; every other case (no session yet, or one found but
-// running/suspended/already terminal) falls through to startRun — a fresh
-// conversational session reusing the same key, so the NEXT message finds
-// it. s.Resume == nil (no pre-continuity caller sets it) always takes the
-// fresh-session path, unchanged from before this feature existed.
-func (s *Server) dispatch(ctx context.Context, tenantID, userID uuid.UUID, sessionKey, chatID, input string) (uuid.UUID, error) {
+// dispatch first claims deliveryID (surfaces.ClaimDelivery) — a provider
+// redelivery of an update this surface already accepted is acknowledged
+// (uuid.Nil, nil) without ever reaching the session lookup below, closing
+// the production-readiness review's finding that "Telegram/Zalo webhooks
+// retry by design" and nothing dedupes that. A freshly-claimed delivery proceeds to the session lookup below.
+//
+// Session lookup and resume-vs-fresh: looks up sessionKey's most recent
+// session (store.GetSessionByKey) and resumes it via
+// Resume.ResumeConversation when it's genuinely awaiting_input; every
+// other case (no session yet, or one found but running/suspended/already
+// terminal) falls through to startRun — a fresh conversational session
+// reusing the same key, so the NEXT message finds it. s.Resume == nil (no
+// pre-continuity caller sets it) always takes the fresh-session path,
+// unchanged from before that feature existed.
+func (s *Server) dispatch(ctx context.Context, tenantID, userID uuid.UUID, sessionKey, deliveryID, chatID, input string) (uuid.UUID, error) {
+	claimed, err := surfaces.ClaimDelivery(ctx, s.Store, tenantID, Descriptor.SurfaceID, deliveryID, sessionKey)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("claim delivery: %w", err)
+	}
+	if !claimed {
+		log.Info().Any("tenant_id", tenantID).Str("delivery_id", deliveryID).Msg("telegram: duplicate delivery acknowledged without dispatching")
+		return uuid.Nil, nil
+	}
+
 	if s.Resume != nil {
 		var sess store.Session
 		var found bool
