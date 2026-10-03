@@ -26,6 +26,14 @@ const (
 	entryKeyTTL    = 24 * time.Hour         // safety net so a forgotten claim can't leak forever
 	leaseBlock     = 200 * time.Millisecond // shorter than Worker's own default PollEvery (500ms) so Lease never overruns the next tick
 	promoteBatch   = 10
+
+	// defaultDeadMaxLen caps the dead-letter stream (XADD MAXLEN, exact). Failed
+	// jobs are only ever inspected by an operator, so the newest N is the
+	// useful window; without a cap a crash-looping job class grows it
+	// forever. The live stream needs no cap: Complete/Fail XDEL their own
+	// entry, so it holds only what is still queued or in flight — a MAXLEN
+	// there could silently drop a queued job under backlog.
+	defaultDeadMaxLen = 10_000
 )
 
 // RedisStreams implements Port against a Redis Stream + consumer group —
@@ -42,7 +50,8 @@ const (
 // orphaned-session sweep — this adapter's reclaim is real: Lease itself
 // tries XAutoClaim before reading anything new.
 type RedisStreams struct {
-	client *redis.Client
+	client     *redis.Client
+	deadMaxLen int64
 }
 
 // NewRedisStreams creates the consumer group (idempotent — a group that
@@ -52,7 +61,7 @@ func NewRedisStreams(ctx context.Context, client *redis.Client) (*RedisStreams, 
 		!strings.Contains(err.Error(), "BUSYGROUP") {
 		return nil, fmt.Errorf("queue: create consumer group: %w", err)
 	}
-	return &RedisStreams{client: client}, nil
+	return &RedisStreams{client: client, deadMaxLen: defaultDeadMaxLen}, nil
 }
 
 // CheckReady confirms this process's own consumer group actually exists —
@@ -189,7 +198,10 @@ func (r *RedisStreams) Lease(ctx context.Context, owner string, leaseFor time.Du
 func (r *RedisStreams) claim(ctx context.Context, owner string, msg redis.XMessage) (Job, error) {
 	job, err := parseJobFields(msg.Values)
 	if err != nil {
-		return Job{}, fmt.Errorf("parse claimed entry %s: %w", msg.ID, err)
+		if dlErr := r.discardUnparseable(ctx, msg, err); dlErr != nil {
+			return Job{}, fmt.Errorf("parse claimed entry %s: %w (and could not dead-letter it: %v)", msg.ID, err, dlErr)
+		}
+		return Job{}, fmt.Errorf("parse claimed entry %s (dead-lettered): %w", msg.ID, err)
 	}
 	if _, prior, err := r.claimedEntry(ctx, job.JobID); err == nil {
 		job.Attempts = prior.Attempts
@@ -281,18 +293,50 @@ func (r *RedisStreams) Complete(ctx context.Context, jobID uuid.UUID) error {
 	if err != nil {
 		return fmt.Errorf("queue: complete job %s: %w", jobID, err)
 	}
-	pipe := r.client.TxPipeline()
-	pipe.XAck(ctx, streamKey, groupName, entryID)
-	pipe.Del(ctx, entryKeyPrefix+jobID.String())
-	if _, err := pipe.Exec(ctx); err != nil {
+	if err := r.retire(ctx, jobID, entryID); err != nil {
 		return fmt.Errorf("queue: complete job %s: %w", jobID, err)
 	}
 	return nil
 }
 
-// Fail acks the job's original entry either way (it is never left in the
-// PEL to be reclaimed AGAIN by XAutoClaim — retry scheduling from here on
-// is this method's job, not idle-timeout's) and then, depending on
+// retire is the end of one delivery: XACK drops the entry from the group's
+// pending list, XDEL removes it from the stream itself (XACK alone leaves
+// the entry in the stream forever), and the claim record goes with it — all
+// in one transaction, so a crash can't leave a half-retired entry.
+func (r *RedisStreams) retire(ctx context.Context, jobID uuid.UUID, entryID string) error {
+	pipe := r.client.TxPipeline()
+	pipe.XAck(ctx, streamKey, groupName, entryID)
+	pipe.XDel(ctx, streamKey, entryID)
+	pipe.Del(ctx, entryKeyPrefix+jobID.String())
+	_, err := pipe.Exec(ctx)
+	return err
+}
+
+// discardUnparseable dead-letters an entry whose fields can't be parsed and
+// retires it. Left pending, XAutoClaim would hand it back every leaseFor and
+// Lease would fail on it forever. The raw fields are kept on the dead-letter
+// stream (ids and control fields only, same as any job entry) for an
+// operator to inspect.
+func (r *RedisStreams) discardUnparseable(ctx context.Context, msg redis.XMessage, cause error) error {
+	dead := make(map[string]interface{}, len(msg.Values)+2)
+	for k, v := range msg.Values {
+		dead[k] = v
+	}
+	dead["entry_id"] = msg.ID
+	dead["last_error"] = "unparseable entry: " + cause.Error()
+
+	pipe := r.client.TxPipeline()
+	pipe.XAdd(ctx, &redis.XAddArgs{Stream: deadKey, MaxLen: r.deadMaxLen, Values: dead})
+	pipe.XAck(ctx, streamKey, groupName, msg.ID)
+	pipe.XDel(ctx, streamKey, msg.ID)
+	_, err := pipe.Exec(ctx)
+	return err
+}
+
+// Fail retires the job's original entry either way (acked and deleted, so
+// it is never left in the PEL to be reclaimed AGAIN by XAutoClaim — retry
+// scheduling from here on is this method's job, not idle-timeout's) and
+// then, depending on
 // permanent/retryAt: dead-letters it (nexus:queue:dead, a plain
 // inspectable stream — the operator-facing view queue_jobs.status='failed'
 // rows used to give for free), re-adds it immediately (retryAt already
@@ -304,17 +348,14 @@ func (r *RedisStreams) Fail(ctx context.Context, jobID uuid.UUID, reason string,
 		return fmt.Errorf("queue: fail job %s: %w", jobID, err)
 	}
 
-	pipe := r.client.TxPipeline()
-	pipe.XAck(ctx, streamKey, groupName, entryID)
-	pipe.Del(ctx, entryKeyPrefix+jobID.String())
-	if _, err := pipe.Exec(ctx); err != nil {
-		return fmt.Errorf("queue: fail job %s: ack original entry: %w", jobID, err)
+	if err := r.retire(ctx, jobID, entryID); err != nil {
+		return fmt.Errorf("queue: fail job %s: retire original entry: %w", jobID, err)
 	}
 
 	if permanent {
 		dead := jobFields(job)
 		dead["last_error"] = reason
-		if err := r.client.XAdd(ctx, &redis.XAddArgs{Stream: deadKey, Values: dead}).Err(); err != nil {
+		if err := r.client.XAdd(ctx, &redis.XAddArgs{Stream: deadKey, MaxLen: r.deadMaxLen, Values: dead}).Err(); err != nil {
 			return fmt.Errorf("queue: fail job %s: dead-letter: %w", jobID, err)
 		}
 		return nil
