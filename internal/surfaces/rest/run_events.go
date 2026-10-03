@@ -108,6 +108,15 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			if !chOK {
 				return
 			}
+			if p.Delta != nil {
+				// Never replayed, never seq-checked against lastSeq — a
+				// live preview has no seq at all (DeltaDTO's own doc
+				// comment). The durable event it previews still arrives
+				// right behind it on this same channel.
+				writeSSEFrame(w, "delta", p.Delta)
+				flusher.Flush()
+				continue
+			}
 			if p.Err == nil && p.Event.Seq <= lastSeq {
 				continue // already delivered by the historical replay above
 			}

@@ -1,15 +1,18 @@
-// Package queue is the durable job queue README task 6.1 names: a Postgres
-// table polled with SELECT ... FOR UPDATE SKIP LOCKED, plus a Redis
-// session-key serial lock (task 6.2) and a worker pool that pulls jobs and
-// runs them. It carries only asynchronous, session-scoped CONTROL work —
-// resuming a session after a crash, forking one, or draining a steer — never
-// a fresh interactive run, which stays on internal/surfaces/rest's existing
-// synchronous fast path: minting a session and its DEK, and starting the
-// first turn, all happen inline with the HTTP request that asked for them,
-// exactly as Phase 2 shipped it. Queuing THAT would mean carrying a user's
-// plaintext opening message through queue_jobs.payload, which (unlike
-// events.payload) has no sealed-envelope column to protect it — an honest
-// scope line, not an oversight.
+// Package queue is the durable job queue README task 6.1 names: a Redis
+// Stream + consumer group (redis_streams.go — the retired Postgres SKIP
+// LOCKED adapter's successor; NATS JetStream remains the deferred,
+// real-production option), plus a Redis session-key serial lock (task 6.2)
+// and a worker pool that pulls jobs and runs them. Every mutation that
+// drives kernel.Kernel's turn loop goes through here now — a fresh
+// interactive run's Kernel.Seed step (cmd/nexusd's kernelRunStarter) and a
+// conversational follow-up's message-append (internal/runctl.Control.
+// ResumeConversation) both durably append their own sealed event to
+// Postgres FIRST, then enqueue a job carrying only ids — never a plaintext
+// opening message through a stream entry, which (unlike events.payload) has
+// no sealed-envelope column to protect it. Fork/Cancel/TightenAutonomy/Steer
+// stay on internal/surfaces/rest's synchronous fast path: none of them
+// drive the turn loop themselves, so queuing them would add a hop for no
+// scalability gain.
 //
 // This package stays free of any kernel/tools/store/crypto dependency —
 // Runner is the seam a caller (cmd/nexusd) plugs the actual work into,
@@ -24,16 +27,25 @@ import (
 	"github.com/google/uuid"
 )
 
-// Kind is queue_jobs.kind's vocabulary.
+// Kind is one queued job's vocabulary — purely for log/metric
+// observability (queueRunner.Run, cmd/nexusd/background.go): every Kind
+// dispatches to the identical runctl.Control.Resume call, since by the time
+// a worker picks any of them up, a fresh-started, crash-recovered, and
+// human-followed-up session all look the same — their durable seed/message
+// event is already in the Postgres event log.
 type Kind string
 
 const (
-	KindResume Kind = "resume"
-	KindFork   Kind = "fork"
-	KindSteer  Kind = "steer"
+	KindResume   Kind = "resume"   // a crash/orphan sweep re-entering an existing run
+	KindStart    Kind = "start"    // a fresh run, seeded (kernel.Kernel.Seed) synchronously before this was enqueued
+	KindConverse Kind = "converse" // a conversational session's human follow-up message, appended before this was enqueued
 )
 
-// Status is queue_jobs.status's vocabulary.
+// Status is one job's own lifecycle vocabulary — StatusDone/StatusFailed
+// exist for Port implementations that keep a queryable record after a job
+// leaves the live queue (RedisStreams' own dead-letter stream, historically
+// queue_jobs.status='failed' rows); Enqueue/Lease/Complete/Fail's return
+// values only ever use Pending/Leased.
 type Status string
 
 const (
@@ -43,7 +55,8 @@ const (
 	StatusFailed  Status = "failed"
 )
 
-// Job mirrors one queue_jobs row.
+// Job is one unit of queued work — historically one queue_jobs row, now one
+// Redis Stream entry (redis_streams.go).
 type Job struct {
 	JobID          uuid.UUID
 	TenantID       uuid.UUID
@@ -61,11 +74,16 @@ type Job struct {
 }
 
 // Port is the queue's own abstract interface (mirrors internal/cost.
-// BudgetGate / kernel.ToolExecutor's own decoupling idiom): Postgres
-// (postgres.go) is the only adapter this demo ships — NATS JetStream is
+// BudgetGate / kernel.ToolExecutor's own decoupling idiom): RedisStreams
+// (redis_streams.go) is the demo's own adapter — NATS JetStream remains
 // deferred (README §2's infrastructure collapse) — but every call site
-// depends on this interface, never *Postgres directly, so a future adapter
-// is a `main.go` change, not a rewrite.
+// depends on this interface, never *RedisStreams directly, so a future
+// adapter is a `main.go` change, not a rewrite. This interface's shape
+// (poll-once, one attempt per call, ok bool) predates Redis Streams — it
+// was designed for Postgres SKIP LOCKED polling — and is kept unchanged
+// rather than redesigned around XREADGROUP's own blocking-read model,
+// since Worker's admission/breaker/session-lock sequencing (worker.go) and
+// its tests are all written against exactly this shape.
 type Port interface {
 	// Enqueue durably records a new job, pending immediately (or at a
 	// caller-specified future AvailableAt, for a deliberately delayed

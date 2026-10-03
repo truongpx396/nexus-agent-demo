@@ -3,11 +3,11 @@ package runctl
 import (
 	"context"
 	"fmt"
-	"iter"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/truongpx396/nexus-agent-demo/internal/queue"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
@@ -15,28 +15,52 @@ import (
 // ResumeConversation continues a conversational session (store.Session.
 // Conversational, migrations/0023_conversational_sessions.sql) that
 // kernel.Kernel.suspendForUserInput paused in store.SessionStatusAwaitingInput
-// — the human's next message. Unlike Resume (the general crash/steer
-// resume, re-entering the loop as-is via kernel.Kernel.Continue) this is
-// scoped narrowly to the one state a conversational pause can be in,
-// mirroring internal/oversight.Resumer's own "decide, THEN resume" shape:
-// refuse if the session isn't actually awaiting input (nothing to resume
-// into), rehydrate, then drive kernel.Kernel.ResumeConversation with the
-// new message.
-func (c *Control) ResumeConversation(ctx context.Context, tenantID, sessionID uuid.UUID, input string) (iter.Seq2[store.Event, error], error) {
-	st, sess, err := c.loadRunState(ctx, tenantID, sessionID)
+// — the human's next message. It now mirrors Steer's own shape exactly
+// (steer.go): durably append the message and flip the session back to
+// running, out of band, then let a worker pool actually drive the turn
+// loop via a queued queue.KindConverse job — rather than doing so on this
+// call's own goroutine, which is what internal/surfaces/rest's
+// handleSteerRun used to do with a same-process `go s.publishUntilDone(...)`.
+// That was the identical single-process scalability gap a fresh run's own
+// Kernel.Seed + queue.KindStart split closes (cmd/nexusd's
+// kernelRunStarter.StartRun) — this closes it here too, and for the same
+// reason: nothing about the message that was JUST appended needs to be
+// carried through the queue job itself, so the job carries only ids, never
+// this method's own plaintext input.
+func (c *Control) ResumeConversation(ctx context.Context, tenantID, sessionID uuid.UUID, input string) (store.Event, error) {
+	d := c.deps()
+	var ev store.Event
+	err := c.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+		// Claim the session first, atomically (store.ClaimAwaitingInput):
+		// of N concurrent callers (a REST steer, a webhook delivery) exactly
+		// one gets past here, so the human's message is appended and the
+		// continuation queued once, not once per caller.
+		claimed, err := store.ClaimAwaitingInput(ctx, tx, sessionID)
+		if err != nil {
+			return err
+		}
+		if !claimed {
+			sess, err := store.GetSession(ctx, tx, sessionID)
+			if err != nil {
+				return err
+			}
+			return fmt.Errorf("runctl: session %s is %q, not awaiting_input; nothing to resume a conversation into", sessionID, sess.Status)
+		}
+		ev, err = d.appendEvent(ctx, tx, tenantID, sessionID, store.EventUserMessage, nil, nil, userMessagePayload{Body: input})
+		return err
+	})
 	if err != nil {
-		return nil, err
-	}
-	if sess.Status != store.SessionStatusAwaitingInput {
-		return nil, fmt.Errorf("runctl: session %s is %q, not awaiting_input; nothing to resume a conversation into", sessionID, sess.Status)
+		return store.Event{}, err
 	}
 
-	cfg := kernel.RunConfig{
-		System: c.System, Catalog: c.Catalog, MaxTurns: c.MaxTurns,
-		AutonomyLevel: sess.AutonomyLevel, ModelID: sess.RouteModelID,
-		Conversational: sess.Conversational,
+	if c.Queue != nil {
+		if _, err := c.Queue.Enqueue(ctx, queue.Job{
+			TenantID: tenantID, SessionID: sessionID, SessionKey: sessionID.String(), Kind: queue.KindConverse,
+		}); err != nil {
+			return store.Event{}, fmt.Errorf("runctl: resume conversation: enqueue continue job: %w", err)
+		}
 	}
-	return c.Kernel.ResumeConversation(ctx, st, cfg, input), nil
+	return ev, nil
 }
 
 // EndIdleConversation durably ends ONE session that has sat in

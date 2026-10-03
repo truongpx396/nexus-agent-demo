@@ -16,6 +16,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/dotenv"
@@ -148,6 +149,19 @@ func main() {
 func fatalf(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, format+"\n", args...)
 	os.Exit(1)
+}
+
+// envIntOr parses key as a base-10 int, falling back to fallback on unset OR
+// unparseable — like envOr's own sibling env vars, a profiling knob
+// (NEXUS_PPROF_MUTEX_FRACTION/NEXUS_PPROF_BLOCK_RATE) is an observability
+// concern, not a security one, so a typo degrades to "profiling stays off"
+// rather than failing the process closed.
+func envIntOr(key string, fallback int) int {
+	v, err := strconv.Atoi(os.Getenv(key))
+	if err != nil {
+		return fallback
+	}
+	return v
 }
 
 func envOr(key, fallback string) string {

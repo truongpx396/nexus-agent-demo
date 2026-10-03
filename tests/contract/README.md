@@ -9,6 +9,14 @@ The kernel ABI, the control-plane <-> data-plane `v1` shapes, and the
 run-API OpenAPI surface get their own contract tests alongside the phases
 that introduce them (Phase 2, 2, 7 respectively).
 
+`filesize_test.go` pins the repo's file-size convention (CLAUDE.md
+Conventions) mechanically: no non-test, non-generated `.go` file may exceed
+`maxGoFileLines` (500). It follows the same rule as the checks below — fail
+loudly rather than pass vacuously (`checked == 0`) — and carries its own
+fixture test proving the scanner can actually flag an oversized file.
+`lineCapExempt` is empty on purpose: split the file by responsibility within
+its package instead of listing it.
+
 `cost_metering_test.go` (Phase 4) pins `docs/build-phases.md` §4's own mitigation for
 "cost metering gets bolted onto foreground turns only": an AST check, using
 `go/packages` with full type information, that finds every call resolving

@@ -205,20 +205,20 @@ func sealFuncFor(dek crypto.DEK, tenantID, sessionID uuid.UUID) SealFunc {
 	}
 }
 
-// publishUntilDone drains the RunStarter's event channel into the broker,
-// closing the session's subscribers once the channel closes (the run has
-// ended, normally or not) — this is the only place StartRun's result is
-// consumed, so the broker's bookkeeping stays entirely inside this package.
+// publishUntilDone drains the RunStarter's event channel, publishing each
+// event via s.PublishEvent (broker.go) — the same call cmd/nexusd's
+// queueRunner.Run makes for a queued job's own events, so this package's
+// synchronous fast path and a queued run driven by an entirely different
+// process converge on identical delivery/side-effect handling. It no longer
+// closes the session's subscribers itself when the channel closes: a
+// queued run's own channel (kernelRunStarter.StartRun) now closes as soon
+// as its synchronous Kernel.Seed step finishes, long before the run's real
+// terminal event exists — closing is RelayEvent's job now, triggered by
+// observing an actual EventTerminal, wherever (and whenever) it's actually
+// published from.
 func (s *Server) publishUntilDone(tenantID, sessionID uuid.UUID, events <-chan RunEvent) {
-	defer s.broker.closeSession(sessionID)
 	for re := range events {
-		s.broker.publish(sessionID, published(re))
-		if s.Outbox != nil && s.OutboxSender != nil && re.Err == nil && re.Event.Type == store.EventApprovalRequested {
-			s.deliverApprovalNotification(sessionID, re.Event)
-		}
-		if s.Exporter != nil && re.Err == nil && re.Event.Type == store.EventTerminal {
-			s.emitTerminalSpan(tenantID, sessionID)
-		}
+		s.PublishEvent(tenantID, sessionID, re.Event, re.Err)
 	}
 }
 

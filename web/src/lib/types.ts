@@ -54,6 +54,19 @@ export interface RunEvent {
   body?: unknown;
 }
 
+// DeltaDTO, internal/surfaces/rest/broker.go -- a live, best-effort preview
+// chunk sent as its own `event: delta` SSE frame, never replayed from
+// history and never carrying an event_id/seq the way RunEvent does (that's
+// what makes it structurally distinguishable from one). Kind == "reasoning"
+// never carries text -- a signal that the model is reasoning right now,
+// never its content (kernel.Kernel.OnChunk's own doc comment).
+export interface DeltaFrame {
+  kind: "content" | "tool_use" | "reasoning";
+  text?: string;
+  tool_use_id?: string;
+  tool_name?: string;
+}
+
 // sessionSummary, internal/surfaces/rest/sessions_list.go -- one row of
 // GET /v1/sessions (the web UI's session sidebar).
 export interface SessionSummary {

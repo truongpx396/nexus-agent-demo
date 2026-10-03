@@ -268,6 +268,22 @@ type RunConfig struct {
 	Conversational bool
 }
 
+// ChunkEvent is what OnChunk receives for one live provider.Chunk. TenantID/
+// SessionID identify which run it belongs to — Kernel is a single,
+// process-wide value shared across every concurrent run (cmd/nexusd/
+// serve.go constructs exactly one), so a hook can't infer that from
+// receiver state the way a per-run type could.
+type ChunkEvent struct {
+	TenantID  uuid.UUID
+	SessionID uuid.UUID
+	Chunk     provider.Chunk
+}
+
+// OnChunk is Kernel.OnChunk's own field type — declared here rather than
+// inline, matching OnSuspend/OnDelegate's own top-level-named-type
+// convention just below.
+type OnChunk func(ev ChunkEvent)
+
 // SuspendRequest is everything OnSuspend needs to durably record an
 // approval bound to the tool_use a run just suspended on.
 type SuspendRequest struct {

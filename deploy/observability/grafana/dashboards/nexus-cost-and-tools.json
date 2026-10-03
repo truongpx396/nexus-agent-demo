@@ -5,10 +5,22 @@
   "tags": ["nexus", "cost", "tools"],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "editable": true,
   "refresh": "30s",
   "time": { "from": "now-24h", "to": "now" },
+  "links": [
+    {
+      "type": "link",
+      "title": "Nexus / Golden Signals",
+      "tooltip": "Back to tenant-wide health/reliability (completion, stuck rate, cost-ceiling breaches, approvals, taint transitions) — this board's per-tool/per-model breakdown is deliberately kept separate from that one, not a section of it.",
+      "url": "/d/nexus-golden-signals/nexus-golden-signals",
+      "icon": "dashboard",
+      "includeVars": true,
+      "keepTime": false,
+      "targetBlank": false
+    }
+  ],
   "templating": {
     "list": [
       {
@@ -99,6 +111,29 @@
         {
           "expr": "nexus_model_cost{tenant_id=~\"$tenant_id\"}",
           "legendFormat": "{{tenant_id}} / {{model_id}} ({{currency}})",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "row",
+      "title": "Agentic tools",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 29 }
+    },
+    {
+      "id": 8,
+      "type": "barchart",
+      "title": "Agentic tool call volume (web_crawl / shell / connector_fetch / web_fetch)",
+      "description": "Same nexus_tool_call_count series as \"Tool call volume by tool\" above, filtered to the four tools backed by an external agentic capability rather than a local/in-process one: platform/web_crawl@v1 (Crawl4AI, docs/agentic-capabilities.md), platform/shell@v1 (OpenSandbox-backed execution — internal/sandbox/opensandbox.go), platform/connector_fetch@v1 and platform/web_fetch@v1 (external content ingestion — both are also the tools most likely to engage the Rule-of-Two untrusted-input leg the Golden Signals board's own Taint transition rate panel tracks). No new metric needed: these tool_id values already flowed through the shared counter, this panel just calls them out on their own so agentic-feature adoption doesn't get lost among file_read/retrieve/board tool calls above.",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 30 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "orientation": "horizontal", "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "nexus_tool_call_count{tenant_id=~\"$tenant_id\", tool_id=~\"platform/(web_crawl|shell|connector_fetch|web_fetch)@.*\"}",
+          "legendFormat": "{{tenant_id}} / {{tool_id}}",
           "refId": "A"
         }
       ]

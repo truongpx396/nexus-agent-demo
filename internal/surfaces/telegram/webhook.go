@@ -93,13 +93,13 @@ type Server struct {
 	RateLimit *RateLimiter
 
 	// Lock, if set, serializes dispatch's own decide-then-act sequence and
-	// the turn it kicks off around sessionKey (surfaces.AcquireSessionLock)
-	// — cmd/nexusd wires the same *queue.SessionLock instance the
-	// crash-recovery queue worker already holds turns through
-	// (internal/queue/worker.go), closing the production-readiness
-	// review's finding that "the REST/webhook direct-call path bypasses
-	// [SessionLock] entirely." nil (every pre-this-fix caller and test)
-	// reproduces the prior unlocked behavior exactly.
+	// the turn it kicks off around sessionKey (surfaces.AcquireSessionLock),
+	// so two racing deliveries for one conversation can't each decide no
+	// session is awaiting input and both start a fresh one. Keyed on the
+	// surface's own session_key — deliberately not the session id the queue
+	// workers hold for the length of a run (see surfaces.Locker). nil (every
+	// pre-this-fix caller and test) reproduces the prior unlocked behavior
+	// exactly.
 	Lock surfaces.Locker
 }
 

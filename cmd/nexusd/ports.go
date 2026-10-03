@@ -212,27 +212,14 @@ func (p *nexusdRunCtlPort) Steer(ctx context.Context, tenantID, sessionID uuid.U
 	return err
 }
 
-// ResumeConversation adapts runctl.Control.ResumeConversation's
-// iter.Seq2[store.Event, error] generator into the same <-chan rest.RunEvent
-// shape kernelRunStarter.StartRun already returns — a run outlives the HTTP
-// request that resumed it, so this drains the generator on its own goroutine
-// exactly like StartRun's does, rather than blocking handleSteerRun on it.
-func (p *nexusdRunCtlPort) ResumeConversation(ctx context.Context, tenantID, sessionID uuid.UUID, input string) (<-chan rest.RunEvent, error) {
-	events, err := p.ctl.ResumeConversation(ctx, tenantID, sessionID, input)
-	if err != nil {
-		return nil, err
-	}
-	ch := make(chan rest.RunEvent, 8)
-	go func() {
-		defer close(ch)
-		for ev, err := range events {
-			ch <- rest.RunEvent{Event: ev, Err: err}
-			if err != nil {
-				return
-			}
-		}
-	}()
-	return ch, nil
+// ResumeConversation durably appends the human's next message and queues
+// the continuation (runctl.Control.ResumeConversation's own doc comment) —
+// it no longer drains a live generator itself; whichever worker picks up
+// the queued job publishes its own events through the Redis-backed bus
+// (cmd/nexusd's startEventBus), same as any other queued run.
+func (p *nexusdRunCtlPort) ResumeConversation(ctx context.Context, tenantID, sessionID uuid.UUID, input string) error {
+	_, err := p.ctl.ResumeConversation(ctx, tenantID, sessionID, input)
+	return err
 }
 
 func (p *nexusdRunCtlPort) TightenAutonomy(ctx context.Context, tenantID, sessionID uuid.UUID, target string) error {

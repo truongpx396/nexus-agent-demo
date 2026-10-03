@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ApiError, cancelRun, createRun, getRun, listApprovals, steerRun } from "../../lib/api";
+import { renderMarkdown } from "../../lib/markdown";
 import { addRecentRun } from "../../lib/recentRuns";
 import { useSettings } from "../../lib/settings";
 import { suggestedPrompts } from "../../lib/suggestedPrompts";
@@ -118,7 +119,7 @@ function LiveThread({ runId, embedded }: { runId: string; embedded: boolean }) {
   const { settings, isConfigured } = useSettings();
   const navigate = useNavigate();
 
-  const { events, state: connState, error: streamError, reconnect } = useRunEvents(settings, runId);
+  const { events, live, state: connState, error: streamError, reconnect } = useRunEvents(settings, runId);
   const [run, setRun] = useState<GetRunResponse | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [pendingApproval, setPendingApproval] = useState<ApprovalView | null>(null);
@@ -188,7 +189,7 @@ function LiveThread({ runId, embedded }: { runId: string; embedded: boolean }) {
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
-  }, [events.length, pendingApproval]);
+  }, [events.length, pendingApproval, live]);
 
   const timeline = buildTimeline(events);
   const thinking = isThinking(status, timeline);
@@ -272,7 +273,23 @@ function LiveThread({ runId, embedded }: { runId: string; embedded: boolean }) {
           return <MessageBubble key={item.key} item={item} />;
         })}
 
-        {thinking && (
+        {live?.kind === "content" && live.text && (
+          // Draft: this turn's own live preview, not yet the durable
+          // "content" event -- reset the instant that event lands
+          // (useRunEvents' own doc comment on `live`), so this and its
+          // confirmed MessageBubble counterpart never both show at once.
+          <div className="msg assistant draft">
+            <span className="msg-text" dangerouslySetInnerHTML={{ __html: renderMarkdown(live.text) }} />
+          </div>
+        )}
+
+        {live?.kind === "tool_use" && (
+          <div className="msg assistant thinking-row">
+            <span className="thinking-label">Calling {live.toolName || "a tool"}</span>
+          </div>
+        )}
+
+        {(live?.kind === "reasoning" || (!live && thinking)) && (
           <div className="msg assistant thinking-row">
             <span className="thinking-label">
               {awaitingTool ? `Using ${awaitingTool.toolId}` : "Thinking"}

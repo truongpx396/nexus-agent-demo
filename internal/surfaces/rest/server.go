@@ -107,20 +107,28 @@ type Server struct {
 	// every pre-Phase-13 caller and test still gets.
 	Exporter SpanEmitter
 
-	// Lock, if set, serializes handleSteerRun's own resume-vs-steer
-	// decision and the ResumeConversation turn it may kick off, keyed on
-	// the session's own session_key (falling back to its session_id when
-	// unset — see handleSteerRun's own doc comment) — the SAME
-	// *queue.SessionLock instance cmd/nexusd wires into every webhook
-	// surface's own Lock field, so a REST-driven steer and a
-	// webhook-driven resume of the SAME conversation contend for the SAME
-	// Redis key (production-readiness review: "the REST/webhook
-	// direct-call path bypasses [SessionLock] entirely"). nil (every
-	// pre-this-fix caller and test) reproduces the prior unlocked
-	// behavior exactly.
-	Lock surfaces.Locker
+	// Bus fans a durably-appended event or a live delta out to every
+	// nexusd process, not just this one (broker.go's own doc comment) — the
+	// companion this surface needs now that a run's turn loop may execute
+	// on a different process entirely (internal/queue's worker pool)
+	// than whichever process holds the client's own SSE connection. Nil is
+	// valid (every pre-this-change test, and any single-process dev run)
+	// and simply means every publish stays local to this process's own
+	// in-memory broker — exactly today's behavior.
+	Bus EventBus
 
 	broker *broker
+}
+
+// EventBus is the minimal publish surface broker.go/run_create.go need —
+// cmd/nexusd wires a *redis.Client-backed implementation (Redis Pub/Sub, a
+// single Publish call) and runs the matching subscriber loop
+// (startEventBus) that turns a remote publish back into a local
+// broker.publish/closeSession call, so run_events.go's own merge-by-seq SSE
+// logic needs zero changes regardless of which process actually produced
+// the event.
+type EventBus interface {
+	Publish(ctx context.Context, channel string, payload []byte) error
 }
 
 // MCPPort is the seam between this surface and internal/surfaces/mcp — the

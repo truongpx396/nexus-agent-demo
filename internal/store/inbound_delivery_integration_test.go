@@ -72,7 +72,7 @@ func setupInboundDeliveryEnv(t *testing.T) *pgxpool.Pool {
 }
 
 // TestClaimInboundDelivery_FirstCallerClaimsLaterCallersDoNot is the
-// mechanism migrations/0024_inbound_deliveries.sql exists for: a provider
+// mechanism migrations/0025_inbound_deliveries.sql exists for: a provider
 // redelivering the exact same (tenant, surface, delivery id) must never
 // see a second claim, no matter how many times it retries.
 func TestClaimInboundDelivery_FirstCallerClaimsLaterCallersDoNot(t *testing.T) {

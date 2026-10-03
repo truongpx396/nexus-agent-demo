@@ -2,11 +2,12 @@
 
 // Phase 10 — golden-signal dashboard (README task 10.12). Proves
 // internal/obs.ComputeGoldenSignals' SQL aggregation against real rows in
-// every table it reads: sessions (completion/stuck rate), budget_decisions
-// (cost-ceiling breach rate), cost_records (cache-read rate), approvals +
-// events (approval latency + mismatch rate), claims (unresolved in-flight
-// count). Shares setupOversightRig/insertTenant with phase5_oversight_test.go
-// (same package).
+// every table it reads: sessions (completion/stuck rate, sessions-by-surface),
+// budget_decisions (cost-ceiling breach rate), cost_records (cache-read
+// rate), approvals + events (approval latency + mismatch rate, taint-
+// transition rate), claims (unresolved in-flight count). Shares
+// setupOversightRig/insertTenant with phase5_oversight_test.go (same
+// package).
 package integration
 
 import (
@@ -30,10 +31,17 @@ func TestComputeGoldenSignals(t *testing.T) {
 	userID := uuid.New()
 
 	err := r.st.InTenantTx(ctx, r.tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		for _, id := range []uuid.UUID{completed, stuck} {
+		// completed comes in over "test" (the surface every other fixture in
+		// this file already uses), stuck over "telegram" — just enough to
+		// prove SessionsBySurface groups by the real column rather than
+		// collapsing to one bucket.
+		for _, s := range []struct {
+			id      uuid.UUID
+			surface string
+		}{{completed, "test"}, {stuck, "telegram"}} {
 			if err := store.CreateSession(ctx, tx, store.Session{
-				SessionID: id, SessionKey: id.String(), TenantID: r.tenantID,
-				SurfaceID: "test", UserID: userID, AgentID: uuid.Nil, AgentVersion: 1,
+				SessionID: s.id, SessionKey: s.id.String(), TenantID: r.tenantID,
+				SurfaceID: s.surface, UserID: userID, AgentID: uuid.Nil, AgentVersion: 1,
 				HarnessDigest: []byte("test"), DataLabel: "internal", RouteModelID: "fake",
 				AutonomyLevel: "autonomous",
 			}); err != nil {
@@ -88,10 +96,20 @@ func TestComputeGoldenSignals(t *testing.T) {
 		}
 
 		// One approval_mismatch event against that same session -> mismatch rate 1/1.
-		_, err := store.Append(ctx, tx, store.Event{
+		if _, err := store.Append(ctx, tx, store.Event{
 			EventID: uuid.New(), SessionID: completed, TenantID: r.tenantID,
 			SchemaVersion: store.CurrentSchemaVersion, Type: store.EventApprovalMismatch,
 			PayloadDigest: []byte{0}, KeyID: "test", Actor: store.ActorSystem,
+		}); err != nil {
+			return err
+		}
+
+		// One taint_transition event, also against completed (stuck's log
+		// never touches a Rule-of-Two leg) -> transition rate 1/2.
+		_, err := store.Append(ctx, tx, store.Event{
+			EventID: uuid.New(), SessionID: completed, TenantID: r.tenantID,
+			SchemaVersion: store.CurrentSchemaVersion, Type: store.EventTaintTransition,
+			PayloadDigest: []byte{1}, KeyID: "test", Actor: store.ActorSystem,
 		})
 		if err != nil {
 			return err
@@ -158,5 +176,11 @@ func TestComputeGoldenSignals(t *testing.T) {
 	}
 	if got.HeldOutGap == nil || *got.HeldOutGap != 0.05 {
 		t.Errorf("HeldOutGap = %v, want 0.05", got.HeldOutGap)
+	}
+	if got.TaintTransitionRate != 0.5 {
+		t.Errorf("TaintTransitionRate = %v, want 0.5 (1 session with a transition / 2 terminal sessions)", got.TaintTransitionRate)
+	}
+	if want := map[string]int{"test": 1, "telegram": 1}; got.SessionsBySurface["test"] != want["test"] || got.SessionsBySurface["telegram"] != want["telegram"] {
+		t.Errorf("SessionsBySurface = %+v, want %+v", got.SessionsBySurface, want)
 	}
 }

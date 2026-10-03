@@ -35,16 +35,22 @@ bug, not a nice-to-have.
 
 ## What Phase 18 does about it
 
-- `migrations/0024_inbound_deliveries.sql` + `store.ClaimInboundDelivery`: the cheap first line of
+- `migrations/0025_inbound_deliveries.sql` + `store.ClaimInboundDelivery`: the cheap first line of
   defense finding #1 asked for, wired into all three webhook surfaces via
   `surfaces.ClaimDelivery`.
-- `surfaces.Locker` + `surfaces.AcquireSessionLock`: the SAME `*queue.SessionLock` instance the
-  crash-recovery queue worker already holds turns through is now wired into every webhook surface's
-  `dispatch()` AND REST's `handleSteerRun`, closing finding #2 — a webhook-driven resume and a
-  REST-driven steer of the same conversation now contend for the same Redis key, and horizontal
-  scaling no longer widens this race.
-- The queue backend itself moved from Postgres `SKIP LOCKED` to a Redis Streams consumer group
-  (`internal/queue/redisstream.go`), a change adjacent to this review rather than one of its
-  findings — see Phase 18's own task table for the independent motivation (continuous crash
-  recovery via `XAUTOCLAIM` instead of a startup-only sweep, and removing poll-driven admin-Postgres
-  traffic from the lease/complete/fail path).
+- `surfaces.Locker` + `surfaces.AcquireSessionLock`: a `*queue.SessionLock` is wired into every
+  webhook surface's `dispatch()`, closing finding #2 for the webhooks — two racing deliveries for
+  one conversation can no longer each decide no session is awaiting input and both start a fresh
+  one. The key is the surface's own `session_key`, deliberately not the session id the queue workers
+  lock on for the length of a run: sharing it would make every delivery wait out the turn already
+  running.
+- `store.ClaimAwaitingInput`: finding #2 for REST's steer/resume path (and any other caller of
+  `ResumeConversation`) is fixed in the database, not with a lock. The `awaiting_input` → `running`
+  flip is now a single compare-and-set, where it used to be a lock-free read followed by a write —
+  concurrent callers could all pass the check, each appending a message and queuing a continuation
+  (reproduced: 2–4 of 8 concurrent callers succeeded on every run before the change). A Redis lock
+  in REST's handler was ruled out because the queue worker holds the session's lock for the whole
+  run, so it would have refused every steer of an in-flight run.
+
+The review's original proposal to move the queue to Redis Streams shipped separately and is
+unrelated to these findings.

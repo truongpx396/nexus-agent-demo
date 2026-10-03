@@ -11,7 +11,7 @@ import (
 // ClaimInboundDelivery is the cheap first line of defense a webhook-facing
 // surface (telegram/zalo/email dispatch) takes against a provider's own
 // retry behavior, before any session lookup or run is started: an INSERT
-// racing migrations/0024_inbound_deliveries.sql's UNIQUE (tenant_id,
+// racing migrations/0025_inbound_deliveries.sql's UNIQUE (tenant_id,
 // surface_id, delivery_id) constraint is the whole mechanism. The first
 // caller to reach this row for a given provider-native delivery id
 // (Telegram's update_id, Zalo's msg_id, email's Message-ID) gets

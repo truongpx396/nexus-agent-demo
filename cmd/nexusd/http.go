@@ -13,6 +13,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
+	"github.com/truongpx396/nexus-agent-demo/internal/queue"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
@@ -92,6 +93,7 @@ func handleMetrics(st *store.Store) http.HandlerFunc {
 			{"nexus_approval_mismatch_rate", "Fraction of decided approvals that resolved approval_mismatch.", func(s obs.GoldenSignals) float64 { return s.ApprovalMismatchRate }},
 			{"nexus_unresolved_inflight_claims", "In-flight claims older than the staleness window.", func(s obs.GoldenSignals) float64 { return float64(s.UnresolvedInFlightClaims) }},
 			{"nexus_telemetry_attr_drop_rate", "Fraction of telemetry attribute keys dropped by the allowlist (not measured by this endpoint; see internal/obs.DropTracker).", func(s obs.GoldenSignals) float64 { return s.TelemetryAttrDropRate }},
+			{"nexus_taint_transition_rate", "Fraction of terminal sessions with at least one taint_transition event (constitution Principle V's Rule of Two).", func(s obs.GoldenSignals) float64 { return s.TaintTransitionRate }},
 		} {
 			writeGaugeHeader(w, m.name, m.help)
 			for tenantID, signals := range signalsByTenant {
@@ -103,6 +105,13 @@ func handleMetrics(st *store.Store) http.HandlerFunc {
 		for tenantID, toolCalls := range toolCallsByTenant {
 			for toolID, n := range toolCalls {
 				fmt.Fprintf(w, "nexus_tool_call_count{tenant_id=%q,tool_id=%q} %f\n", tenantID, toolID, float64(n)) //nolint:errcheck // best-effort write to a scrape response
+			}
+		}
+
+		writeGaugeHeader(w, "nexus_sessions_by_surface", "Session count grouped by originating surface_id (web/telegram/zalo/email/cli/api).")
+		for tenantID, signals := range signalsByTenant {
+			for surfaceID, n := range signals.SessionsBySurface {
+				fmt.Fprintf(w, "nexus_sessions_by_surface{tenant_id=%q,surface_id=%q} %f\n", tenantID, surfaceID, float64(n)) //nolint:errcheck // best-effort write to a scrape response
 			}
 		}
 
@@ -140,9 +149,12 @@ func handleHealthz(w http.ResponseWriter, _ *http.Request) {
 // handleReadyz reports ready only once every dependency this process
 // actually needs to serve a request is reachable: Postgres (through
 // PgBouncer, the same pool serve() itself uses), Redis (the cost gate's
-// counter store), and signerd (the audit chain's only path to a signature —
-// runGoLive's item 2b already performs this exact check, once, at CLI time;
-// this is the same check as a live HTTP probe).
+// counter store) AND its own queue consumer group (queue.CheckReady —
+// "Redis answers a PING" isn't the same as "the job queue this process
+// enqueues into/leases from actually exists"), and signerd (the audit
+// chain's only path to a signature — runGoLive's item 2b already performs
+// this exact check, once, at CLI time; this is the same check as a live
+// HTTP probe).
 func handleReadyz(pool *pgxpool.Pool, redisClient *redis.Client, signer *audit.SignerClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
@@ -152,6 +164,10 @@ func handleReadyz(pool *pgxpool.Pool, redisClient *redis.Client, signer *audit.S
 		}
 		if err := redisClient.Ping(ctx).Err(); err != nil {
 			http.Error(w, "redis not reachable: "+err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		if err := queue.CheckReady(ctx, redisClient); err != nil {
+			http.Error(w, "queue not ready: "+err.Error(), http.StatusServiceUnavailable)
 			return
 		}
 		if _, _, err := signer.PublicKey(ctx); err != nil {

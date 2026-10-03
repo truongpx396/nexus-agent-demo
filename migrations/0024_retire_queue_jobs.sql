@@ -1,0 +1,16 @@
+-- Retires the Postgres SKIP LOCKED job queue 0011_queue.sql introduced
+-- (README task 6.1). internal/queue's Port interface now has a Redis
+-- Streams adapter (internal/queue/redis_streams.go) as its only
+-- implementation — a consumer group's own XAUTOCLAIM does what
+-- queue_jobs.lease_expires_at was written for but never actually used to
+-- reclaim an abandoned lease. Every mutation that drives kernel.Kernel's
+-- turn loop (a fresh run, a crash/orphan resume, a conversational
+-- follow-up) now goes through that adapter instead.
+--
+-- An actual DROP, not a "stop touching it and leave it behind" no-op: this
+-- is a demo repo with no production data riding on this table, and nothing
+-- in the codebase reads or writes it anymore (grep confirms). Migrations
+-- are expand-only (migrations/README.md) — this is a new, later-numbered
+-- migration, never a mutation of 0011 itself, which stays in place as the
+-- historical record of why the table existed.
+DROP TABLE IF EXISTS queue_jobs;

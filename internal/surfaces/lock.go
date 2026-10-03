@@ -6,44 +6,41 @@ import (
 )
 
 // Locker is the structural seam every conversational webhook surface
-// (telegram/zalo/email dispatch) and REST's own steer endpoint lock a
-// session's turn through — *internal/queue.SessionLock's own
-// Acquire/Release shape, duplicated here exactly like internal/queue.Locker
-// itself is duplicated in internal/delegate/spawn.go: this package must not
-// import internal/queue (a data-plane package) for the same reason
+// (telegram/zalo/email dispatch) locks a conversation's decide-then-act
+// sequence through — *internal/queue.SessionLock's own Acquire/Release
+// shape, duplicated here exactly like internal/queue.Locker itself is
+// duplicated in internal/delegate/spawn.go: this package must not import
+// internal/queue (a data-plane package) for the same reason
 // internal/surfaces/rest holds its own RunStarter instead of importing
-// kernel. cmd/nexusd wires the SAME *queue.SessionLock instance (same Redis
-// client, same TTL — lockKey's own derivation is fixed, not per-instance,
-// so two separate values constructed the same way ARE the same lock) into
-// every one of these callers, so a webhook-driven resume and a REST-driven
-// steer of the SAME session_key contend for the SAME Redis key — closing
-// the production-readiness review's own finding: "the REST/webhook
-// direct-call path bypasses [SessionLock] entirely."
+// kernel.
+//
+// The key is the surface's own session_key, not the session id the queue
+// workers lock on for the length of a run. Sharing the worker's key would
+// make every delivery for a conversation wait out the turn already running
+// for it, which is the wrong failure mode: what this lock prevents is two
+// deliveries each deciding "no session is awaiting input" at the same
+// moment and both starting a fresh one.
 type Locker interface {
 	Acquire(ctx context.Context, sessionKey string) (token string, ok bool, err error)
 	Release(ctx context.Context, sessionKey, token string) error
 }
 
-// lockAcquireAttempts/lockAcquireDelay bound how long a synchronous HTTP
+// lockAcquireAttempts/lockAcquireDelay bound how long a synchronous webhook
 // handler contends for a session's lock before giving up — the same
 // short-retry cadence internal/queue.Worker's own contended-lock path
-// already uses (worker.go: "another worker already holds this session's
-// serial slot — put the job back for a quick retry"), just retried locally
-// instead of via a queue requeue, since a webhook/REST handler has no
-// requeue mechanism of its own to fall back on and queue_jobs.payload must
-// never carry a plaintext opening message (cmd/nexusd/background.go's own
-// doc comment on why fresh/resumed turns stay off the queue). Total worst
-// case (~1.2s of sleeping across 5 attempts) stays well inside every
-// provider's own webhook response timeout.
+// uses, just retried locally: a handler holds a provider's HTTP request
+// open and has no way to hand a delivery back for later. Total worst case
+// (~1.2s of sleeping across 5 attempts) stays well inside every provider's
+// own webhook response timeout.
 const (
 	lockAcquireAttempts = 5
 	lockAcquireDelay    = 300 * time.Millisecond
 )
 
 // AcquireSessionLock retries Locker.Acquire on the fixed cadence above.
-// ok=false after every attempt means another goroutine — same process, a
-// sibling nexusd pod, or the crash-recovery queue worker — is ALREADY
-// driving this exact session_key's turn; what to do about that is the
+// ok=false after every attempt means another goroutine — same process or a
+// sibling nexusd pod — is ALREADY handling a delivery for this exact
+// session_key; what to do about that is the
 // caller's own documented choice, never this function's.
 func AcquireSessionLock(ctx context.Context, l Locker, sessionKey string) (token string, ok bool, err error) {
 	for attempt := 0; attempt < lockAcquireAttempts; attempt++ {

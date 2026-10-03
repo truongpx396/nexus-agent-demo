@@ -17,6 +17,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
+	"github.com/truongpx396/nexus-agent-demo/internal/queue"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
@@ -37,6 +38,14 @@ type Control struct {
 	System    string
 	Catalog   []provider.ToolSchema
 	MaxTurns  int
+
+	// Queue is where ResumeConversation enqueues the queue.KindConverse job
+	// that actually drives the turn loop, once it has durably appended the
+	// human's message itself (the same "append now, run the loop later, in
+	// a worker" split cmd/nexusd's kernelRunStarter uses for a fresh run's
+	// own Kernel.Seed). Nil is valid only for callers that never invoke
+	// ResumeConversation (every pre-this-change caller/test).
+	Queue queue.Port
 
 	// CatalogManifestDigest folds into a forked session's harness_digest
 	// (Fork, README task 6.11) exactly the way

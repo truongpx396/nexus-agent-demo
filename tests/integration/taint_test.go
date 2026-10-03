@@ -213,14 +213,19 @@ func TestRuleOfTwo_TaintStateSurvivesASimulatedProcessRestart(t *testing.T) {
 	}
 	ctl := &runctl.Control{Store: st, Keys: keys, Kernel: kB, System: "test", MaxTurns: 5}
 
-	events, err := ctl.ResumeConversation(ctx, tenantID, sessionID, "one more thing")
-	if err != nil {
+	// ResumeConversation itself now only durably appends the message
+	// (internal/runctl/converse.go's own doc comment) — actually
+	// continuing the turn loop is Control.Resume's job now, exactly what a
+	// queue worker does with a real queue.KindConverse job
+	// (cmd/nexusd/background.go's queueRunner.Run); called directly here
+	// since this test has no queue behind it.
+	if _, err := ctl.ResumeConversation(ctx, tenantID, sessionID, "one more thing"); err != nil {
 		t.Fatalf("ResumeConversation refused: %v", err)
 	}
 	var awaitingApproval bool
-	for ev, everr := range events {
+	for ev, everr := range ctl.Resume(ctx, tenantID, sessionID) {
 		if everr != nil {
-			t.Fatalf("ResumeConversation() yielded error: %v", everr)
+			t.Fatalf("Resume() yielded error: %v", everr)
 		}
 		if ev.Type == store.EventApprovalRequested {
 			awaitingApproval = true

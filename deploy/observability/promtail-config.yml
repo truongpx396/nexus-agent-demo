@@ -9,13 +9,17 @@
 #
 # `docker` (task 17.13): Docker service discovery over the socket
 # docker-compose.observability.yml's promtail service mounts, filtered to
-# this project's own containers via the `com.docker.compose.project` label
-# Docker Compose sets on everything it creates (every compose file in this
-# repo shares `name: nexus-agent-demo`, so the filter below catches all of
-# them) — covers nexusd/signerd run as containers (`make docker-up`, the
-# path needed for cAdvisor's own per-container resource metrics to mean
-# anything for them specifically), plus postgres/pgbouncer/redis and
-# anything else from this project that happens to be up.
+# the APP stack's containers via the `com.docker.compose.project` label
+# Docker Compose sets on everything it creates — deliberately
+# `nexus-agent-demo` (docker-compose.yml's/docker-compose.local-llm.yml's
+# own project name), NOT this file's own project
+# (`nexus-agent-observability`, a separate Docker Desktop group on
+# purpose — docker-compose.observability.yml's own header comment says why):
+# this job exists to tail the app's logs, not this stack's own — covers
+# nexusd/signerd run as containers (`make docker-up`, the path needed for
+# cAdvisor's own per-container resource metrics to mean anything for them
+# specifically), plus postgres/pgbouncer/redis and anything else from the
+# app project that happens to be up.
 #
 # Both feed the same low-cardinality-label discipline: every line is
 # zerolog JSON for nexusd/signerd (`level`/`time`/`message`, zerolog's own

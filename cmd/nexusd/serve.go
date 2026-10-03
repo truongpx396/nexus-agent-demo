@@ -95,6 +95,48 @@ func serve(ctx context.Context) error {
 	}
 	defer shutdownSpanExp()
 
+	// Profiling (docs/observability.md's "profiling" compose profile):
+	// on-demand pprof on its OWN loopback-scoped listener (never the mux
+	// below /metrics/webhooks share — obs.StartPprofServer's own doc comment
+	// says why), plus optional continuous profiling pushed to Grafana
+	// Pyroscope. Both are opt-in and no-ops when their env vars are unset —
+	// same zero-setup posture as the span exporter above. Mutex/block
+	// sampling is a single process-wide rate shared by both consumers
+	// (obs.EnableMutexBlockProfiling's own doc comment), so it's set once
+	// here regardless of which of the two ends up using it.
+	mutexFraction := envIntOr("NEXUS_PPROF_MUTEX_FRACTION", 0)
+	blockRate := envIntOr("NEXUS_PPROF_BLOCK_RATE", 0)
+	obs.EnableMutexBlockProfiling(mutexFraction, blockRate)
+
+	shutdownPprof, err := obs.StartPprofServer(envOr("NEXUS_PPROF_ADDR", ""))
+	if err != nil {
+		return fmt.Errorf("start pprof server: %w", err)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := shutdownPprof(shutdownCtx); err != nil {
+			log.Error().Err(err).Msg("nexusd: shutdown pprof server")
+		}
+	}()
+
+	profiler, err := obs.StartPyroscope(obs.PyroscopeConfig{
+		ServerAddress:       envOr("NEXUS_PYROSCOPE_ADDR", ""),
+		ApplicationName:     "nexusd",
+		Tags:                map[string]string{"git_commit": version.GitCommit},
+		MutexBlockProfiling: mutexFraction > 0 || blockRate > 0,
+	})
+	if err != nil {
+		return fmt.Errorf("start pyroscope: %w", err)
+	}
+	if profiler != nil {
+		defer func() {
+			if err := profiler.Stop(); err != nil {
+				log.Error().Err(err).Msg("nexusd: stop pyroscope profiler")
+			}
+		}()
+	}
+
 	// Sign-only audit key custody (README task 5.1): nexusd dials
 	// signerd's unix socket and can ask it to sign, never read the key
 	// itself — internal/audit/signerkey (the package that CAN read it) is
@@ -109,17 +151,26 @@ func serve(ctx context.Context) error {
 	// itself to wire platform/connector_fetch and the MCP dynamic resolver.
 	redisClient := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
 
-	// sessionLock is the SAME *queue.SessionLock shape startQueueWorkers'
-	// own internal one is (identical redisClient + TTL — SessionLock's key
-	// derivation is a fixed function of sessionKey, not per-instance state,
-	// so two separate values built this way ARE the same distributed lock)
-	// — wired directly into REST's steer endpoint and all three
-	// conversational webhook surfaces below, closing the
-	// production-readiness review's finding that "the REST/webhook
-	// direct-call path bypasses [SessionLock] entirely": a webhook-driven
-	// resume and a REST-driven steer (or two racing webhook deliveries) for
-	// the SAME session_key now contend for the SAME Redis key the
-	// crash-recovery queue worker already holds turns through.
+	// internal/queue's Redis Streams adapter (the retired Postgres
+	// queue_jobs table's successor) — built here, ahead of kernelRunStarter
+	// and runctl.Control below, both of which need to enqueue a queued run
+	// (README task 6.1's own successor) once they've durably seeded/
+	// appended it.
+	queuePort, err := queue.NewRedisStreams(ctx, redisClient)
+	if err != nil {
+		return fmt.Errorf("configure queue: %w", err)
+	}
+
+	// sessionLock serializes each conversational webhook surface's
+	// decide-then-act sequence (look up the session, then resume it or start
+	// a fresh one) and the turn it kicks off, keyed on the surface's own
+	// session_key. It is deliberately a different key from the queue
+	// workers', which lock on the session id for the whole run: sharing one
+	// would make a delivery wait out every in-flight run. Two racing
+	// deliveries for one chat would otherwise both find the session busy
+	// and each start a fresh one. SessionLock's key derivation is a fixed
+	// function of the key, so this and startQueueWorkers' own instance
+	// need not be the same value.
 	sessionLock := queue.NewSessionLock(redisClient, 30*time.Second)
 
 	vault := &connectors.Vault{Store: st, Keys: keyStore, Providers: newConnectorRegistry(), Redis: redisClient}
@@ -165,6 +216,8 @@ func serve(ctx context.Context) error {
 		maxTurns:    25,
 		memory:      memStore,
 		store:       st,
+		queue:       queuePort,
+		redisClient: redisClient,
 	}
 
 	// Wire's own doc comment: must land before the first real dispatch —
@@ -186,6 +239,7 @@ func serve(ctx context.Context) error {
 	ctl := &runctl.Control{
 		Store: st, Keys: keyStore, Chain: chain, Approvals: approvals, Inputs: inputs, Kernel: k,
 		System: starter.system, Catalog: catalog, MaxTurns: starter.maxTurns, CatalogManifestDigest: catalogManifestDigest,
+		Queue: queuePort,
 	}
 
 	// teamsSvc.Wire's own doc comment: must land before the first real
@@ -200,6 +254,12 @@ func serve(ctx context.Context) error {
 
 	srv := rest.NewServer(starter, st, keyStore, catalogManifestDigest)
 	srv.Verifier = verifier
+	// Redis Pub/Sub-backed EventBus (broker.go's own doc comment on why this
+	// surface needs one now): every publish reaches every nexusd process,
+	// not just whichever one produced it — required once a run's turn loop
+	// may execute on a different process (internal/queue's worker pool)
+	// than whichever process holds the client's own SSE connection.
+	srv.Bus = redisEventBus{client: redisClient}
 	srv.Oversight = &nexusdOversightPort{approvals: approvals, resumer: resumer, delegations: delegations, teams: teamsSvc}
 	srv.Grants = grants
 	srv.ControlPlane = newControlPlane(st, gate, chain, approvals, grants)
@@ -208,9 +268,38 @@ func serve(ctx context.Context) error {
 	srv.MCP = mcpPort
 	srv.Outbox = &surfaces.Outbox{Store: st, Keys: keyStore, Chain: chain}
 	srv.OutboxSender = logSender{}
-	srv.Lock = sessionLock
 
 	srv.Exporter = spanExp
+
+	// Live typing-style preview over SSE, decoupled from the durable event
+	// path: k.OnChunk fires as the current turn's provider stream decodes
+	// each chunk (kernel/turns.go), well before that turn's own
+	// accumulation/classification/append — srv.PublishDelta fans it out to
+	// whichever clients are subscribed to that session's /v1/runs/{id}/events
+	// stream right now, and drops it silently for anyone who isn't (same
+	// non-blocking, best-effort delivery the durable path's own
+	// broker.publish already has). Nothing about cost reconcile, tool
+	// dispatch, or the audit chain reads this — those still only ever see
+	// the complete, accumulated turn, exactly as before this was wired.
+	k.OnChunk = func(ev kernel.ChunkEvent) {
+		switch ev.Chunk.Kind {
+		case provider.ChunkContent:
+			srv.PublishDelta(ev.SessionID, rest.DeltaDTO{Kind: "content", Text: ev.Chunk.Text})
+		case provider.ChunkToolUse:
+			srv.PublishDelta(ev.SessionID, rest.DeltaDTO{Kind: "tool_use", ToolUseID: ev.Chunk.ToolUseID, ToolName: ev.Chunk.ToolName})
+		case provider.ChunkReasoning:
+			// No Text/Opaque on this signal at all (kernel.Kernel.OnChunk's
+			// own doc comment already strips it before this closure ever
+			// sees it) — a client learns only that the model is reasoning
+			// right now, the same "event visible, body redacted" shape
+			// EventThought's own durable record has.
+			srv.PublishDelta(ev.SessionID, rest.DeltaDTO{Kind: "reasoning"})
+		case provider.ChunkUsage, provider.ChunkDone:
+			// Turn-level bookkeeping a client has no use for as a live
+			// preview — the durable EventTerminal/cost records still carry
+			// them.
+		}
+	}
 
 	stopAnchor := startAnchorLoop(ctx, st, chain)
 	defer stopAnchor()
@@ -221,8 +310,11 @@ func serve(ctx context.Context) error {
 	stopIdleConversationSweep := startIdleConversationSweepLoop(ctx, ctl)
 	defer stopIdleConversationSweep()
 
-	stopWorkers := startQueueWorkers(ctx, st, redisClient, sessionLock, ctl, delegations, teamsSvc)
+	stopWorkers := startQueueWorkers(ctx, redisClient, queuePort, srv, ctl, delegations, teamsSvc)
 	defer stopWorkers()
+
+	stopEventBus := startEventBus(ctx, redisClient, srv)
+	defer stopEventBus()
 
 	// Phase 11: four more thin surfaces over the same kernel (README §11) —
 	// each gets the SAME session-creation-then-StartRun sequence REST uses,
@@ -235,9 +327,9 @@ func serve(ctx context.Context) error {
 	// (surfaces_phase11.go) — passed to both the Starter: and Resume:
 	// fields below, so a fresh message and a resumed one drive the SAME
 	// underlying *runctl.Control/*kernelRunStarter pair.
-	telegramAdapter := telegramStarterAdapter{k: starter, ctl: ctl}
-	zaloAdapter := zaloStarterAdapter{k: starter, ctl: ctl}
-	emailAdapter := emailStarterAdapter{k: starter, ctl: ctl}
+	telegramAdapter := telegramStarterAdapter{k: starter, ctl: ctl, redisClient: redisClient}
+	zaloAdapter := zaloStarterAdapter{k: starter, ctl: ctl, redisClient: redisClient}
+	emailAdapter := emailStarterAdapter{k: starter, ctl: ctl, redisClient: redisClient}
 
 	telegramSrv := &telegram.Server{
 		Store: st, KeyStore: keyStore, Starter: telegramAdapter, Resume: telegramAdapter, Channels: channels,

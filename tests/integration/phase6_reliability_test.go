@@ -6,12 +6,13 @@
 // runctl machinery those three artifacts sit alongside. Shares the
 // package's existing helpers (insertTenant, listEventsDirect) but builds
 // its own environment (setupPhase6Env) because, unlike
-// setupPostgresAndPgBouncer, internal/queue's Postgres adapter needs an
-// ADMIN pool (RLS-bypassing, exactly like cmd/nexusd's own
-// listTenantIDs/runErase) and internal/queue's SessionLock needs a real
-// Redis — the same pairing tests/integration/cost_ceiling_test.go's own
-// setupCostEnv already establishes precedent for, just also keeping the
-// admin pool open rather than closing it after migrating.
+// setupPostgresAndPgBouncer, this file keeps an ADMIN pool open (not just
+// used to migrate then closed) — some of its non-queue tests still need
+// RLS-bypassing access, exactly like cmd/nexusd's own listTenantIDs/
+// runErase — and internal/queue's SessionLock plus its own Redis Streams
+// Port adapter (redis_streams.go) both need a real Redis, the same pairing
+// tests/integration/cost_ceiling_test.go's own setupCostEnv already
+// establishes precedent for.
 package integration
 
 import (
@@ -302,10 +303,13 @@ func repeatedToolUseScripts(n int, toolName, input string) []fake.Script {
 
 // --- 6.1/6.2: the queue + session lock ---
 
-func TestQueue_SkipLockedNeverDoubleLeases(t *testing.T) {
+func TestQueue_RedisStreamsNeverDoubleLeases(t *testing.T) {
 	rig := newPhase6Rig(t)
 	ctx := context.Background()
-	port := queue.NewPostgres(rig.env.adminPool)
+	port, err := queue.NewRedisStreams(ctx, rig.env.redisClient)
+	if err != nil {
+		t.Fatalf("new redis streams port: %v", err)
+	}
 
 	sessionID := uuid.New()
 	rig.createSession(t, sessionID, uuid.New(), "supervised")
@@ -333,14 +337,69 @@ func TestQueue_SkipLockedNeverDoubleLeases(t *testing.T) {
 	wg.Wait()
 
 	if leased != 1 {
-		t.Fatalf("leased = %d across %d concurrent workers racing ONE job, want exactly 1 (SKIP LOCKED must prevent a double lease)", leased, workers)
+		t.Fatalf("leased = %d across %d concurrent workers racing ONE job, want exactly 1 (a Redis Streams consumer group must prevent a double lease)", leased, workers)
+	}
+}
+
+// TestQueue_ReclaimsAbandonedLeaseAfterIdleTimeout proves a guarantee the
+// retired Postgres adapter's own lease_expires_at column was written for
+// but never actually implemented (it was set on every Lease and read
+// nowhere) — a job leased by a worker that then vanishes (crashed
+// mid-Runner.Run, never Completed/Failed) becomes reclaimable, via
+// XAutoClaim, once it has sat idle past leaseFor. Before that, nobody else
+// can touch it.
+func TestQueue_ReclaimsAbandonedLeaseAfterIdleTimeout(t *testing.T) {
+	rig := newPhase6Rig(t)
+	ctx := context.Background()
+	port, err := queue.NewRedisStreams(ctx, rig.env.redisClient)
+	if err != nil {
+		t.Fatalf("new redis streams port: %v", err)
+	}
+
+	sessionID := uuid.New()
+	rig.createSession(t, sessionID, uuid.New(), "supervised")
+	job, err := port.Enqueue(ctx, queue.Job{TenantID: rig.tenantID, SessionID: sessionID, SessionKey: sessionID.String(), Kind: queue.KindResume})
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	const leaseFor = 100 * time.Millisecond
+	first, ok, err := port.Lease(ctx, "w1", leaseFor)
+	if err != nil || !ok {
+		t.Fatalf("first lease: ok=%v err=%v", ok, err)
+	}
+	if first.JobID != job.JobID {
+		t.Fatalf("first lease got job %s, want %s", first.JobID, job.JobID)
+	}
+
+	// w1 never Completes/Fails it — the same shape a worker that crashed
+	// mid-Runner.Run leaves behind. Nothing reclaims it before leaseFor's
+	// idle timeout actually elapses.
+	if _, ok, err := port.Lease(ctx, "w2", leaseFor); err != nil || ok {
+		t.Fatalf("lease before idle timeout elapsed: ok=%v err=%v, want ok=false", ok, err)
+	}
+
+	time.Sleep(2 * leaseFor)
+
+	reclaimed, ok, err := port.Lease(ctx, "w2", leaseFor)
+	if err != nil || !ok {
+		t.Fatalf("lease after idle timeout: ok=%v err=%v, want ok=true (XAutoClaim should have reclaimed it)", ok, err)
+	}
+	if reclaimed.JobID != job.JobID {
+		t.Fatalf("reclaimed job = %s, want %s", reclaimed.JobID, job.JobID)
+	}
+	if reclaimed.Attempts != 2 {
+		t.Fatalf("reclaimed job attempts = %d, want 2 (this is its second delivery)", reclaimed.Attempts)
 	}
 }
 
 func TestQueue_WorkerCompletesAndFailsRealJobs(t *testing.T) {
 	rig := newPhase6Rig(t)
 	ctx := context.Background()
-	port := queue.NewPostgres(rig.env.adminPool)
+	port, err := queue.NewRedisStreams(ctx, rig.env.redisClient)
+	if err != nil {
+		t.Fatalf("new redis streams port: %v", err)
+	}
 
 	sessionID := uuid.New()
 	rig.createSession(t, sessionID, uuid.New(), "supervised")

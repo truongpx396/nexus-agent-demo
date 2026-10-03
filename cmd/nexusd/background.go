@@ -17,6 +17,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/queue"
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
+	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
 	"github.com/truongpx396/nexus-agent-demo/internal/teams"
 )
 
@@ -188,43 +189,41 @@ func listTenantIDs(ctx context.Context) ([]uuid.UUID, error) {
 
 // startQueueWorkers wires internal/queue's worker pool (README tasks
 // 6.1-6.2) to internal/runctl.Control.Resume: the durable, crash-recoverable
-// path a session's turn loop continues through after this process (or a
-// prior one) died mid-turn. It also sweeps for sessions this process's own
-// PREVIOUS life left stuck in "running" (session status is written
-// synchronously at every turn boundary; a row still reading "running" at
-// startup can only mean the process that was driving it never got to write
-// anything past that point) and enqueues a resume job for each — the
-// concrete trigger behind README §6's demo line: "kill -9 the worker
-// mid-tool-call -> the job re-queues and resumes from the checkpoint."
+// path a session's turn loop continues through, whether it's continuing
+// after this process (or a prior one) died mid-turn (queue.KindResume), or
+// picking up a fresh run/conversational follow-up some HTTP-handling
+// process already seeded/appended and enqueued (queue.KindStart/
+// KindConverse — kernelRunStarter.StartRun, internal/runctl.Control.
+// ResumeConversation). By the time a worker leases any of these three, a
+// fresh-started, crash-recovered, and human-followed-up session all look
+// identical — their own seed/message event is already durably in the
+// Postgres event log — so every Kind dispatches through the same
+// ctl.Resume call; the switch below exists purely so logs/metrics can still
+// tell them apart.
 //
-// Deliberately NOT wired here: a fresh interactive run
-// (POST /v1/runs, kernelRunStarter.StartRun) stays on its own existing
-// synchronous fast path, never enqueued — a queued job's payload carries no
-// sealed envelope the way events.payload does (migrations/0011_queue.sql's
-// own doc comment, still true of both queue.Port adapters below), so it
-// must never carry a plaintext opening message. Recovering an orphaned
-// FRESH run (one that never got far enough to suspend or checkpoint) is
-// exactly what the sweep below already covers: its status is "running"
-// either way.
-func startQueueWorkers(ctx context.Context, st *store.Store, redisClient *redis.Client, lock *queue.SessionLock, ctl *runctl.Control, delegations *delegate.Delegations, teamsSvc *teams.Service) (stop func()) {
+// It also sweeps for sessions this process's own PREVIOUS life left stuck
+// in "running" (session status is written synchronously at every turn
+// boundary; a row still reading "running" at startup can only mean the
+// process that was driving it never got to write anything past that point)
+// and enqueues a resume job for each — the concrete trigger behind README
+// §6's demo line: "kill -9 the worker mid-tool-call -> the job re-queues
+// and resumes from the checkpoint." This sweep needs no changes for
+// KindStart/KindConverse: kernel.Kernel.Seed's own updateStatus call (the
+// same one Run always had) is what flips a session from "queued" to
+// "running" in the first place, so a session only ever reaches "running"
+// once it durably has at least its seed/message event — recovering an
+// orphaned FRESH run is already exactly what this sweep covers.
+func startQueueWorkers(ctx context.Context, redisClient *redis.Client, port queue.Port, srv *rest.Server, ctl *runctl.Control, delegations *delegate.Delegations, teamsSvc *teams.Service) (stop func()) {
 	adminDSN := envOr("NEXUS_ADMIN_DATABASE_URL", envOr("NEXUS_MIGRATE_DATABASE_URL", defaultMigrateDSN))
 	adminPool, err := pgxpool.New(ctx, adminDSN)
 	if err != nil {
-		log.Error().Err(err).Msg("nexusd: queue: connect as admin failed; the worker pool is NOT running (fresh runs still work; crash recovery does not)")
+		log.Error().Err(err).Msg("nexusd: queue: connect as admin failed; the worker pool is NOT running (fresh runs will be seeded but never actually driven, and crash recovery does not happen)")
 		return func() {}
 	}
 
-	port, err := newQueuePort(ctx, adminPool, redisClient)
-	if err != nil {
-		log.Error().Err(err).Msg("nexusd: queue: configure backend failed; the worker pool is NOT running (fresh runs still work; crash recovery does not)")
-		adminPool.Close()
-		return func() {}
-	}
-	runner := &queueRunner{ctl: ctl, delegations: delegations, teams: teamsSvc}
+	lock := queue.NewSessionLock(redisClient, 30*time.Second)
+	runner := &queueRunner{ctl: ctl, delegations: delegations, teams: teamsSvc, srv: srv}
 
-	// recoverOrphanedSessions still queries Postgres directly (sessions
-	// live there regardless of which queue backend carries the resume
-	// job) and enqueues through the Port interface — identical either way.
 	recoverOrphanedSessions(ctx, adminPool, port)
 
 	numWorkers := 2
@@ -239,32 +238,6 @@ func startQueueWorkers(ctx context.Context, st *store.Store, redisClient *redis.
 	return func() {
 		cancel()
 		adminPool.Close()
-	}
-}
-
-// newQueuePort selects the queue backend (docs/build-phases.md Phase 18).
-// NEXUS_QUEUE_BACKEND=redis (the default, unset reproduces it) wires
-// internal/queue.RedisStream — consumer-group leasing, continuous
-// XAUTOCLAIM-based reclaim of an abandoned job from ANY dead consumer
-// rather than only the sweep below at THIS process's own next startup, and
-// no poll-driven admin-Postgres traffic for the lease/complete/fail path
-// itself. NEXUS_QUEUE_BACKEND=postgres keeps the original SKIP LOCKED
-// adapter (postgres.go) wired instead — never removed, still exercised
-// directly by tests/integration/phase6_reliability_test.go, and a
-// one-env-var rollback if the Redis backend ever needs to be ruled out
-// against a live deployment.
-func newQueuePort(ctx context.Context, adminPool *pgxpool.Pool, redisClient *redis.Client) (queue.Port, error) {
-	switch backend := envOr("NEXUS_QUEUE_BACKEND", "redis"); backend {
-	case "redis":
-		p := queue.NewRedisStream(redisClient)
-		if err := p.EnsureGroup(ctx); err != nil {
-			return nil, fmt.Errorf("ensure redis stream consumer group: %w", err)
-		}
-		return p, nil
-	case "postgres":
-		return queue.NewPostgres(adminPool), nil
-	default:
-		return nil, fmt.Errorf("unknown NEXUS_QUEUE_BACKEND %q (want \"redis\" or \"postgres\")", backend)
 	}
 }
 
@@ -299,23 +272,34 @@ func recoverOrphanedSessions(ctx context.Context, adminPool *pgxpool.Pool, port 
 }
 
 // queueRunner implements queue.Runner over internal/runctl.Control.Resume —
-// the only Kind this demo's queue ever carries; see startQueueWorkers' own
-// doc comment for why fork/steer are driven synchronously via REST instead
-// of through the queue.
+// every Kind this queue carries dispatches through it identically (see
+// startQueueWorkers' own doc comment); Fork/Cancel/TightenAutonomy/Steer
+// are driven synchronously via REST instead of through the queue, since
+// none of them drive the turn loop themselves.
 type queueRunner struct {
 	ctl         *runctl.Control
 	delegations *delegate.Delegations
 	teams       *teams.Service
+
+	// srv publishes every event this job's own turn loop produces — the
+	// same PublishEvent call internal/surfaces/rest's own synchronous fast
+	// path (publishUntilDone) makes, so an SSE client sees a queued run's
+	// real output (and its eventual EventTerminal) regardless of which
+	// process's worker actually drove it, and approval-outbox delivery/
+	// terminal-span emission fire exactly once either way.
+	srv *rest.Server
 }
 
 func (r *queueRunner) Run(ctx context.Context, job queue.Job) error {
 	var lastErr error
 	for ev, err := range r.ctl.Resume(ctx, job.TenantID, job.SessionID) {
+		if r.srv != nil {
+			r.srv.PublishEvent(job.TenantID, job.SessionID, ev, err)
+		}
 		if err != nil {
 			lastErr = err
 			break
 		}
-		_ = ev
 	}
 	if lastErr != nil {
 		return lastErr

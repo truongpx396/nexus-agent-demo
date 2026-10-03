@@ -59,14 +59,39 @@ func newProvider() (provider.Provider, error) {
 		// NEXUS_PROVIDER=fake an honest zero-setup interactive default
 		// rather than a single-shot demo that silently breaks after one
 		// reply.
-		return repeatingFakeProvider{script: fake.Script{Chunks: []fake.ChunkSpec{
-			{Kind: "content", Text: "Hello from the Phase 2 kernel loop demo."},
-			{Kind: "usage", InputUncached: 120, OutputTokens: 18},
-			{Kind: "done", Done: "stop"},
-		}}}, nil
+		return repeatingFakeProvider{script: fake.Script{Chunks: demoContentChunks(
+			"Hello from the Phase 2 kernel loop demo.",
+		)}}, nil
 	default:
 		return nil, fmt.Errorf("unknown NEXUS_PROVIDER %q (want fake, anthropic, or litellm)", os.Getenv("NEXUS_PROVIDER"))
 	}
+}
+
+// demoContentChunks splits text into one fake.ChunkSpec per word (a space
+// kept on the front of every word but the first, so re-joining with no
+// separator reproduces text exactly) plus the trailing usage/done pair —
+// fake.Script.Chunks is fully author-controlled (fake.go's own doc comment:
+// one ChunkSpec in, one provider.Chunk out, no auto-splitting anywhere in
+// that package), so a single-ChunkSpec script is a choice this call site
+// made, not something fake.Provider forces. Splitting it here is what lets
+// the zero-setup NEXUS_PROVIDER=fake default actually exercise
+// kernel.Kernel.OnChunk's live per-chunk relay (serve.go) instead of
+// delivering the whole reply as one chunk — every internal/provider/fake
+// correctness test keeps authoring its own Script and is untouched by this.
+func demoContentChunks(text string) []fake.ChunkSpec {
+	words := strings.Fields(text)
+	chunks := make([]fake.ChunkSpec, 0, len(words)+2)
+	for i, w := range words {
+		if i > 0 {
+			w = " " + w
+		}
+		chunks = append(chunks, fake.ChunkSpec{Kind: "content", Text: w})
+	}
+	chunks = append(chunks,
+		fake.ChunkSpec{Kind: "usage", InputUncached: 120, OutputTokens: 18},
+		fake.ChunkSpec{Kind: "done", Done: "stop"},
+	)
+	return chunks
 }
 
 // repeatingFakeProvider adapts fake.Provider (a finite, once-through scripted

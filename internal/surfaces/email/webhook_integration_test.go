@@ -298,7 +298,7 @@ func TestServer_NotificationPayload_DecryptsContentEvent(t *testing.T) {
 }
 
 // TestHandleWebhook_DuplicateMessageIDAcknowledgedWithoutASecondRun is
-// migrations/0024_inbound_deliveries.sql's own reason to exist
+// migrations/0025_inbound_deliveries.sql's own reason to exist
 // (production-readiness review: "Telegram/Zalo webhooks retry by design"
 // with nothing deduping that — the same class of provider-retry applies to
 // an inbound-parse email webhook): the SAME Message-ID delivered twice —

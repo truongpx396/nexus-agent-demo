@@ -271,7 +271,10 @@ are binding in addition to Principle V:
   session key (per-session serial, cross-session concurrent). Sandboxes MUST come
   from a warm pool with hard TTLs, reclamation, and per-tenant caps. Provider TPM
   MUST be handled via per-tenant rate limits, connection pooling, failover-as-
-  capacity, and cached prefixes.
+  capacity, and cached prefixes. This principle is silent on implementation by
+  design — "durable" has meant a Postgres `SKIP LOCKED` table and now means a
+  Redis Streams consumer group (`internal/queue/redis_streams.go`) with AOF
+  persistence; either satisfies it, and neither is what the principle is about.
 - **Memory is files first**: Start file-based, inject immutably at session start
   (updates take effect next session), scope per tenant with retention limits, and
   scan for injection/exfiltration before injecting. A vector DB / knowledge graph
