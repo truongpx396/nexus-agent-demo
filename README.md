@@ -90,7 +90,7 @@ flowchart TB
     end
 
     subgraph DP["Data plane"]
-        Q[(Queue port<br/>Postgres SKIP LOCKED)]
+        Q[(Queue port<br/>Redis Streams)]
         W[Worker pool + session-key lock]
         K[[Kernel loop<br/>classify · dispatch · pair · terminate]]
         H[Harness: prompt zones - tools - memory<br/>skills - hooks - cost - reliability]
@@ -404,6 +404,7 @@ This repo's own supplementary docs:
 |---|---|
 | [`docs/build-phases.md`](docs/build-phases.md) | The pattern coverage map, the full build plan (Phase 0 through Phase 13), the effort estimate, and the risk register — split out of this file, linked from §2. |
 | [`docs/production-readiness-review.md`](docs/production-readiness-review.md) | The audit that found F1–F15 and drove Phase 13. |
+| [`docs/webhook-concurrency-review.md`](docs/webhook-concurrency-review.md) | The follow-up audit of Phase 11's conversational webhook surfaces that found `SessionLock` wired into only the async queue worker and no inbound delivery dedup, and drove Phase 18. |
 | [`docs/constitution.md`](docs/constitution.md) | The nine principles, copied in verbatim (Phase 0, task 0.6) as the review checklist. |
 | [`docs/go-live.md`](docs/go-live.md) | The go-live checklist and what `nexusd go-live` automates versus what stays a manual review. |
 | [`docs/local-llm.md`](docs/local-llm.md) | Ollama + LiteLLM + Langfuse: a local model wired into `internal/provider.Provider`, and genuine per-run agent tracing (`internal/obs.Tracer`, `kernel/loop.go`) in a self-hosted Langfuse — the §5 deferred-adapters row, actually wired. |
