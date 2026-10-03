@@ -91,16 +91,6 @@ type Server struct {
 	HTTPClient *http.Client
 
 	RateLimit *RateLimiter
-
-	// Lock, if set, serializes dispatch's own decide-then-act sequence and
-	// the turn it kicks off around sessionKey (surfaces.AcquireSessionLock),
-	// so two racing deliveries for one conversation can't each decide no
-	// session is awaiting input and both start a fresh one. Keyed on the
-	// surface's own session_key — deliberately not the session id the queue
-	// workers hold for the length of a run (see surfaces.Locker). nil (every
-	// pre-this-fix caller and test) reproduces the prior unlocked behavior
-	// exactly.
-	Lock surfaces.Locker
 }
 
 // Handler returns the http.Handler cmd/nexusd mounts at
@@ -188,16 +178,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 // redelivery of an update this surface already accepted is acknowledged
 // (uuid.Nil, nil) without ever reaching the session lookup below, closing
 // the production-readiness review's finding that "Telegram/Zalo webhooks
-// retry by design" and nothing dedupes that. A freshly-claimed delivery
-// then acquires s.Lock (if set) around the ENTIRE decide-then-act sequence
-// that follows — including the turn dispatch kicks off, which runs to
-// completion in its own goroutine well after this function returns
-// (startRun/resumeRun's own doc comments), which is why release is a
-// closure threaded through to drainAndNotify rather than a plain defer
-// here. Lock contention (ok=false) means another goroutine is ALREADY
-// driving this exact session_key's turn; this delivery is logged and
-// dropped rather than risk a second concurrent turn for it — a rare,
-// bounded, logged trade-off, not a silent one.
+// retry by design" and nothing dedupes that. A freshly-claimed delivery proceeds to the session lookup below.
 //
 // Session lookup and resume-vs-fresh: looks up sessionKey's most recent
 // session (store.GetSessionByKey) and resumes it via
@@ -217,23 +198,6 @@ func (s *Server) dispatch(ctx context.Context, tenantID, userID uuid.UUID, sessi
 		return uuid.Nil, nil
 	}
 
-	release := func() {}
-	if s.Lock != nil {
-		token, ok, lerr := surfaces.AcquireSessionLock(ctx, s.Lock, sessionKey)
-		if lerr != nil {
-			return uuid.Nil, fmt.Errorf("acquire session lock: %w", lerr)
-		}
-		if !ok {
-			log.Warn().Any("tenant_id", tenantID).Str("session_key", sessionKey).Msg("telegram: session lock contended; dropping this delivery rather than risk a concurrent turn")
-			return uuid.Nil, nil
-		}
-		release = func() {
-			if rerr := s.Lock.Release(context.Background(), sessionKey, token); rerr != nil {
-				log.Error().Err(rerr).Str("session_key", sessionKey).Msg("telegram: session lock release failed")
-			}
-		}
-	}
-
 	if s.Resume != nil {
 		var sess store.Session
 		var found bool
@@ -243,14 +207,13 @@ func (s *Server) dispatch(ctx context.Context, tenantID, userID uuid.UUID, sessi
 			return derr
 		})
 		if err != nil {
-			release()
 			return uuid.Nil, fmt.Errorf("look up session for %s: %w", sessionKey, err)
 		}
 		if found && sess.Status == store.SessionStatusAwaitingInput {
-			return s.resumeRun(ctx, tenantID, sess.SessionID, chatID, input, release)
+			return s.resumeRun(ctx, tenantID, sess.SessionID, chatID, input)
 		}
 	}
-	return s.startRun(ctx, tenantID, userID, sessionKey, chatID, input, release)
+	return s.startRun(ctx, tenantID, userID, sessionKey, chatID, input)
 }
 
 // startRun mirrors internal/surfaces/rest's handleCreateRun (session + DEK
@@ -264,7 +227,7 @@ func (s *Server) dispatch(ctx context.Context, tenantID, userID uuid.UUID, sessi
 // Conversational's pause-not-terminate semantics mean the NEXT message
 // from this chat can find this session again via that key while it's
 // awaiting_input).
-func (s *Server) startRun(ctx context.Context, tenantID, userID uuid.UUID, sessionKey, chatID, input string, release func()) (uuid.UUID, error) {
+func (s *Server) startRun(ctx context.Context, tenantID, userID uuid.UUID, sessionKey, chatID, input string) (uuid.UUID, error) {
 	route := provider.Route(provider.DataLabelInternal, provider.DifficultySimple)
 	sessionID := uuid.New()
 	digest := harness.Digest(harness.Config{
@@ -296,7 +259,6 @@ func (s *Server) startRun(ctx context.Context, tenantID, userID uuid.UUID, sessi
 		})
 	})
 	if err != nil {
-		release()
 		return uuid.Nil, fmt.Errorf("create session: %w", err)
 	}
 
@@ -309,10 +271,9 @@ func (s *Server) startRun(ctx context.Context, tenantID, userID uuid.UUID, sessi
 	}
 	events, err := s.Starter.StartRun(context.Background(), req) // a run outlives this webhook request
 	if err != nil {
-		release()
 		return uuid.Nil, fmt.Errorf("start run: %w", err)
 	}
-	go s.drainAndNotify(tenantID, sessionID, chatID, events, release)
+	go s.drainAndNotify(tenantID, sessionID, chatID, events)
 	return sessionID, nil
 }
 
@@ -322,13 +283,12 @@ func (s *Server) startRun(ctx context.Context, tenantID, userID uuid.UUID, sessi
 // which rehydrates the session from its durable log itself; nothing here
 // needs to reconstruct RunConfig the way startRun's own DEK-minting/
 // harness-digest dance does.
-func (s *Server) resumeRun(ctx context.Context, tenantID, sessionID uuid.UUID, chatID, input string, release func()) (uuid.UUID, error) {
+func (s *Server) resumeRun(ctx context.Context, tenantID, sessionID uuid.UUID, chatID, input string) (uuid.UUID, error) {
 	events, err := s.Resume.ResumeConversation(context.Background(), tenantID, sessionID, input) // a run outlives this webhook request
 	if err != nil {
-		release()
 		return uuid.Nil, fmt.Errorf("resume conversation: %w", err)
 	}
-	go s.drainAndNotify(tenantID, sessionID, chatID, events, release)
+	go s.drainAndNotify(tenantID, sessionID, chatID, events)
 	return sessionID, nil
 }
 
@@ -339,8 +299,7 @@ func (s *Server) resumeRun(ctx context.Context, tenantID, sessionID uuid.UUID, c
 // EventContent through the shared outbox — a human must actually see
 // both, unlike every other event this surface has no live SSE subscriber
 // to fan out to anyway.
-func (s *Server) drainAndNotify(tenantID, sessionID uuid.UUID, chatID string, events <-chan RunEvent, release func()) {
-	defer release()
+func (s *Server) drainAndNotify(tenantID, sessionID uuid.UUID, chatID string, events <-chan RunEvent) {
 	if s.Outbox == nil {
 		for range events {
 			// still drain fully: the channel must be closed by the run's own goroutine, and a receiver has to be here to let that happen

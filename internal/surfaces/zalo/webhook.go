@@ -86,16 +86,6 @@ type Server struct {
 	// comment; nil (every pre-continuity caller) always takes the
 	// always-fresh-session path.
 	Resume Resumer
-
-	// Lock, if set, serializes dispatch's own decide-then-act sequence and
-	// the turn it kicks off around sessionKey (surfaces.AcquireSessionLock),
-	// so two racing deliveries for one conversation can't each decide no
-	// session is awaiting input and both start a fresh one. Keyed on the
-	// surface's own session_key — deliberately not the session id the queue
-	// workers hold for the length of a run (see surfaces.Locker). nil (every
-	// pre-this-fix caller and test) reproduces the prior unlocked behavior
-	// exactly.
-	Lock surfaces.Locker
 }
 
 func (s *Server) Handler() http.Handler {
@@ -192,16 +182,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 // redelivery of an event this surface already accepted is acknowledged
 // (uuid.Nil, nil) without ever reaching the session lookup below, closing
 // the production-readiness review's finding that "Telegram/Zalo webhooks
-// retry by design" and nothing dedupes that. A freshly-claimed delivery
-// then acquires s.Lock (if set) around the ENTIRE decide-then-act sequence
-// that follows — including the turn dispatch kicks off, which runs to
-// completion in its own goroutine well after this function returns
-// (startRun/resumeRun's own doc comments), which is why release is a
-// closure threaded through to drainAndNotify rather than a plain defer
-// here. Lock contention (ok=false) means another goroutine is ALREADY
-// driving this exact session_key's turn; this delivery is logged and
-// dropped rather than risk a second concurrent turn for it — a rare,
-// bounded, logged trade-off, not a silent one.
+// retry by design" and nothing dedupes that. A freshly-claimed delivery proceeds to the session lookup below.
 //
 // Otherwise mirrors internal/surfaces/telegram's own (its doc comment) —
 // duplicated per this codebase's established cross-surface idiom.
@@ -215,23 +196,6 @@ func (s *Server) dispatch(ctx context.Context, tenantID, userID uuid.UUID, sessi
 		return uuid.Nil, nil
 	}
 
-	release := func() {}
-	if s.Lock != nil {
-		token, ok, lerr := surfaces.AcquireSessionLock(ctx, s.Lock, sessionKey)
-		if lerr != nil {
-			return uuid.Nil, fmt.Errorf("acquire session lock: %w", lerr)
-		}
-		if !ok {
-			log.Warn().Any("tenant_id", tenantID).Str("session_key", sessionKey).Msg("zalo: session lock contended; dropping this delivery rather than risk a concurrent turn")
-			return uuid.Nil, nil
-		}
-		release = func() {
-			if rerr := s.Lock.Release(context.Background(), sessionKey, token); rerr != nil {
-				log.Error().Err(rerr).Str("session_key", sessionKey).Msg("zalo: session lock release failed")
-			}
-		}
-	}
-
 	if s.Resume != nil {
 		var sess store.Session
 		var found bool
@@ -241,21 +205,20 @@ func (s *Server) dispatch(ctx context.Context, tenantID, userID uuid.UUID, sessi
 			return derr
 		})
 		if err != nil {
-			release()
 			return uuid.Nil, fmt.Errorf("look up session for %s: %w", sessionKey, err)
 		}
 		if found && sess.Status == store.SessionStatusAwaitingInput {
-			return s.resumeRun(ctx, tenantID, sess.SessionID, recipientID, input, release)
+			return s.resumeRun(ctx, tenantID, sess.SessionID, recipientID, input)
 		}
 	}
-	return s.startRun(ctx, tenantID, userID, sessionKey, recipientID, input, release)
+	return s.startRun(ctx, tenantID, userID, sessionKey, recipientID, input)
 }
 
 // startRun mirrors internal/surfaces/telegram's own (its doc comment) —
 // duplicated per this codebase's established cross-surface idiom.
 // recipientID is the Zalo user id this run's own outbox delivery (if any)
 // sends back to.
-func (s *Server) startRun(ctx context.Context, tenantID, userID uuid.UUID, sessionKey, recipientID, input string, release func()) (uuid.UUID, error) {
+func (s *Server) startRun(ctx context.Context, tenantID, userID uuid.UUID, sessionKey, recipientID, input string) (uuid.UUID, error) {
 	route := provider.Route(provider.DataLabelInternal, provider.DifficultySimple)
 	sessionID := uuid.New()
 	digest := harness.Digest(harness.Config{
@@ -287,7 +250,6 @@ func (s *Server) startRun(ctx context.Context, tenantID, userID uuid.UUID, sessi
 		})
 	})
 	if err != nil {
-		release()
 		return uuid.Nil, fmt.Errorf("create session: %w", err)
 	}
 
@@ -300,29 +262,26 @@ func (s *Server) startRun(ctx context.Context, tenantID, userID uuid.UUID, sessi
 	}
 	events, err := s.Starter.StartRun(context.Background(), req)
 	if err != nil {
-		release()
 		return uuid.Nil, fmt.Errorf("start run: %w", err)
 	}
-	go s.drainAndNotify(tenantID, sessionID, recipientID, events, release)
+	go s.drainAndNotify(tenantID, sessionID, recipientID, events)
 	return sessionID, nil
 }
 
 // resumeRun mirrors internal/surfaces/telegram's own (its doc comment).
-func (s *Server) resumeRun(ctx context.Context, tenantID, sessionID uuid.UUID, recipientID, input string, release func()) (uuid.UUID, error) {
+func (s *Server) resumeRun(ctx context.Context, tenantID, sessionID uuid.UUID, recipientID, input string) (uuid.UUID, error) {
 	events, err := s.Resume.ResumeConversation(context.Background(), tenantID, sessionID, input)
 	if err != nil {
-		release()
 		return uuid.Nil, fmt.Errorf("resume conversation: %w", err)
 	}
-	go s.drainAndNotify(tenantID, sessionID, recipientID, events, release)
+	go s.drainAndNotify(tenantID, sessionID, recipientID, events)
 	return sessionID, nil
 }
 
 // drainAndNotify mirrors internal/surfaces/telegram's own (its doc
 // comment) — the only consumer of a run's event channel on this surface,
 // fresh or resumed alike.
-func (s *Server) drainAndNotify(tenantID, sessionID uuid.UUID, recipientID string, events <-chan RunEvent, release func()) {
-	defer release()
+func (s *Server) drainAndNotify(tenantID, sessionID uuid.UUID, recipientID string, events <-chan RunEvent) {
 	if s.Outbox == nil {
 		for range events {
 		}

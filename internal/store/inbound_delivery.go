@@ -30,9 +30,9 @@ import (
 // delivery's own dispatch fails before completing (a crash between the
 // claim and the run actually starting), a provider retry of that SAME
 // delivery id is now permanently deduped even though it was never really
-// processed — the session-key SessionLock (surfaces.AcquireSessionLock)
-// and the surface's own conversational continuity are what recover from
-// that, not a second automatic delivery of the original input.
+// processed. Recovery is the human sending the message again (a new
+// delivery id), which the surface's own conversational continuity picks up
+// from the session, not a second automatic delivery of the original input.
 func ClaimInboundDelivery(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, surfaceID, deliveryID, sessionKey string) (claimed bool, err error) {
 	if deliveryID == "" {
 		// Some providers' inbound payloads carry no stable id at all
