@@ -45,7 +45,8 @@ type inboundEvent struct {
 		ID string `json:"id"`
 	} `json:"sender"`
 	Message struct {
-		Text string `json:"text"`
+		Text  string `json:"text"`
+		MsgID string `json:"msg_id"`
 	} `json:"message"`
 }
 
@@ -162,8 +163,14 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	// internal/surfaces/telegram/webhook.go's own doc comment on this
 	// field for the full rationale.
 	sessionKey := "zalo:" + ev.Sender.ID
+	// deliveryID is Zalo's own msg_id — the provider-native id ClaimDelivery
+	// dedupes a redelivered event against. Existing test fixtures don't set
+	// this field, so it defaults to "" and store.ClaimInboundDelivery's own
+	// documented empty-string behavior (always claims, never dedupes)
+	// applies — intentional, not a gap this change introduces.
+	deliveryID := ev.Message.MsgID
 
-	if _, err := s.dispatch(r.Context(), tenantID, userID, sessionKey, ev.Sender.ID, ev.Message.Text); err != nil {
+	if _, err := s.dispatch(r.Context(), tenantID, userID, sessionKey, deliveryID, ev.Sender.ID, ev.Message.Text); err != nil {
 		log.Error().Err(err).Any("tenant_id", tenantID).Msg("zalo: dispatch")
 		http.Error(w, "dispatch: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -171,9 +178,24 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// dispatch mirrors internal/surfaces/telegram's own (its doc comment) —
+// dispatch first claims deliveryID (surfaces.ClaimDelivery) — a provider
+// redelivery of an event this surface already accepted is acknowledged
+// (uuid.Nil, nil) without ever reaching the session lookup below, closing
+// the production-readiness review's finding that "Telegram/Zalo webhooks
+// retry by design" and nothing dedupes that. A freshly-claimed delivery proceeds to the session lookup below.
+//
+// Otherwise mirrors internal/surfaces/telegram's own (its doc comment) —
 // duplicated per this codebase's established cross-surface idiom.
-func (s *Server) dispatch(ctx context.Context, tenantID, userID uuid.UUID, sessionKey, recipientID, input string) (uuid.UUID, error) {
+func (s *Server) dispatch(ctx context.Context, tenantID, userID uuid.UUID, sessionKey, deliveryID, recipientID, input string) (uuid.UUID, error) {
+	claimed, err := surfaces.ClaimDelivery(ctx, s.Store, tenantID, Descriptor.SurfaceID, deliveryID, sessionKey)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("claim delivery: %w", err)
+	}
+	if !claimed {
+		log.Info().Any("tenant_id", tenantID).Str("delivery_id", deliveryID).Msg("zalo: duplicate delivery acknowledged without dispatching")
+		return uuid.Nil, nil
+	}
+
 	if s.Resume != nil {
 		var sess store.Session
 		var found bool

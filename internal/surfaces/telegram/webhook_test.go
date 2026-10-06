@@ -24,11 +24,13 @@ func (f fakeChannels) BotToken(context.Context, uuid.UUID) (string, error) { ret
 
 type fakeStarter struct {
 	started bool
+	calls   int
 	req     RunRequest
 }
 
 func (f *fakeStarter) StartRun(_ context.Context, req RunRequest) (<-chan RunEvent, error) {
 	f.started = true
+	f.calls++
 	f.req = req
 	ch := make(chan RunEvent)
 	close(ch)
