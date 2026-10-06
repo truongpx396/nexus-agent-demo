@@ -31,18 +31,23 @@ func (c *Control) ResumeConversation(ctx context.Context, tenantID, sessionID uu
 	d := c.deps()
 	var ev store.Event
 	err := c.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		sess, err := store.GetSession(ctx, tx, sessionID)
+		// Claim the session first, atomically (store.ClaimAwaitingInput):
+		// of N concurrent callers (a REST steer, a webhook delivery) exactly
+		// one gets past here, so the human's message is appended and the
+		// continuation queued once, not once per caller.
+		claimed, err := store.ClaimAwaitingInput(ctx, tx, sessionID)
 		if err != nil {
 			return err
 		}
-		if sess.Status != store.SessionStatusAwaitingInput {
+		if !claimed {
+			sess, err := store.GetSession(ctx, tx, sessionID)
+			if err != nil {
+				return err
+			}
 			return fmt.Errorf("runctl: session %s is %q, not awaiting_input; nothing to resume a conversation into", sessionID, sess.Status)
 		}
 		ev, err = d.appendEvent(ctx, tx, tenantID, sessionID, store.EventUserMessage, nil, nil, userMessagePayload{Body: input})
-		if err != nil {
-			return err
-		}
-		return store.UpdateSessionStatus(ctx, tx, sessionID, store.SessionStatusRunning, nil)
+		return err
 	})
 	if err != nil {
 		return store.Event{}, err
