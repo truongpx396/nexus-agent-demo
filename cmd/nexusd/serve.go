@@ -161,6 +161,18 @@ func serve(ctx context.Context) error {
 		return fmt.Errorf("configure queue: %w", err)
 	}
 
+	// sessionLock serializes each conversational webhook surface's
+	// decide-then-act sequence (look up the session, then resume it or start
+	// a fresh one) and the turn it kicks off, keyed on the surface's own
+	// session_key. It is deliberately a different key from the queue
+	// workers', which lock on the session id for the whole run: sharing one
+	// would make a delivery wait out every in-flight run. Two racing
+	// deliveries for one chat would otherwise both find the session busy
+	// and each start a fresh one. SessionLock's key derivation is a fixed
+	// function of the key, so this and startQueueWorkers' own instance
+	// need not be the same value.
+	sessionLock := queue.NewSessionLock(redisClient, 30*time.Second)
+
 	vault := &connectors.Vault{Store: st, Keys: keyStore, Providers: newConnectorRegistry(), Redis: redisClient}
 
 	// Built here, ahead of newToolPipeline (moved up from its original
@@ -323,16 +335,19 @@ func serve(ctx context.Context) error {
 		Store: st, KeyStore: keyStore, Starter: telegramAdapter, Resume: telegramAdapter, Channels: channels,
 		CatalogManifestDigest: catalogManifestDigest, Outbox: outbox,
 		RateLimit: telegram.NewRateLimiter(20, time.Minute),
+		Lock:      sessionLock,
 	}
 	zaloSrv := &zalo.Server{
 		Store: st, KeyStore: keyStore, Starter: zaloAdapter, Resume: zaloAdapter, Channels: channels,
 		CatalogManifestDigest: catalogManifestDigest, Outbox: outbox,
 		RateLimit: zalo.NewRateLimiter(20, time.Minute),
+		Lock:      sessionLock,
 	}
 	emailSrv := &email.Server{
 		Store: st, KeyStore: keyStore, Starter: emailAdapter, Resume: emailAdapter, Channels: channels,
 		CatalogManifestDigest: catalogManifestDigest, Outbox: outbox,
 		RateLimit: email.NewRateLimiter(20, time.Minute),
+		Lock:      sessionLock,
 	}
 	scheduler := &cron.Scheduler{
 		Store: st, KeyStore: keyStore, Starter: cronStarterAdapter{k: starter}, Tenants: adminTenantLister{},
