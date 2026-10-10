@@ -3,7 +3,7 @@ module github.com/truongpx396/nexus-agent-demo
 go 1.26.0
 
 require (
-	github.com/alibaba/OpenSandbox/sdks/sandbox/go v1.0.5
+	github.com/alibaba/OpenSandbox/sdks/sandbox/go v1.1.0
 	github.com/containerd/errdefs v1.0.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
