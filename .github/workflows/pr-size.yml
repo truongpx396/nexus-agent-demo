@@ -20,7 +20,7 @@ jobs:
     steps:
       # Full history: the script diffs against the merge base with the base
       # branch, which a shallow clone cannot compute.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       # The limit (1000 changed lines) and the file exclusions live in
