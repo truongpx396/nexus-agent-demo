@@ -218,6 +218,13 @@ func (d *Delegations) Spawn(ctx context.Context, req SpawnRequest) (uuid.UUID, e
 				return
 			}
 		}
+		// The parent binds this delegation to its gating tool_use in a
+		// transaction that follows Spawn; resolving before that would pair
+		// the child's result with no tool_use (bindwait.go).
+		if err := d.awaitBound(bg, req.TenantID, childID); err != nil {
+			log.Error().Err(err).Any("child_session_id", childID).Msg("delegate: not resolving the delegation; it stays pending")
+			return
+		}
 		// The child's own Run generator stopping does not always mean it
 		// reached a terminal state — it may have suspended on an ordinary
 		// tool approval (kernel/loop.go's own suspendForApproval), in which
