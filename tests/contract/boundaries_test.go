@@ -91,6 +91,21 @@ var rules = []boundaryRule{
 		},
 	},
 	{
+		// runs is the application layer: it states the run-admission use case
+		// over ports (Admitter, KeyProvider, Starter) and leaves Postgres to
+		// internal/runs/postgres. Checked on its OWN imports because it
+		// reaches store and pgx transitively through internal/crypto, whose
+		// KeyStore methods take a pgx.Tx.
+		name: "runs must not itself import internal/store or a database/cache driver",
+		pkg:  modulePrefix + "internal/runs",
+		forbidden: []string{
+			modulePrefix + "internal/store",
+			"github.com/jackc/pgx",
+			"github.com/redis",
+		},
+		direct: true,
+	},
+	{
 		name: "controlplane must not import data-plane-only packages",
 		pkg:  modulePrefix + "internal/controlplane",
 		forbidden: []string{
