@@ -122,11 +122,48 @@ var rules = []boundaryRule{
 	{
 		// The REST surface starts runs through runs.Launcher and reads them
 		// back through runs.Reader, so it has no reason to touch the database
-		// or the key store itself. (Telegram, Zalo, email and cron still do
-		// — session lookup, event decryption, the schedule table — and are
-		// not yet covered; see docs/build-phases.md Phase 19.)
+		// or the key store itself. The Telegram, Zalo and email surfaces
+		// below follow the same rule: they find a conversation with
+		// Reader.FindByKey, open the events a notification quotes with
+		// Reader.EventOpener, and dedupe redeliveries through
+		// surfaces.InboundDedup. (Cron and MCP still touch the database —
+		// the schedule table, the connector tables — and are not yet covered;
+		// see docs/build-phases.md Phase 19.)
 		name: "the REST surface must not itself import internal/store, internal/crypto or a database/cache driver",
 		pkg:  modulePrefix + "internal/surfaces/rest",
+		forbidden: []string{
+			modulePrefix + "internal/store",
+			modulePrefix + "internal/crypto",
+			"github.com/jackc/pgx",
+			"github.com/redis",
+		},
+		direct: true,
+	},
+	{
+		name: "the telegram surface must not itself import internal/store, internal/crypto or a database/cache driver",
+		pkg:  modulePrefix + "internal/surfaces/telegram",
+		forbidden: []string{
+			modulePrefix + "internal/store",
+			modulePrefix + "internal/crypto",
+			"github.com/jackc/pgx",
+			"github.com/redis",
+		},
+		direct: true,
+	},
+	{
+		name: "the zalo surface must not itself import internal/store, internal/crypto or a database/cache driver",
+		pkg:  modulePrefix + "internal/surfaces/zalo",
+		forbidden: []string{
+			modulePrefix + "internal/store",
+			modulePrefix + "internal/crypto",
+			"github.com/jackc/pgx",
+			"github.com/redis",
+		},
+		direct: true,
+	},
+	{
+		name: "the email surface must not itself import internal/store, internal/crypto or a database/cache driver",
+		pkg:  modulePrefix + "internal/surfaces/email",
 		forbidden: []string{
 			modulePrefix + "internal/store",
 			modulePrefix + "internal/crypto",

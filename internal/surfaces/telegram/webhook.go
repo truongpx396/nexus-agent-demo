@@ -16,13 +16,10 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/runs"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces"
 )
 
@@ -66,8 +63,11 @@ type ChannelPort interface {
 
 // Server holds everything one Telegram webhook handler needs.
 type Server struct {
-	Store    *store.Store
-	KeyStore *crypto.KeyStore
+	// Reader finds the conversation a message continues (FindByKey) and opens
+	// the sealed events a notification quotes (EventOpener).
+	Reader runs.Reader
+	// Dedup acknowledges a redelivered message without dispatching it twice.
+	Dedup    surfaces.InboundDedup
 	Launcher runs.Launcher
 	Channels ChannelPort
 
@@ -207,7 +207,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 // pre-continuity caller sets it) always takes the fresh-session path,
 // unchanged from before that feature existed.
 func (s *Server) dispatch(ctx context.Context, tenantID, userID uuid.UUID, sessionKey, deliveryID, chatID, input string) (uuid.UUID, error) {
-	claimed, err := surfaces.ClaimDelivery(ctx, s.Store, tenantID, Descriptor.SurfaceID, deliveryID, sessionKey)
+	claimed, err := s.Dedup.Claim(ctx, tenantID, Descriptor.SurfaceID, deliveryID, sessionKey)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("claim delivery: %w", err)
 	}
@@ -234,19 +234,13 @@ func (s *Server) dispatch(ctx context.Context, tenantID, userID uuid.UUID, sessi
 	}
 
 	if s.Resume != nil {
-		var sess store.Session
-		var found bool
-		err := s.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-			var derr error
-			sess, found, derr = store.GetSessionByKey(ctx, tx, tenantID, sessionKey)
-			return derr
-		})
+		sess, found, err := s.Reader.FindByKey(ctx, tenantID, sessionKey)
 		if err != nil {
 			release()
 			return uuid.Nil, fmt.Errorf("look up session for %s: %w", sessionKey, err)
 		}
 		if found && sess.Status == eventlog.SessionStatusAwaitingInput {
-			return s.resumeRun(ctx, tenantID, sess.SessionID, chatID, input, release)
+			return s.resumeRun(ctx, tenantID, sess.RunID, chatID, input, release)
 		}
 	}
 	return s.startRun(ctx, tenantID, userID, sessionKey, chatID, input, release)
@@ -307,11 +301,12 @@ func (s *Server) drainAndNotify(ctx context.Context, tenantID, sessionID uuid.UU
 		return
 	}
 	sender := &Sender{Channels: s.Channels, TenantID: tenantID, Client: s.HTTPClient}
+	opener := s.Reader.EventOpener(tenantID)
 	for re := range events {
 		if re.Err != nil {
 			continue
 		}
-		payload, ok := s.notificationPayload(ctx, tenantID, sessionID, re.Event)
+		payload, ok := s.notificationPayload(ctx, opener, sessionID, re.Event)
 		if !ok {
 			continue
 		}
@@ -332,7 +327,7 @@ func (s *Server) drainAndNotify(ctx context.Context, tenantID, sessionID uuid.UU
 // kernel itself. A decrypt failure is logged and the event skipped, never
 // crashing the drain loop — this surface has no other way to surface that
 // failure to anyone.
-func (s *Server) notificationPayload(ctx context.Context, tenantID, sessionID uuid.UUID, ev eventlog.Event) (payload []byte, ok bool) {
+func (s *Server) notificationPayload(ctx context.Context, opener runs.EventOpener, sessionID uuid.UUID, ev eventlog.Event) (payload []byte, ok bool) {
 	switch ev.Type { //nolint:exhaustive // only these two event types are ever worth notifying a chat user about
 	case eventlog.EventApprovalRequested:
 		toolID := ""
@@ -346,17 +341,7 @@ func (s *Server) notificationPayload(ctx context.Context, tenantID, sessionID uu
 		return b, true
 
 	case eventlog.EventContent:
-		var dek crypto.DEK
-		err := s.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-			var derr error
-			dek, derr = s.KeyStore.Unwrap(ctx, tx, ev.KeyID)
-			return derr
-		})
-		if err != nil {
-			log.Error().Err(err).Any("session_id", sessionID).Msg("telegram: unwrap key for content event")
-			return nil, false
-		}
-		plaintext, err := crypto.Open(dek, ev.Payload, tenantID.String(), sessionID.String())
+		plaintext, err := opener.Open(ctx, ev)
 		if err != nil {
 			log.Error().Err(err).Any("session_id", sessionID).Msg("telegram: decrypt content event")
 			return nil, false

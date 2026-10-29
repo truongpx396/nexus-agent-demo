@@ -47,6 +47,22 @@ func (r Reader) GetRun(ctx context.Context, tenantID, runID uuid.UUID) (runs.Run
 	return view(sess), nil
 }
 
+func (r Reader) FindByKey(ctx context.Context, tenantID uuid.UUID, sessionKey string) (runs.RunView, bool, error) {
+	var (
+		sess  store.Session
+		found bool
+	)
+	err := r.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+		var gerr error
+		sess, found, gerr = store.GetSessionByKey(ctx, tx, tenantID, sessionKey)
+		return gerr
+	})
+	if err != nil || !found {
+		return runs.RunView{}, false, err
+	}
+	return view(sess), true, nil
+}
+
 func (r Reader) ListRuns(ctx context.Context, tenantID, userID uuid.UUID, limit int) ([]runs.RunView, error) {
 	var sessions []store.Session
 	err := r.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {

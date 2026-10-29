@@ -34,6 +34,9 @@ func (f *fakeReader) GetRun(context.Context, uuid.UUID, uuid.UUID) (runs.RunView
 func (f *fakeReader) ListRuns(context.Context, uuid.UUID, uuid.UUID, int) ([]runs.RunView, error) {
 	return f.list, f.listErr
 }
+func (f *fakeReader) FindByKey(context.Context, uuid.UUID, string) (runs.RunView, bool, error) {
+	return runs.RunView{}, false, nil // REST never looks a run up by session key
+}
 func (f *fakeReader) Events(context.Context, uuid.UUID, uuid.UUID) ([]eventlog.Event, error) {
 	return f.events, f.eventErr
 }

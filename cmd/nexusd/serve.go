@@ -34,6 +34,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/cron"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/email"
+	surfpg "github.com/truongpx396/nexus-agent-demo/internal/surfaces/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/telegram"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/zalo"
@@ -339,20 +340,22 @@ func serve(ctx context.Context) error {
 	// *kernelRunStarter / *runctl.Control pair.
 	resume := conversationResumer{ctl: ctl, redisClient: redisClient}
 
+	runReader := runspg.Reader{Store: st, KeyStore: keyStore}
+	inboundDedup := surfpg.NewDedup(st)
 	telegramSrv := &telegram.Server{
-		Store: st, KeyStore: keyStore, Launcher: launcher, Resume: resume, Channels: channels,
+		Reader: runReader, Dedup: inboundDedup, Launcher: launcher, Resume: resume, Channels: channels,
 		Outbox:    outbox,
 		RateLimit: telegram.NewRateLimiter(20, time.Minute),
 		Lock:      sessionLock,
 	}
 	zaloSrv := &zalo.Server{
-		Store: st, KeyStore: keyStore, Launcher: launcher, Resume: resume, Channels: channels,
+		Reader: runReader, Dedup: inboundDedup, Launcher: launcher, Resume: resume, Channels: channels,
 		Outbox:    outbox,
 		RateLimit: zalo.NewRateLimiter(20, time.Minute),
 		Lock:      sessionLock,
 	}
 	emailSrv := &email.Server{
-		Store: st, KeyStore: keyStore, Launcher: launcher, Resume: resume, Channels: channels,
+		Reader: runReader, Dedup: inboundDedup, Launcher: launcher, Resume: resume, Channels: channels,
 		Outbox:    outbox,
 		RateLimit: email.NewRateLimiter(20, time.Minute),
 		Lock:      sessionLock,
