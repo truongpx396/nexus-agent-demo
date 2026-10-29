@@ -38,6 +38,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
@@ -348,7 +349,7 @@ func TestRESTRunEndToEnd(t *testing.T) {
 		Provider: provider.Wrap([]provider.Provider{fakeProvider}),
 		Tools:    kernel.NotImplementedToolExecutor{},
 		Budget:   kernel.NoopBudgetGate{},
-		Store:    st,
+		Log:      postgres.New(st, postgres.Hooks{}),
 	}}
 
 	signingKey, err := authn.GeneratePrivateKey()

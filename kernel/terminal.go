@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
@@ -180,7 +179,7 @@ func (k *Kernel) terminate(ctx context.Context, st *RunState, yield func(eventlo
 // suspendForApproval is the loop's reaction to an AwaitingApproval result
 // (Phase 3's permission chain resolving ASK with no standing scope to
 // satisfy it): append an EventApprovalRequested, mark the session
-// suspended, and (if OnSuspend is wired) durably record an approval bound
+// suspended, and durably record (EventLog.RecordSuspension) an approval bound
 // to toolUseEventID/digest — then stop the generator WITHOUT a terminal
 // event — a suspended run is paused, not done. Resuming from here is
 // Kernel.Resume (README task 5.8), driven by internal/oversight once a
@@ -196,23 +195,18 @@ func (k *Kernel) suspendForApproval(ctx context.Context, st *RunState, yield fun
 		yield(ev, fmt.Errorf("approval_requested event %s appended but session status update failed: %w", ev.EventID, err))
 		return
 	}
-	if k.OnSuspend != nil {
-		tid := ""
-		if toolID != nil {
-			tid = *toolID
-		}
-		err := k.Store.InTenantTx(ctx, st.TenantID, func(ctx context.Context, tx pgx.Tx) error {
-			return k.OnSuspend(ctx, tx, SuspendRequest{
-				TenantID: st.TenantID, SessionID: st.SessionID,
-				ToolUseEventID: toolUseEventID, ApprovalEventID: ev.EventID,
-				ToolID: tid, Input: input, CanonicalDigest: result.CanonicalDigest, AskKind: result.AskKind,
-				EffectClass: result.EffectClass,
-			})
-		})
-		if err != nil {
-			yield(ev, fmt.Errorf("approval_requested event %s appended but OnSuspend failed: %w", ev.EventID, err))
-			return
-		}
+	tid := ""
+	if toolID != nil {
+		tid = *toolID
+	}
+	if err := k.Log.RecordSuspension(ctx, SuspendRequest{
+		TenantID: st.TenantID, SessionID: st.SessionID,
+		ToolUseEventID: toolUseEventID, ApprovalEventID: ev.EventID,
+		ToolID: tid, Input: input, CanonicalDigest: result.CanonicalDigest, AskKind: result.AskKind,
+		EffectClass: result.EffectClass,
+	}); err != nil {
+		yield(ev, fmt.Errorf("approval_requested event %s appended but recording the suspension failed: %w", ev.EventID, err))
+		return
 	}
 	yield(ev, nil)
 }
@@ -220,8 +214,8 @@ func (k *Kernel) suspendForApproval(ctx context.Context, st *RunState, yield fun
 // suspendForDelegation is the loop's reaction to an AwaitingDelegation result
 // (README task 8.10): platform/delegate's own Call already spawned the
 // child, asynchronously, before this ever runs — this appends
-// EventDelegationRequested, marks the session suspended, and (if OnDelegate
-// is wired) durably binds the pending delegations row internal/delegate
+// EventDelegationRequested, marks the session suspended, and durably binds
+// (EventLog.RecordDelegation) the pending delegations row internal/delegate
 // already created to toolUseEventID — then stops the generator WITHOUT a
 // terminal event, the same "paused, not done" shape suspendForApproval
 // already uses. Resuming from here is Kernel.ResumeDelegation, driven by
@@ -242,18 +236,13 @@ func (k *Kernel) suspendForDelegation(ctx context.Context, st *RunState, yield f
 		yield(ev, fmt.Errorf("delegation_requested event %s appended but session status update failed: %w", ev.EventID, err))
 		return
 	}
-	if k.OnDelegate != nil {
-		err := k.Store.InTenantTx(ctx, st.TenantID, func(ctx context.Context, tx pgx.Tx) error {
-			return k.OnDelegate(ctx, tx, DelegateSuspendRequest{
-				TenantID: st.TenantID, SessionID: st.SessionID,
-				ToolUseEventID: toolUseEventID, DelegationEventID: ev.EventID,
-				ToolID: tid, ChildSessionID: childSessionID,
-			})
-		})
-		if err != nil {
-			yield(ev, fmt.Errorf("delegation_requested event %s appended but OnDelegate failed: %w", ev.EventID, err))
-			return
-		}
+	if err := k.Log.RecordDelegation(ctx, DelegateSuspendRequest{
+		TenantID: st.TenantID, SessionID: st.SessionID,
+		ToolUseEventID: toolUseEventID, DelegationEventID: ev.EventID,
+		ToolID: tid, ChildSessionID: childSessionID,
+	}); err != nil {
+		yield(ev, fmt.Errorf("delegation_requested event %s appended but recording the delegation failed: %w", ev.EventID, err))
+		return
 	}
 	yield(ev, nil)
 }

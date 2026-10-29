@@ -20,6 +20,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/delegate"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/memory"
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
@@ -194,13 +195,14 @@ func serve(ctx context.Context) error {
 	approvals := oversight.NewApprovals(st, keyStore, chain)
 	inputs := oversight.NewInputs(st, keyStore, chain)
 	k := &kernel.Kernel{
-		Provider:     provider.Wrap([]provider.Provider{prov}),
-		Tools:        kernel.PipelineExecutor{Pipeline: pipeline}, // real tool pipeline, Phase 3
-		Budget:       gate,                                        // real reserve-then-reconcile cost gate, Phase 4
-		Store:        st,
-		Receipts:     chainReceiptFunc(chain),                         // hash-chained audit receipts, Phase 5 task 5.2
-		OnSuspend:    onSuspendFunc(approvals),                        // durably record an approval on every suspend, Phase 5 task 5.6
-		OnDelegate:   onDelegateFunc(delegations),                     // bind a delegation to its gating tool_use, Phase 8 task 8.10
+		Provider: provider.Wrap([]provider.Provider{prov}),
+		Tools:    kernel.PipelineExecutor{Pipeline: pipeline}, // real tool pipeline, Phase 3
+		Budget:   gate,                                        // real reserve-then-reconcile cost gate, Phase 4
+		Log: postgres.New(st, postgres.Hooks{
+			Receipt:  chainReceiptFunc(chain),     // hash-chained audit receipts, Phase 5 task 5.2
+			Suspend:  onSuspendFunc(approvals),    // durably record an approval on every suspend, Phase 5 task 5.6
+			Delegate: onDelegateFunc(delegations), // bind a delegation to its gating tool_use, Phase 8 task 8.10
+		}),
 		Stuck:        reliability.NewRegistry(stuckDetectionWindow),   // README task 6.8
 		Tracer:       spanExp,                                         // per-run/per-turn/per-tool-call spans, docs/local-llm.md
 		TraceContent: envOr("NEXUS_TRACE_CONTENT", "false") == "true", // opt-in prompt/tool content in traces, docs/local-llm.md — off by default, keeps every span content-free unless explicitly requested

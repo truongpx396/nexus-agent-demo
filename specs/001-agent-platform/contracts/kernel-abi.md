@@ -6,13 +6,15 @@ The kernel ABI is the set of seams the loop depends on. It is translated from th
 `contracts/kernel-abi.md` (README §6) into Go **as shipped** — signatures below are abridged from the code at `8e02491`,
 and where they differ from README §3's illustrative interfaces, **the code wins** (differences are called out).
 
-**Dependency rule** (`tests/contract/boundaries_test.go`): `kernel/` may import `internal/{provider,tools,promptctx,store,cost,
-reliability,obs}` and nothing else. It must not import `internal/surfaces` or `internal/controlplane`. Surfaces must not import
-`kernel/`; the only place a `kernel.RunState`/`RunConfig` is built is `cmd/nexusd/runner.go`'s `kernelRunStarter`.
+**Dependency rule** (`tests/contract/boundaries_test.go`): `kernel/` may import `internal/{eventlog,provider,tools,promptctx,cost,
+reliability,obs}` and nothing else. It must not import `internal/surfaces`, `internal/controlplane`, `internal/store`, a database
+driver, or an adapter of its own ports. Surfaces must not import `kernel/`; the only place a `kernel.RunState`/`RunConfig` is built
+is `cmd/nexusd/runner.go`'s `kernelRunStarter`.
 
-**Nil-valid optional hooks.** Every optional `Kernel` field (`Receipts`, `OnSuspend`, `OnDelegate`, `Stuck`, `Tracer`, `OnChunk`,
-`PrunePolicy`, `CondenseThresholdBytes`) means *"that control isn't wired"* when nil/zero. This is how minimal kernels are built in
-tests. **New hooks MUST follow this convention.**
+**Nil-valid optional hooks.** Every optional `Kernel` field (`Stuck`, `Tracer`, `OnChunk`, `PrunePolicy`,
+`CondenseThresholdBytes`) and every field of the Postgres event log's `Hooks` (`Receipt`, `Suspend`, `Delegate`) means *"that control
+isn't wired"* when nil/zero. This is how minimal kernels are built in tests. **New hooks MUST follow this convention.** `Log` is the
+one required field.
 
 ## 1. Kernel
 
@@ -22,9 +24,8 @@ type Kernel struct {
     Provider provider.Provider
     Tools    ToolExecutor
     Budget   BudgetGate
-    Store    *store.Store
+    Log      EventLog // required: the port onto durable state (§4)
     // optional, nil-valid:
-    Receipts ReceiptFunc; OnSuspend OnSuspend; OnDelegate OnDelegate
     Stuck *reliability.Registry; PrunePolicy promptctx.PrunePolicy
     CondenseThresholdBytes int
     Tracer obs.Tracer; TraceContent bool; OnChunk OnChunk
@@ -117,7 +118,16 @@ enforce this by AST check.
 ## 4. Persistence (FR-004–FR-006, FR-065–FR-068)
 
 ```go
-// internal/store — one log, three non-interchangeable artifacts. Concrete package functions over a pgx.Tx, not an interface.
+// kernel.EventLog — the kernel's ONLY door to durable state (kernel/ports.go). Every method is one atomic operation.
+type EventLog interface {
+    Append(ctx, e eventlog.Event) (eventlog.Event, error)           // assigns Seq/CreatedAt; the audit receipt commits in the SAME tx (adapter-configured)
+    SetStatus(ctx, tenantID, sessionID, status string, terminalReason *string) error
+    RecordSuspension(ctx, SuspendRequest) error                      // the approval row an approval_requested event must have
+    RecordDelegation(ctx, DelegateSuspendRequest) error
+}
+// Adapters: internal/eventlog/postgres (production), internal/eventlog/inmem (tests); both pass internal/eventlog/logtest.
+
+// internal/store — the Postgres adapter's building blocks (not the kernel's concern). Concrete package functions over a pgx.Tx.
 func Append(ctx, tx pgx.Tx, e Event) (Event, error)               // append-only; returns the event with its assigned seq; receipt written in the SAME tx
 func ListEvents(ctx, tx pgx.Tx, sessionID uuid.UUID) ([]Event, error)
 func (s *Store) InTenantTx(ctx, tenantID uuid.UUID, fn func(ctx, tx pgx.Tx) error) error // the ONLY tenant-scoping call:
@@ -127,8 +137,9 @@ func ReplayFullProjection(history []Event, decrypt TerminalDecryptFunc) (Project
 // Checkpoint / Snapshot / Claim …                                 // see data-model.md §5
 ```
 
-`SealFunc` (seal one payload → `sealed, plaintextDigest, keyID`) and `ReceiptFunc` (extend the audit chain inside the append
-transaction) are declared **in `kernel/`**, not imported, so the loop and its property test need no crypto or database.
+`SealFunc` (seal one payload → `sealed, plaintextDigest, keyID`) is declared **in `kernel/`**, not imported, so the loop needs no
+crypto. The audit receipt that extends the chain inside the append transaction is the Postgres adapter's `Hooks.Receipt`
+(`internal/eventlog/postgres`), wired in `cmd/nexusd`, so the loop can run over `internal/eventlog/inmem` with no database.
 
 ## 5. Oversight (FR-055–FR-059)
 

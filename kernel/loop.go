@@ -13,7 +13,6 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/promptctx"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/reliability"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
 // defaultMaxTurns is the backstop constitution Principle IV calls
@@ -31,34 +30,22 @@ type Kernel struct {
 	Provider provider.Provider
 	Tools    ToolExecutor
 	Budget   BudgetGate
-	Store    *store.Store
 
-	// Receipts extends the hash-chained audit receipt for every event this
-	// Kernel appends (internal/audit, Phase 5, README task 5.2). Nil is
-	// valid — every pre-Phase-5 test constructs a Kernel without one — and
-	// simply means no receipt is written for that call.
-	Receipts ReceiptFunc
-
-	// OnSuspend durably records an approval for the tool_use a run just
-	// suspended on (internal/oversight.Approvals.Create, Phase 5, README
-	// task 5.6). Nil is valid — every pre-Phase-5 test — and simply means
-	// nothing beyond EventApprovalRequested itself is recorded.
-	OnSuspend OnSuspend
-
-	// OnDelegate durably binds a delegation to the tool_use it gates, right
-	// after suspendForDelegation appends EventDelegationRequested
-	// (internal/delegate.Delegations.Bind, Phase 8, README task 8.10). Nil
-	// is valid — every pre-Phase-8 test — and simply means nothing beyond
-	// EventDelegationRequested itself is recorded.
-	OnDelegate OnDelegate
+	// Log is where every event, status change, approval and delegation this
+	// Kernel produces becomes durable (ports.go). Required: a Kernel with no
+	// Log cannot record anything. The audit receipt that must commit with
+	// each event, and the approval/delegation rows that must commit with a
+	// suspension, are the adapter's configuration, not the kernel's — see
+	// internal/eventlog/postgres.Hooks.
+	Log EventLog
 
 	// Stuck is task 6.8's per-turn observer (internal/reliability/stuck.go,
 	// Phase 6): folds each dispatched tool_use into that session's own
 	// Tracker and, on a SECOND corroborating trip, is what makes
 	// TerminalStuckTerminated fire (that function's own doc comment names
 	// this call site). Nil is valid — every pre-Phase-6 test — and simply
-	// means stuck detection never runs, exactly like a nil Receipts/
-	// OnSuspend already means "that phase's control isn't wired."
+	// means stuck detection never runs, exactly like a nil Tracer/OnChunk
+	// already means "that phase's control isn't wired."
 	Stuck *reliability.Registry
 
 	// PrunePolicy is README task 7.10's live pruning, applied to a per-turn
@@ -80,8 +67,8 @@ type Kernel struct {
 	// (docs/local-llm.md) — one root span per Run/Resume/ResumeDelegation/
 	// Continue call, a generation span per model call, a tool span per
 	// dispatched tool_use, all through k.startSpan below. Nil is valid, the
-	// same "this control isn't wired" convention Receipts/OnSuspend/Stuck
-	// already use — every pre-this-change test constructing a bare
+	// same "this control isn't wired" convention Stuck/OnChunk already
+	// use — every pre-this-change test constructing a bare
 	// Kernel{...} is unaffected.
 	Tracer obs.Tracer
 
@@ -169,7 +156,7 @@ func marshalContent(v any) string {
 
 // RunState is the mutable state one Run call owns: TenantID/SessionID
 // identify the session; Seal is how a plaintext payload becomes what
-// store.Append persists; History is the durable, sealed event log (used by
+// EventLog.Append persists; History is the durable, sealed event log (used by
 // Hygiene, which only ever reads structural fields — never decrypted here);
 // Transcript is the plaintext, in-memory projection promptctx.Build works
 // from, built up as the kernel itself produces or receives each message so
@@ -203,7 +190,7 @@ type RunState struct {
 
 // Run is the generator (README task 2.1): hygiene -> reserve -> build prompt
 // -> stream -> classify -> dispatch -> pair -> loop-or-terminate. Every
-// appended event is durably committed (store.Append, inside InTenantTx)
+// appended event is durably committed (EventLog.Append)
 // before it is yielded, so a caller forwarding these events (e.g. over SSE)
 // never shows a client something that isn't already in the log.
 func (k *Kernel) Run(ctx context.Context, st *RunState, cfg RunConfig) iter.Seq2[eventlog.Event, error] {

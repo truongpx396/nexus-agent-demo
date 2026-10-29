@@ -1,9 +1,12 @@
 // Package kernel is THE loop (docs/constitution.md, Principle I): the only
 // place control flow lives, expressed as a single generator
-// (kernel/loop.go). It may import internal/{provider,tools,promptctx,store,
-// cost,reliability,obs} and nothing else — tests/contract/boundaries_test.go
-// enforces that this stays true even after later phases add the packages
-// this file already seams for.
+// (kernel/loop.go). It is the core of the hexagon: it may import
+// internal/{eventlog,provider,tools,promptctx,cost,reliability,obs} and
+// nothing else, and reaches everything outside itself through a port it
+// declares — EventLog (ports.go) for durable state, ToolExecutor and
+// BudgetGate (types.go), provider.Provider for the model.
+// tests/contract/boundaries_test.go enforces that it never imports a
+// database driver, internal/store, or an adapter of its own ports.
 package kernel
 
 import (
@@ -11,10 +14,8 @@ import (
 	"encoding/json"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 )
 
@@ -197,19 +198,6 @@ func (NoopBudgetGate) Reconcile(context.Context, cost.Reservation, provider.Usag
 // stay free of any crypto or DB setup.
 type SealFunc func(plaintext []byte) (sealed, digest []byte, keyID string, err error)
 
-// ReceiptFunc extends the tenant's hash-chained audit receipt
-// (internal/audit.Chain.Append, Phase 5, README task 5.2) for one event
-// that store.Append just durably appended — called from inside the SAME
-// transaction, so an event is never observable without a receipt for it
-// ("day one, co-equal perimeter controls," not a retrofit). Declared here
-// rather than imported from internal/audit, exactly like SealFunc above:
-// this package's own doc comment restricts its imports to
-// internal/{provider,tools,promptctx,store,cost,reliability,obs}, and
-// internal/audit isn't on that list. cmd/nexusd wires the real
-// internal/audit.Chain.Append in; a nil ReceiptFunc (every pre-Phase-5 test)
-// simply means no receipt is written, not an error.
-type ReceiptFunc func(ctx context.Context, tx pgx.Tx, e eventlog.Event) error
-
 // RunConfig is everything one Run needs beyond the growing event history.
 // ModelID is the internal/provider/router.go decision, persisted onto the
 // session and stamped on model-produced events for audit — Phase 2 computes
@@ -231,7 +219,7 @@ type RunConfig struct {
 	// "supervised" | "autonomous"), forwarded to every ToolExecutor.Execute
 	// call this run makes (Phase 3's permission chain layer 3). Empty
 	// defaults to "supervised" at the executor, matching
-	// store.CreateSession's own default.
+	// the session store's own default.
 	AutonomyLevel string
 	// LoadedTools is the resident catalog's qualified tool refs, pinned
 	// into this session's manifest at session start (internal/tools/
@@ -280,12 +268,11 @@ type ChunkEvent struct {
 }
 
 // OnChunk is Kernel.OnChunk's own field type — declared here rather than
-// inline, matching OnSuspend/OnDelegate's own top-level-named-type
-// convention just below.
+// inline.
 type OnChunk func(ev ChunkEvent)
 
-// SuspendRequest is everything OnSuspend needs to durably record an
-// approval bound to the tool_use a run just suspended on.
+// SuspendRequest is everything EventLog.RecordSuspension needs to durably
+// record an approval bound to the tool_use a run just suspended on.
 type SuspendRequest struct {
 	TenantID  uuid.UUID
 	SessionID uuid.UUID
@@ -299,23 +286,12 @@ type SuspendRequest struct {
 	ToolID          string
 	// Input is the tool_use's PLAINTEXT original input, still held in
 	// memory from the live turn — never re-read from the sealed event, so
-	// OnSuspend needs no decrypt path of its own.
+	// RecordSuspension needs no decrypt path of its own.
 	Input           json.RawMessage
 	CanonicalDigest []byte
 	AskKind         string
 	EffectClass     string
 }
-
-// OnSuspend is called once, right after suspendForApproval durably appends
-// EventApprovalRequested and marks the session suspended —
-// internal/oversight.Approvals.Create (Phase 5) is wired here from
-// cmd/nexusd, so an approval_requested event is never left without a
-// matching approvals row to eventually resolve it against. Declared here
-// rather than imported from internal/oversight for the same import-
-// allowlist reason as ReceiptFunc above. Nil is valid (every pre-Phase-5
-// test) and simply means nothing durable beyond the event itself is
-// recorded.
-type OnSuspend func(ctx context.Context, tx pgx.Tx, req SuspendRequest) error
 
 // ApprovalDecisionKind is the resolution internal/oversight (Phase 5)
 // reached for the tool_use a run suspended on — what Resume acts on.
@@ -343,7 +319,7 @@ type PendingResolution struct {
 	Reason         string // populated for Denied/Invalidated
 }
 
-// DelegateSuspendRequest is everything OnDelegate needs to durably bind the
+// DelegateSuspendRequest is everything EventLog.RecordDelegation needs to bind the
 // delegation internal/tools/builtin.Delegate's Call already created (as a
 // pending row with no tool_use_event_id yet) to the tool_use it gates —
 // mirrors SuspendRequest field-for-field, minus the approval-specific
@@ -360,14 +336,6 @@ type DelegateSuspendRequest struct {
 	ToolID            string
 	ChildSessionID    uuid.UUID
 }
-
-// OnDelegate is called once, right after suspendForDelegation durably
-// appends EventDelegationRequested and marks the session suspended —
-// internal/delegate.Delegations.Bind is wired here from cmd/nexusd, so a
-// delegation_requested event is never left without a matching delegations
-// row bound to the tool_use it gates. Nil is valid (every pre-Phase-8 test)
-// and simply means nothing beyond the event itself is recorded.
-type OnDelegate func(ctx context.Context, tx pgx.Tx, req DelegateSuspendRequest) error
 
 // DelegationOutcomeKind is how a delegation this run suspended on was
 // resolved — what ResumeDelegation acts on. Unlike ApprovalDecisionKind,

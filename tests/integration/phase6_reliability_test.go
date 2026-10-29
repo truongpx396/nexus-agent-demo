@@ -34,6 +34,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
 	"github.com/truongpx396/nexus-agent-demo/internal/permissions"
 	"github.com/truongpx396/nexus-agent-demo/internal/permissions/safety"
@@ -566,7 +567,7 @@ func TestSnapshot_DeletingAllSnapshotsChangesNothingButHydrationTime(t *testing.
 		{Kind: "tool_use", ToolUseID: "tu1", ToolName: "platform/file_read@v1", Input: `{"path":"missing.txt"}`},
 		{Kind: "done", Done: "stop"},
 	}}, fake.Script{Chunks: []fake.ChunkSpec{{Kind: "content", Text: "done"}, {Kind: "done", Done: "stop"}}})
-	k := &kernel.Kernel{Provider: provider.Wrap([]provider.Provider{prov}), Tools: kernel.PipelineExecutor{Pipeline: pipeline}, Budget: kernel.NoopBudgetGate{}, Store: rig.st}
+	k := &kernel.Kernel{Provider: provider.Wrap([]provider.Provider{prov}), Tools: kernel.PipelineExecutor{Pipeline: pipeline}, Budget: kernel.NoopBudgetGate{}, Log: postgres.New(rig.st, postgres.Hooks{})}
 	sealFn, _ := rig.seal(t, sessionID)
 	st0 := &kernel.RunState{TenantID: rig.tenantID, SessionID: sessionID, Seal: sealFn}
 	for ev, err := range k.Run(ctx, st0, kernel.RunConfig{System: "test", Catalog: catalog, ModelID: "fake", MaxTurns: 10, Input: "read a file"}) {
@@ -649,7 +650,8 @@ func TestStuckDetection_SecondCorroboratingTripTerminates(t *testing.T) {
 	prov := fake.New(scripts...)
 	k := &kernel.Kernel{
 		Provider: provider.Wrap([]provider.Provider{prov}), Tools: kernel.PipelineExecutor{Pipeline: pipeline},
-		Budget: kernel.NoopBudgetGate{}, Store: rig.st, Stuck: reliability.NewRegistry(4),
+		Budget: kernel.NoopBudgetGate{}, Stuck: reliability.NewRegistry(4),
+		Log: postgres.New(rig.st, postgres.Hooks{}),
 	}
 	sealFn, _ := rig.seal(t, sessionID)
 	st0 := &kernel.RunState{TenantID: rig.tenantID, SessionID: sessionID, Seal: sealFn}
@@ -711,15 +713,15 @@ func TestRunctl_Cancel_ReleasesPendingApprovalAndAborts(t *testing.T) {
 	}})
 	k := &kernel.Kernel{
 		Provider: provider.Wrap([]provider.Provider{prov}), Tools: kernel.PipelineExecutor{Pipeline: pipeline},
-		Budget: kernel.NoopBudgetGate{}, Store: rig.st,
-		OnSuspend: func(ctx context.Context, tx pgx.Tx, req kernel.SuspendRequest) error {
+		Budget: kernel.NoopBudgetGate{},
+		Log: postgres.New(rig.st, postgres.Hooks{Suspend: func(ctx context.Context, tx pgx.Tx, req kernel.SuspendRequest) error {
 			_, err := approvals.Create(ctx, oversight.CreateApprovalRequest{
 				TenantID: req.TenantID, SessionID: req.SessionID, ToolUseEventID: req.ToolUseEventID,
 				ToolID: req.ToolID, AskKind: req.AskKind, CanonicalDigest: req.CanonicalDigest,
 				Context: oversight.ContextPackage{ToolID: req.ToolID, EffectClass: req.EffectClass, Input: req.Input},
 			})
 			return err
-		},
+		}}),
 	}
 
 	rig.createSession(t, sessionID, userID, "supervised")
@@ -850,7 +852,7 @@ func TestRunctl_Resume_RecoversAToolUseAKilledWorkerLeftOrphaned(t *testing.T) {
 
 	pipeline, catalog := newReadPipeline(t, workspaceRoot, nil)
 	prov := fake.New(fake.Script{Chunks: []fake.ChunkSpec{{Kind: "content", Text: "done"}, {Kind: "done", Done: "stop"}}})
-	k := &kernel.Kernel{Provider: provider.Wrap([]provider.Provider{prov}), Tools: kernel.PipelineExecutor{Pipeline: pipeline}, Budget: kernel.NoopBudgetGate{}, Store: rig.st}
+	k := &kernel.Kernel{Provider: provider.Wrap([]provider.Provider{prov}), Tools: kernel.PipelineExecutor{Pipeline: pipeline}, Budget: kernel.NoopBudgetGate{}, Log: postgres.New(rig.st, postgres.Hooks{})}
 
 	control := rig.control(k, oversight.NewApprovals(rig.st, rig.keys, rig.chain), nil)
 	control.Catalog = catalog
@@ -930,7 +932,7 @@ func TestRunctl_Replay_IsPureAndAgreesWithHydration(t *testing.T) {
 
 	pipeline, catalog := newReadPipeline(t, workspaceRoot, nil)
 	prov := fake.New(fake.Script{Chunks: []fake.ChunkSpec{{Kind: "content", Text: "hi"}, {Kind: "done", Done: "stop"}}})
-	k := &kernel.Kernel{Provider: provider.Wrap([]provider.Provider{prov}), Tools: kernel.PipelineExecutor{Pipeline: pipeline}, Budget: kernel.NoopBudgetGate{}, Store: rig.st}
+	k := &kernel.Kernel{Provider: provider.Wrap([]provider.Provider{prov}), Tools: kernel.PipelineExecutor{Pipeline: pipeline}, Budget: kernel.NoopBudgetGate{}, Log: postgres.New(rig.st, postgres.Hooks{})}
 	sealFn, _ := rig.seal(t, sessionID)
 	st0 := &kernel.RunState{TenantID: rig.tenantID, SessionID: sessionID, Seal: sealFn}
 	for ev, err := range k.Run(ctx, st0, kernel.RunConfig{System: "test", Catalog: catalog, ModelID: "fake", MaxTurns: 5, Input: "hi"}) {
