@@ -17,7 +17,6 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
 	"github.com/truongpx396/nexus-agent-demo/internal/authn"
 	"github.com/truongpx396/nexus-agent-demo/internal/connectors"
-	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/delegate"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
@@ -184,7 +183,7 @@ func serve(ctx context.Context) error {
 	// Gate to reserve embedding calls against (README task 12.4) — the
 	// same "construct the shared dependency before the thing that needs
 	// it" ordering vault itself already follows one step up.
-	gate := cost.NewGate(st, redisClient, cost.DefaultMeters(), cost.GateConfig{})
+	gate := newCostGate(st, redisClient)
 
 	delegations := delegate.NewDelegations(st, keyStore, chain)
 	teamsSvc := teams.NewService(st, keyStore, chain)

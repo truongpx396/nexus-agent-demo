@@ -16,6 +16,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
+	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/ingest"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
 	"github.com/truongpx396/nexus-agent-demo/internal/retrieval"
@@ -98,7 +99,7 @@ func setupRetrievalEnv(t *testing.T) *pgxpool.Pool {
 func newTestRetriever(t *testing.T, pool *pgxpool.Pool) (*retrieval.Retriever, *store.Store) {
 	t.Helper()
 	st := store.New(pool)
-	gate := cost.NewGate(st, nil, cost.DefaultMeters(), cost.GateConfig{})
+	gate := cost.NewGate(costpg.New(st), nil, cost.DefaultMeters(), cost.GateConfig{})
 	return &retrieval.Retriever{
 		Store: st, Gate: gate, Embedder: fake.NewEmbedder(), ModelID: "fake-embedder-v1", TopK: 5,
 	}, st
@@ -117,7 +118,7 @@ func insertRetrievalTenant(ctx context.Context, s *store.Store, tenantID uuid.UU
 	// this test's embedding reservations need it priced regardless of
 	// which session id they're attributed to.
 	return s.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		return cost.InsertPriceBookEntry(ctx, tx, tenantID, cost.PriceBookEntry{
+		return costpg.InsertPriceBookEntry(ctx, tx, tenantID, cost.PriceBookEntry{
 			Meter: cost.MeterEmbeddingTokens, Subject: cost.WildcardSubject, Version: 1,
 			Currency: cost.DefaultCurrency, PricePerMillionMicros: 100_000, EffectiveFrom: time.Now(),
 		})

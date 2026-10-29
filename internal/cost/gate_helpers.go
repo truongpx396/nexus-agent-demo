@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 )
 
@@ -51,12 +50,7 @@ func (g *Gate) priceBookFor(ctx context.Context, tenantID uuid.UUID) (*PriceBook
 	}
 	g.mu.Unlock()
 
-	var pb *PriceBook
-	err := g.store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		var lerr error
-		pb, lerr = LoadPriceBook(ctx, tx)
-		return lerr
-	})
+	pb, err := g.ledger.LoadPriceBook(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -74,17 +68,7 @@ func (g *Gate) sessionBudgetFor(ctx context.Context, tenantID, sessionID uuid.UU
 	}
 	g.mu.Unlock()
 
-	var found *Budget
-	err := g.store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		b, ok, gerr := GetBudget(ctx, tx, BudgetScopeSession, &sessionID)
-		if gerr != nil {
-			return gerr
-		}
-		if ok {
-			found = &b
-		}
-		return nil
-	})
+	found, err := g.budgetFor(ctx, tenantID, BudgetScopeSession, &sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -102,17 +86,7 @@ func (g *Gate) tenantBudgetFor(ctx context.Context, tenantID uuid.UUID) (*Budget
 	}
 	g.mu.Unlock()
 
-	var found *Budget
-	err := g.store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		b, ok, gerr := GetBudget(ctx, tx, BudgetScopeTenant, nil)
-		if gerr != nil {
-			return gerr
-		}
-		if ok {
-			found = &b
-		}
-		return nil
-	})
+	found, err := g.budgetFor(ctx, tenantID, BudgetScopeTenant, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -120,6 +94,15 @@ func (g *Gate) tenantBudgetFor(ctx context.Context, tenantID uuid.UUID) (*Budget
 	g.tenantCache[tenantID] = found
 	g.mu.Unlock()
 	return found, nil
+}
+
+// budgetFor reads one budget from the Ledger; a nil result means none exists.
+func (g *Gate) budgetFor(ctx context.Context, tenantID uuid.UUID, scope BudgetScope, scopeRef *uuid.UUID) (*Budget, error) {
+	b, ok, err := g.ledger.GetBudget(ctx, tenantID, scope, scopeRef)
+	if err != nil || !ok {
+		return nil, err
+	}
+	return &b, nil
 }
 
 // ensureArmed initializes budgetID's Redis epoch/spend keys the first time
@@ -137,16 +120,11 @@ func (g *Gate) ensureArmed(ctx context.Context, tenantID uuid.UUID, b *Budget) e
 	}
 	g.mu.Unlock()
 
-	var baseline int64
-	err := g.store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		var serr error
-		baseline, serr = SumCostRecords(ctx, tx, BudgetScopeTenant, nil)
-		return serr
-	})
+	baseline, err := g.ledger.SumCostRecords(ctx, tenantID, BudgetScopeTenant, nil)
 	if err != nil {
 		return fmt.Errorf("sum existing cost records to arm budget %s: %w", b.ID, err)
 	}
-	if err := g.redis.Arm(ctx, b.ID, b.Epoch, baseline); err != nil {
+	if err := g.counters.Arm(ctx, b.ID, b.Epoch, baseline); err != nil {
 		return err
 	}
 	g.mu.Lock()
@@ -168,9 +146,7 @@ func (g *Gate) bestEffortPersist(ctx context.Context, tenantID, sessionID uuid.U
 }
 
 func (g *Gate) persistDecision(ctx context.Context, tenantID, sessionID uuid.UUID, d Decision) error {
-	return g.store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		return RecordDecision(ctx, tx, tenantID, sessionID, d)
-	})
+	return g.ledger.RecordDecision(ctx, tenantID, sessionID, d)
 }
 
 func decisionReason(kind DecisionKind, sessBudget, tenBudget *Budget) string {

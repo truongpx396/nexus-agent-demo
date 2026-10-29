@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io/fs"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,7 +13,7 @@ import (
 // TestNoFloatInPackage is the package-local guard README task 4.1 and
 // .golangci.yml's forbidigo comment both name explicitly: forbidigo matches
 // call/selector expressions, so it cannot ban a TYPE (float32/float64) —
-// this walks the AST of every non-test .go file in this package instead and
+// this walks the AST of every non-test .go file in this package tree instead and
 // fails the build if either identifier appears anywhere (a field type, a
 // local var, a literal conversion, a parameter — any use at all). Every
 // amount in this package is an exact integer Money (money.go); a float here
@@ -25,9 +26,21 @@ import (
 // test independently derives its assertions.
 func TestNoFloatInPackage(t *testing.T) {
 	fset := token.NewFileSet()
-	files, err := filepath.Glob("*.go")
+	// The whole tree, not just this directory: the Postgres, Redis and
+	// in-memory adapters (and costtest) handle the same Money values and are
+	// held to the same ban.
+	var files []string
+	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, werr error) error {
+		if werr != nil {
+			return werr
+		}
+		if !d.IsDir() && strings.HasSuffix(path, ".go") {
+			files = append(files, path)
+		}
+		return nil
+	})
 	if err != nil {
-		t.Fatalf("glob package files: %v", err)
+		t.Fatalf("walk package tree: %v", err)
 	}
 	if len(files) == 0 {
 		t.Fatal("no .go files matched — the guard would vacuously pass forever")

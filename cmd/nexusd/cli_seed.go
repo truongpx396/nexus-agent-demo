@@ -12,6 +12,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/config"
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
+	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
@@ -119,7 +120,7 @@ func seedDemoSkills(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) error {
 // never one of the three routed chat models, so there is no per-model tier
 // to seed for it.
 func seedPriceBook(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) error {
-	existing, err := cost.LoadPriceBook(ctx, tx)
+	existing, err := costpg.LoadPriceBook(ctx, tx)
 	if err != nil {
 		return err
 	}
@@ -146,7 +147,7 @@ func seedPriceBook(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) error {
 			{cost.MeterInputCacheRead, m.inputPerMillionMicros / 10},     // 0.1x the model's own input rate
 			{cost.MeterOutput, m.outputPerMillionMicros},
 		} {
-			if err := cost.InsertPriceBookEntry(ctx, tx, tenantID, cost.PriceBookEntry{
+			if err := costpg.InsertPriceBookEntry(ctx, tx, tenantID, cost.PriceBookEntry{
 				Meter: e.meter, Subject: m.model, Version: 1,
 				Currency: cost.DefaultCurrency, PricePerMillionMicros: e.price, EffectiveFrom: now,
 			}); err != nil {
@@ -155,7 +156,7 @@ func seedPriceBook(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) error {
 		}
 	}
 
-	return cost.InsertPriceBookEntry(ctx, tx, tenantID, cost.PriceBookEntry{
+	return costpg.InsertPriceBookEntry(ctx, tx, tenantID, cost.PriceBookEntry{
 		Meter: cost.MeterEmbeddingTokens, Subject: cost.WildcardSubject, Version: 1,
 		Currency: cost.DefaultCurrency, PricePerMillionMicros: 100_000, EffectiveFrom: now, // $0.10 / million embedding tokens
 	})

@@ -12,7 +12,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	"github.com/truongpx396/nexus-agent-demo/internal/ingest"
 	"github.com/truongpx396/nexus-agent-demo/internal/retrieval"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
@@ -54,7 +53,7 @@ func runIngest(ctx context.Context, args []string) error {
 	st := store.New(pool)
 
 	redisClient := redis.NewClient(&redis.Options{Addr: envOr("NEXUS_REDIS_ADDR", defaultRedisAddr)})
-	gate := cost.NewGate(st, redisClient, cost.DefaultMeters(), cost.GateConfig{})
+	gate := newCostGate(st, redisClient)
 	retriever := &retrieval.Retriever{Store: st, Gate: gate, Embedder: newEmbedder(), ModelID: "fake-embedder-v1"}
 
 	tenantID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("nexus-agent-demo/tenant/"+*tenantName))

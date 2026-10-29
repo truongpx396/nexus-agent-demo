@@ -65,22 +65,25 @@ func (g *Gate) Reserve(ctx context.Context, req ReserveRequest) (Reservation, er
 	// --- tenant-level: Redis, atomic (task 4.4).
 	reservedInRedis := false
 	if tenBudget != nil {
+		if g.counters == nil {
+			return g.refuse(ctx, res, &tenBudget.ID, worst, "tenant budget configured but no counter is wired (fail closed)")
+		}
 		if err := g.ensureArmed(ctx, req.TenantID, tenBudget); err != nil {
 			return g.refuse(ctx, res, &tenBudget.ID, worst, "tenant budget epoch unavailable (fail closed): "+err.Error())
 		}
-		outcome, total, rerr := g.redis.Reserve(ctx, tenBudget.ID, tenBudget.Epoch, worst.Micros, tenBudget.Ceiling.Micros)
+		outcome, total, rerr := g.counters.Reserve(ctx, tenBudget.ID, tenBudget.Epoch, worst.Micros, tenBudget.Ceiling.Micros)
 		if rerr != nil {
 			return g.refuse(ctx, res, &tenBudget.ID, worst, "tenant budget check failed (fail closed): "+rerr.Error())
 		}
 		switch outcome {
-		case reserveUnavailable:
+		case ReserveUnavailable:
 			return g.refuse(ctx, res, &tenBudget.ID, worst, "tenant budget epoch unavailable (fail closed, never assumed zero spend)")
-		case reserveStaleEpoch:
+		case ReserveStaleEpoch:
 			return g.refuse(ctx, res, &tenBudget.ID, worst, "tenant budget epoch changed since last check (fail closed)")
-		case reserveOverCeiling:
+		case ReserveOverCeiling:
 			return g.refuse(ctx, res, &tenBudget.ID, worst, fmt.Sprintf(
 				"tenant budget ceiling %s exceeded (already at %s)", tenBudget.Ceiling, Money{Micros: total, Currency: tenBudget.Ceiling.Currency}))
-		case reserveOK:
+		case ReserveOK:
 			reservedInRedis = true
 			if total*100 >= tenBudget.Ceiling.Micros*g.cfg.DegradeThresholdPercent {
 				softHit = true
@@ -104,7 +107,7 @@ func (g *Gate) Reserve(ctx context.Context, req ReserveRequest) (Reservation, er
 		// durably record that it happened — release what Redis already
 		// holds and fail closed, same as any other accounting failure.
 		if reservedInRedis {
-			if rerr := g.redis.Release(ctx, tenBudget.ID, tenBudget.Epoch, worst.Micros); rerr != nil {
+			if rerr := g.counters.Release(ctx, tenBudget.ID, tenBudget.Epoch, worst.Micros); rerr != nil {
 				log.Error().Err(rerr).Msg("cost: failed to roll back tenant reservation after a decision-persist failure")
 			}
 		}

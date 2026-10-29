@@ -2,12 +2,8 @@ package cost
 
 import (
 	"sync"
-	"time"
 
 	"github.com/google/uuid"
-	"github.com/redis/go-redis/v9"
-
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
 // DefaultCurrency is used wherever a caller doesn't specify one — this
@@ -100,8 +96,6 @@ type GateConfig struct {
 	// over — resolves DecisionDegrade instead of DecisionAllow. Integer
 	// percent, never a float (this package's own ban, money_notfloat_test.go).
 	DegradeThresholdPercent int64
-
-	RedisTimeout time.Duration
 }
 
 func (c GateConfig) withDefaults() GateConfig {
@@ -131,7 +125,7 @@ func (c GateConfig) withDefaults() GateConfig {
 // matching internal/tools/pipeline.go's own per-session state, which is
 // process-lifetime, not hot-reloaded.
 //
-// Gate owns its own Postgres transactions via Store rather than taking a
+// Gate owns its own units of work (through the Ledger) rather than taking a
 // caller-supplied tx the way internal/crypto.KeyStore's methods do: the
 // abstract BudgetGate.Reserve/Reconcile signature (README §4) takes no tx
 // parameter, because one Reserve call is its own independent unit of
@@ -145,10 +139,10 @@ func (c GateConfig) withDefaults() GateConfig {
 // ever leave a decision/record row with no matching kernel event (the cost
 // was still accounted for) — never the reverse.
 type Gate struct {
-	store  *store.Store
-	redis  scripter
-	meters *Registry
-	cfg    GateConfig
+	ledger   Ledger
+	counters Counters // nil means no tenant-scoped ceiling can be enforced; a tenant budget then fails closed
+	meters   *Registry
+	cfg      GateConfig
 
 	mu           sync.Mutex
 	priceBooks   map[uuid.UUID]*PriceBook // by tenant
@@ -162,13 +156,15 @@ type sessionCeilState struct {
 	spent  Money
 }
 
-func NewGate(st *store.Store, redisClient *redis.Client, meters *Registry, cfg GateConfig) *Gate {
+// NewGate builds a Gate over its two ports. counters may be nil for a
+// deployment (or test) that only uses session-scoped budgets.
+func NewGate(ledger Ledger, counters Counters, meters *Registry, cfg GateConfig) *Gate {
 	if meters == nil {
 		meters = DefaultMeters()
 	}
 	return &Gate{
-		store:        st,
-		redis:        newRedisScripter(redisClient, cfg.RedisTimeout),
+		ledger:       ledger,
+		counters:     counters,
 		meters:       meters,
 		cfg:          cfg.withDefaults(),
 		priceBooks:   map[uuid.UUID]*PriceBook{},

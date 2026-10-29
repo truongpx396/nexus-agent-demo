@@ -27,6 +27,8 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
+	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
+	costredis "github.com/truongpx396/nexus-agent-demo/internal/cost/redis"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
@@ -140,7 +142,7 @@ func TestCostGate_ConcurrentSessionsRespectOneTenantCeiling(t *testing.T) {
 			{cost.MeterInputUncached, 3_000_000},
 			{cost.MeterOutput, 15_000_000},
 		} {
-			if err := cost.InsertPriceBookEntry(ctx, tx, tenantID, cost.PriceBookEntry{
+			if err := costpg.InsertPriceBookEntry(ctx, tx, tenantID, cost.PriceBookEntry{
 				Meter: p.meter, Subject: cost.WildcardSubject, Version: 1,
 				Currency: cost.DefaultCurrency, PricePerMillionMicros: p.micros, EffectiveFrom: now,
 			}); err != nil {
@@ -153,7 +155,7 @@ func TestCostGate_ConcurrentSessionsRespectOneTenantCeiling(t *testing.T) {
 	}
 
 	gateCfg := cost.GateConfig{} // production defaults: 8000 input / 4096 output token worst-case estimate
-	gate := cost.NewGate(st, redisClient, cost.DefaultMeters(), gateCfg)
+	gate := cost.NewGate(costpg.New(st), costredis.New(redisClient, 0), cost.DefaultMeters(), gateCfg)
 
 	// Worst-case reservation per call, using the SAME defaults the Gate
 	// just applied: 8000 * $3/M + 4096 * $15/M = 24,000 + 61,440 =
@@ -170,7 +172,7 @@ func TestCostGate_ConcurrentSessionsRespectOneTenantCeiling(t *testing.T) {
 
 	var budgetID uuid.UUID
 	if err := st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		b, err := cost.CreateBudget(ctx, tx, tenantID, cost.BudgetScopeTenant, nil, cost.Money{Micros: ceilingMicros, Currency: cost.DefaultCurrency})
+		b, err := costpg.CreateBudget(ctx, tx, tenantID, cost.BudgetScopeTenant, nil, cost.Money{Micros: ceilingMicros, Currency: cost.DefaultCurrency})
 		budgetID = b.ID
 		return err
 	}); err != nil {
@@ -351,7 +353,7 @@ func TestCostGate_UnreportedUsageReconcilesAtFullReservedCost(t *testing.T) {
 			{cost.MeterInputUncached, 3_000_000},
 			{cost.MeterOutput, 15_000_000},
 		} {
-			if err := cost.InsertPriceBookEntry(ctx, tx, tenantID, cost.PriceBookEntry{
+			if err := costpg.InsertPriceBookEntry(ctx, tx, tenantID, cost.PriceBookEntry{
 				Meter: p.meter, Subject: cost.WildcardSubject, Version: 1,
 				Currency: cost.DefaultCurrency, PricePerMillionMicros: p.micros, EffectiveFrom: now,
 			}); err != nil {
@@ -363,7 +365,7 @@ func TestCostGate_UnreportedUsageReconcilesAtFullReservedCost(t *testing.T) {
 		t.Fatalf("seed price book: %v", err)
 	}
 
-	gate := cost.NewGate(st, redisClient, cost.DefaultMeters(), cost.GateConfig{})
+	gate := cost.NewGate(costpg.New(st), costredis.New(redisClient, 0), cost.DefaultMeters(), cost.GateConfig{})
 	const perCallMicros = 8_000*3_000_000/1_000_000 + 4_096*15_000_000/1_000_000 // 85_440, same worst-case math as the ceiling test
 
 	sessionID := uuid.New()
@@ -379,7 +381,7 @@ func TestCostGate_UnreportedUsageReconcilesAtFullReservedCost(t *testing.T) {
 	// A generous ceiling ($1.00) well above the ~$0.085 worst-case reservation
 	// — this test is about Reconcile's UNREPORTED handling, not refusal.
 	if err := st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		_, err := cost.CreateBudget(ctx, tx, tenantID, cost.BudgetScopeSession, &sessionID, cost.Money{Micros: 1_000_000, Currency: cost.DefaultCurrency})
+		_, err := costpg.CreateBudget(ctx, tx, tenantID, cost.BudgetScopeSession, &sessionID, cost.Money{Micros: 1_000_000, Currency: cost.DefaultCurrency})
 		return err
 	}); err != nil {
 		t.Fatalf("create session budget: %v", err)

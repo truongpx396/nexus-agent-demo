@@ -51,11 +51,13 @@ var rules = []boundaryRule{
 		// The kernel is the core of the hexagon: it reaches durable state only
 		// through kernel.EventLog, never through the Postgres adapter's
 		// plumbing. Checked on the kernel's OWN imports because it still
-		// reaches internal/store and pgx transitively — internal/cost and
-		// internal/obs each hold a Postgres-backed type next to the plain
-		// types the kernel actually uses (cost.Money/Reservation, obs.Tracer).
-		// Splitting those two packages is what would let this rule go
-		// transitive; until then this is the strongest statement that holds.
+		// reaches internal/store and pgx transitively through internal/obs,
+		// which holds a Postgres-backed type (Grants, Dashboard, usage
+		// reports) next to the plain ones the kernel actually uses
+		// (obs.Tracer, obs.Attrs). internal/cost no longer does — its Gate is
+		// built on the Ledger and Counters ports and the adapters live in
+		// internal/cost/{postgres,redis} — so splitting obs the same way is
+		// what lets this rule go transitive.
 		name: "kernel must not itself import internal/store or a database/cache driver",
 		pkg:  modulePrefix + "kernel",
 		forbidden: []string{
@@ -64,6 +66,19 @@ var rules = []boundaryRule{
 			"github.com/redis",
 		},
 		direct: true,
+	},
+	{
+		// The budget domain (Money, Gate, the Ledger and Counters ports) is
+		// reached by the kernel, so it must stay free of its own storage.
+		// Its Postgres and Redis adapters are internal/cost/postgres and
+		// internal/cost/redis.
+		name: "cost must not reach the database or cache",
+		pkg:  modulePrefix + "internal/cost",
+		forbidden: []string{
+			modulePrefix + "internal/store",
+			"github.com/jackc/pgx",
+			"github.com/redis",
+		},
 	},
 	{
 		// A "/..." pattern, not the bare package path: internal/surfaces
