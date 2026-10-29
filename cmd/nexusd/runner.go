@@ -10,15 +10,15 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/memory"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/queue"
+	"github.com/truongpx396/nexus-agent-demo/internal/runs"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
-	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
 
-// kernelRunStarter is the only implementation of rest.RunStarter this
+// kernelRunStarter is the only implementation of runs.Starter this
 // binary ships, and the only place a kernel.RunState/kernel.RunConfig gets
-// built — internal/surfaces/rest never constructs either directly (starter.go's doc
-// comment).
+// built — internal/surfaces/rest never constructs either directly (internal/runs's
+// package comment).
 type kernelRunStarter struct {
 	kernel      *kernel.Kernel
 	system      string
@@ -58,7 +58,7 @@ type kernelRunStarter struct {
 // drives the actual turn loop via internal/runctl.Control.Resume ->
 // kernel.Kernel.Continue: the same "rehydrate arbitrary existing history,
 // then continue" path a crash-recovered session already uses.
-func (a *kernelRunStarter) StartRun(ctx context.Context, req rest.RunRequest) (<-chan rest.RunEvent, error) {
+func (a *kernelRunStarter) StartRun(ctx context.Context, req runs.Request) (<-chan runs.Event, error) {
 	system := a.system
 	var memorySources []string
 	if a.memory != nil && a.store != nil {
@@ -72,7 +72,7 @@ func (a *kernelRunStarter) StartRun(ctx context.Context, req rest.RunRequest) (<
 		memorySources = snap.SourceIDs
 	}
 
-	// Task 11.1: a run's own MCP catalog addition (rest.RunRequest's own
+	// Task 11.1: a run's own MCP catalog addition (runs.Request's own
 	// doc comment) is appended to the process-wide base catalog/loadedTools
 	// here — additive, the same shape memorySources already is for a
 	// per-run addition to a base config. Every pre-Phase-11 caller leaves
@@ -110,13 +110,13 @@ func (a *kernelRunStarter) StartRun(ctx context.Context, req rest.RunRequest) (<
 	// goroutine blocks forever on a message that will now never arrive.
 	busCh, cancelBus := subscribeRunEvents(ctx, a.redisClient, req.SessionID)
 
-	ch := make(chan rest.RunEvent, 8)
+	ch := make(chan runs.Event, 8)
 	// Seed runs on THIS goroutine, inline with the HTTP request that asked
 	// for it — unlike the old full a.kernel.Run(...), it's only a handful
 	// of durable writes, not the turn loop itself, so there is no "a run
 	// outlives the HTTP request" concern to defer it into a goroutine for.
 	for ev, err := range a.kernel.Seed(ctx, st, cfg) {
-		ch <- rest.RunEvent{Event: ev, Err: err}
+		ch <- runs.Event{Event: ev, Err: err}
 		if err != nil {
 			cancelBus()
 			close(ch)

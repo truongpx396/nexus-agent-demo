@@ -25,6 +25,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/harness"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
+	"github.com/truongpx396/nexus-agent-demo/internal/runs"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces"
 )
@@ -75,7 +76,7 @@ type SMTPConfig struct {
 type Server struct {
 	Store                 *store.Store
 	KeyStore              *crypto.KeyStore
-	Starter               RunStarter
+	Starter               runs.Starter
 	Channels              ChannelPort
 	CatalogManifestDigest []byte
 
@@ -89,7 +90,7 @@ type Server struct {
 	// the next message — see internal/surfaces/telegram.Server's own doc
 	// comment; nil (every pre-continuity caller) always takes the
 	// always-fresh-session path.
-	Resume Resumer
+	Resume runs.Resumer
 
 	// Lock, if set, serializes dispatch's own decide-then-act sequence and
 	// the turn it kicks off around sessionKey (surfaces.AcquireSessionLock),
@@ -283,9 +284,9 @@ func (s *Server) startRun(ctx context.Context, tenantID, userID uuid.UUID, sessi
 		return uuid.Nil, fmt.Errorf("create session: %w", err)
 	}
 
-	req := RunRequest{
+	req := runs.Request{
 		SessionID: sessionID, TenantID: tenantID,
-		Seal:          sealFuncFor(dek, tenantID, sessionID),
+		Seal:          runs.SealFor(dek, tenantID, sessionID),
 		Input:         input,
 		ModelID:       route.ModelID,
 		AutonomyLevel: "supervised",
@@ -313,7 +314,7 @@ func (s *Server) resumeRun(ctx context.Context, tenantID, sessionID uuid.UUID, r
 // drainAndNotify mirrors internal/surfaces/telegram's own (its doc
 // comment) — the only consumer of a run's event channel on this surface,
 // fresh or resumed alike.
-func (s *Server) drainAndNotify(tenantID, sessionID uuid.UUID, recipientAddress string, events <-chan RunEvent, release func()) {
+func (s *Server) drainAndNotify(tenantID, sessionID uuid.UUID, recipientAddress string, events <-chan runs.Event, release func()) {
 	defer release()
 	if s.Outbox == nil {
 		for range events {
@@ -381,15 +382,5 @@ func (s *Server) notificationPayload(ctx context.Context, tenantID, sessionID uu
 
 	default:
 		return nil, false
-	}
-}
-
-func sealFuncFor(dek crypto.DEK, tenantID, sessionID uuid.UUID) SealFunc {
-	return func(plaintext []byte) (sealed, digest []byte, keyID string, err error) {
-		sealed, err = crypto.Seal(dek, plaintext, tenantID.String(), sessionID.String())
-		if err != nil {
-			return nil, nil, "", fmt.Errorf("seal event payload: %w", err)
-		}
-		return sealed, crypto.Digest(plaintext), dek.KeyID, nil
 	}
 }

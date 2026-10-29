@@ -1,6 +1,6 @@
 // Package rest is the REST surface (README task 2.10): POST /v1/runs, GET
 // /v1/runs/{id}, GET /v1/runs/{id}/events. A thin translator only — it
-// creates a session, hands it to a RunStarter (starter.go), and forwards
+// creates a session, hands it to a runs.Starter, and forwards
 // what comes back; it holds no agent control flow of its own (constitution
 // Principle I) and never imports the kernel package directly
 // (tests/contract/boundaries_test.go).
@@ -20,14 +20,15 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
+	"github.com/truongpx396/nexus-agent-demo/internal/runs"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces"
 )
 
 // Server holds everything one REST process needs to admit and serve runs
-// over the RunStarter it wraps.
+// over the runs.Starter it wraps.
 type Server struct {
-	Starter  RunStarter
+	Starter  runs.Starter
 	Store    *store.Store
 	KeyStore *crypto.KeyStore
 
@@ -155,7 +156,7 @@ type SkillSetPort interface {
 	Digest(ctx context.Context, tenantID uuid.UUID) ([]byte, error)
 }
 
-func NewServer(starter RunStarter, st *store.Store, ks *crypto.KeyStore, catalogManifestDigest []byte) *Server {
+func NewServer(starter runs.Starter, st *store.Store, ks *crypto.KeyStore, catalogManifestDigest []byte) *Server {
 	return &Server{Starter: starter, Store: st, KeyStore: ks, CatalogManifestDigest: catalogManifestDigest, broker: newBroker()}
 }
 

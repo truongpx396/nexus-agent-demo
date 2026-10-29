@@ -23,6 +23,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/harness"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
+	"github.com/truongpx396/nexus-agent-demo/internal/runs"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces"
 )
@@ -69,7 +70,7 @@ type ChannelPort interface {
 type Server struct {
 	Store                 *store.Store
 	KeyStore              *crypto.KeyStore
-	Starter               RunStarter
+	Starter               runs.Starter
 	Channels              ChannelPort
 	CatalogManifestDigest []byte
 
@@ -78,7 +79,7 @@ type Server struct {
 	// leaves that path unavailable, degrading every message to Starter's
 	// always-fresh-session behavior (this field's own zero value, which
 	// every pre-continuity caller has).
-	Resume Resumer
+	Resume runs.Resumer
 
 	// Outbox, if set, backs durable at-least-once delivery of
 	// EventApprovalRequested (README task 7.14, reused unchanged) — nil
@@ -255,7 +256,7 @@ func (s *Server) dispatch(ctx context.Context, tenantID, userID uuid.UUID, sessi
 }
 
 // startRun mirrors internal/surfaces/rest's handleCreateRun (session + DEK
-// creation, then RunStarter.StartRun) — duplicated per this codebase's
+// creation, then runs.Starter.StartRun) — duplicated per this codebase's
 // established cross-surface idiom rather than imported, since REST and
 // Telegram share no direct dependency. chatID is the Telegram delivery
 // target for any outbox notification this run produces — carried alongside
@@ -301,9 +302,9 @@ func (s *Server) startRun(ctx context.Context, tenantID, userID uuid.UUID, sessi
 		return uuid.Nil, fmt.Errorf("create session: %w", err)
 	}
 
-	req := RunRequest{
+	req := runs.Request{
 		SessionID: sessionID, TenantID: tenantID,
-		Seal:          sealFuncFor(dek, tenantID, sessionID),
+		Seal:          runs.SealFor(dek, tenantID, sessionID),
 		Input:         input,
 		ModelID:       route.ModelID,
 		AutonomyLevel: "supervised",
@@ -340,7 +341,7 @@ func (s *Server) resumeRun(ctx context.Context, tenantID, sessionID uuid.UUID, c
 // EventContent through the shared outbox — a human must actually see
 // both, unlike every other event this surface has no live SSE subscriber
 // to fan out to anyway.
-func (s *Server) drainAndNotify(tenantID, sessionID uuid.UUID, chatID string, events <-chan RunEvent, release func()) {
+func (s *Server) drainAndNotify(tenantID, sessionID uuid.UUID, chatID string, events <-chan runs.Event, release func()) {
 	defer release()
 	if s.Outbox == nil {
 		for range events {
@@ -417,15 +418,5 @@ func (s *Server) notificationPayload(ctx context.Context, tenantID, sessionID uu
 
 	default:
 		return nil, false
-	}
-}
-
-func sealFuncFor(dek crypto.DEK, tenantID, sessionID uuid.UUID) SealFunc {
-	return func(plaintext []byte) (sealed, digest []byte, keyID string, err error) {
-		sealed, err = crypto.Seal(dek, plaintext, tenantID.String(), sessionID.String())
-		if err != nil {
-			return nil, nil, "", fmt.Errorf("seal event payload: %w", err)
-		}
-		return sealed, crypto.Digest(plaintext), dek.KeyID, nil
 	}
 }

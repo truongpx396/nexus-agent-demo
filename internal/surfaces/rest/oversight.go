@@ -15,8 +15,8 @@ import (
 // directly: it transitively imports kernel (for Kernel.Resume), and
 // tests/contract/boundaries_test.go's "surfaces must not import the kernel"
 // rule walks the FULL transitive import graph, not just direct imports —
-// exactly the reason RunStarter/SealFunc already exist as a seam for
-// kernel.Kernel.Run one file up (server.go/starter.go). Context is the
+// exactly the reason runs.Starter/runs.SealFunc already exist as a seam for
+// kernel.Kernel.Run (internal/runs). Context is the
 // decision-ready rendering (README §5's Phase 5 demo: "renders recipient/
 // subject/attachment digests ... never a bare UUID") — passed through
 // as-is; this package has no reason to know its shape.
@@ -49,7 +49,7 @@ type ResumeOutcome struct {
 // internal/oversight — cmd/nexusd supplies the concrete implementation,
 // backed by oversight.Approvals + oversight.Resumer, the only place in the
 // binary allowed to import both this package and internal/oversight (the
-// same exemption starter.go's own doc comment already grants
+// same exemption internal/runs's package comment already grants
 // kernelRunStarter for kernel.Kernel.Run).
 type OversightPort interface {
 	GetApproval(ctx context.Context, tenantID, approvalID uuid.UUID) (ApprovalView, error)

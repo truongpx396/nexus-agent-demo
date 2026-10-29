@@ -147,6 +147,7 @@ nexus-agent-demo/
 │   ├── sandbox/                # docker exec, limits, deny-net, (optional) broker
 │   ├── plan/                   # orchestration plane: schema, validator, predicate AST, evaluator
 │   ├── delegate/               # sub-agent seam (a tool invocation, not a side channel)
+│   ├── runs/                   # application layer: the run vocabulary every surface shares (Request/Event/Starter/Resumer, SealFor)
 │   ├── surfaces/               # rest/, cli/, telegram/, zalo/, email/, cron/, mcp/ — Phase 11 adds the last five
 │   ├── connectors/             # Phase 11: per-user OAuth token vault, sealed under crypto/
 │   ├── retrieval/              # Phase 12: pgvector index, tenant-scoped like every other table

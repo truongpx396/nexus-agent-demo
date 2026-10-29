@@ -15,6 +15,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent-demo/internal/runs"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/migrations"
 )
@@ -94,12 +95,12 @@ func (l poolTenantLister) ListTenantIDs(ctx context.Context) ([]uuid.UUID, error
 }
 
 type fakeStarter struct {
-	starts []RunRequest
+	starts []runs.Request
 }
 
-func (f *fakeStarter) StartRun(_ context.Context, req RunRequest) (<-chan RunEvent, error) {
+func (f *fakeStarter) StartRun(_ context.Context, req runs.Request) (<-chan runs.Event, error) {
 	f.starts = append(f.starts, req)
-	ch := make(chan RunEvent)
+	ch := make(chan runs.Event)
 	close(ch)
 	return ch, nil
 }

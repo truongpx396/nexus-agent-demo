@@ -319,40 +319,35 @@ func serve(ctx context.Context) error {
 	defer stopEventBus()
 
 	// Phase 11: four more thin surfaces over the same kernel (README §11) —
-	// each gets the SAME session-creation-then-StartRun sequence REST uses,
-	// via its own local *StarterAdapter wrapping the one starter every
-	// surface shares.
+	// each starts runs through the one starter every surface shares.
 	channels := &MessagingChannels{Store: st, Keys: keyStore}
 	outbox := &surfaces.Outbox{Store: st, Keys: keyStore, Chain: chain}
 
-	// One adapter value per surface satisfies both RunStarter and Resumer
-	// (surfaces_phase11.go) — passed to both the Starter: and Resume:
-	// fields below, so a fresh message and a resumed one drive the SAME
-	// underlying *runctl.Control/*kernelRunStarter pair.
-	telegramAdapter := telegramStarterAdapter{k: starter, ctl: ctl, redisClient: redisClient}
-	zaloAdapter := zaloStarterAdapter{k: starter, ctl: ctl, redisClient: redisClient}
-	emailAdapter := emailStarterAdapter{k: starter, ctl: ctl, redisClient: redisClient}
+	// Starter and Resume are the same two values for all three chat surfaces,
+	// so a fresh message and a resumed one drive the SAME underlying
+	// *kernelRunStarter / *runctl.Control pair.
+	resume := conversationResumer{ctl: ctl, redisClient: redisClient}
 
 	telegramSrv := &telegram.Server{
-		Store: st, KeyStore: keyStore, Starter: telegramAdapter, Resume: telegramAdapter, Channels: channels,
+		Store: st, KeyStore: keyStore, Starter: starter, Resume: resume, Channels: channels,
 		CatalogManifestDigest: catalogManifestDigest, Outbox: outbox,
 		RateLimit: telegram.NewRateLimiter(20, time.Minute),
 		Lock:      sessionLock,
 	}
 	zaloSrv := &zalo.Server{
-		Store: st, KeyStore: keyStore, Starter: zaloAdapter, Resume: zaloAdapter, Channels: channels,
+		Store: st, KeyStore: keyStore, Starter: starter, Resume: resume, Channels: channels,
 		CatalogManifestDigest: catalogManifestDigest, Outbox: outbox,
 		RateLimit: zalo.NewRateLimiter(20, time.Minute),
 		Lock:      sessionLock,
 	}
 	emailSrv := &email.Server{
-		Store: st, KeyStore: keyStore, Starter: emailAdapter, Resume: emailAdapter, Channels: channels,
+		Store: st, KeyStore: keyStore, Starter: starter, Resume: resume, Channels: channels,
 		CatalogManifestDigest: catalogManifestDigest, Outbox: outbox,
 		RateLimit: email.NewRateLimiter(20, time.Minute),
 		Lock:      sessionLock,
 	}
 	scheduler := &cron.Scheduler{
-		Store: st, KeyStore: keyStore, Starter: cronStarterAdapter{k: starter}, Tenants: adminTenantLister{},
+		Store: st, KeyStore: keyStore, Starter: starter, Tenants: adminTenantLister{},
 		CatalogManifestDigest: catalogManifestDigest,
 	}
 	go scheduler.Run(ctx)

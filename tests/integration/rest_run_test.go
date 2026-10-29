@@ -41,6 +41,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
+	"github.com/truongpx396/nexus-agent-demo/internal/runs"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
@@ -226,7 +227,7 @@ func setupPostgresAndPgBouncer(t *testing.T) (appPool *pgxpool.Pool, cleanup fun
 
 // testRunStarter mirrors cmd/nexusd/main.go's kernelRunStarter — the only
 // place a kernel.RunState/kernel.RunConfig may be constructed from a
-// rest.RunRequest, per internal/surfaces/rest's boundary rule
+// runs.Request, per internal/surfaces/rest's boundary rule
 // (tests/contract/boundaries_test.go). Duplicating this small adapter here
 // rather than exporting it from cmd/nexusd is deliberate: cmd/ is a binary
 // entrypoint, not a library other packages should import.
@@ -234,18 +235,18 @@ type testRunStarter struct {
 	kernel *kernel.Kernel
 }
 
-func (a *testRunStarter) StartRun(_ context.Context, req rest.RunRequest) (<-chan rest.RunEvent, error) {
+func (a *testRunStarter) StartRun(_ context.Context, req runs.Request) (<-chan runs.Event, error) {
 	st := &kernel.RunState{TenantID: req.TenantID, SessionID: req.SessionID, Seal: kernel.SealFunc(req.Seal)}
 	cfg := kernel.RunConfig{
 		System: "You are a helpful agent.", ModelID: req.ModelID, MaxTurns: 10, Input: req.Input,
 		Conversational: req.Conversational,
 	}
 
-	ch := make(chan rest.RunEvent, 8)
+	ch := make(chan runs.Event, 8)
 	go func() {
 		defer close(ch)
 		for ev, err := range a.kernel.Run(context.Background(), st, cfg) {
-			ch <- rest.RunEvent{Event: ev, Err: err}
+			ch <- runs.Event{Event: ev, Err: err}
 			if err != nil {
 				return
 			}

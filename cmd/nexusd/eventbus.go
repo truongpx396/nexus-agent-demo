@@ -11,6 +11,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
+	"github.com/truongpx396/nexus-agent-demo/internal/runs"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
 )
 
@@ -108,12 +109,12 @@ func startEventBus(ctx context.Context, redisClient *redis.Client, srv *rest.Ser
 // goroutine and its Redis Pub/Sub connection. The success path (draining
 // to a terminal event or error) already triggers this internally and
 // calling it again is a harmless no-op.
-func subscribeRunEvents(ctx context.Context, redisClient *redis.Client, sessionID uuid.UUID) (events <-chan rest.RunEvent, cancel func()) {
+func subscribeRunEvents(ctx context.Context, redisClient *redis.Client, sessionID uuid.UUID) (events <-chan runs.Event, cancel func()) {
 	sub := redisClient.Subscribe(ctx, rest.EventsChannel(sessionID))
 	if _, err := sub.Receive(ctx); err != nil {
 		log.Error().Err(err).Any("session_id", sessionID).Msg("nexusd: subscribe to run events")
 	}
-	out := make(chan rest.RunEvent, 16)
+	out := make(chan runs.Event, 16)
 	go func() {
 		defer close(out)
 		defer func() { _ = sub.Close() }()
@@ -130,7 +131,7 @@ func subscribeRunEvents(ctx context.Context, redisClient *redis.Client, sessionI
 			if wire.Event == nil {
 				continue
 			}
-			out <- rest.RunEvent{Event: *wire.Event, Err: evErr}
+			out <- runs.Event{Event: *wire.Event, Err: evErr}
 			if evErr != nil || wire.Event.Type == eventlog.EventTerminal {
 				return
 			}
@@ -147,17 +148,17 @@ func subscribeRunEvents(ctx context.Context, redisClient *redis.Client, sessionI
 // before calling ctl.ResumeConversation (which durably appends the
 // message and enqueues the continuation, internal/runctl.Control.
 // ResumeConversation's own doc comment) is what keeps this race-free.
-func resumeConversationEvents(ctx context.Context, redisClient *redis.Client, ctl *runctl.Control, tenantID, sessionID uuid.UUID, input string) (<-chan rest.RunEvent, error) {
+func resumeConversationEvents(ctx context.Context, redisClient *redis.Client, ctl *runctl.Control, tenantID, sessionID uuid.UUID, input string) (<-chan runs.Event, error) {
 	busCh, cancelBus := subscribeRunEvents(ctx, redisClient, sessionID)
 	ev, err := ctl.ResumeConversation(ctx, tenantID, sessionID, input)
 	if err != nil {
 		cancelBus() // nothing was ever appended/enqueued for this subscription to observe — don't leak it
 		return nil, err
 	}
-	out := make(chan rest.RunEvent, 8)
+	out := make(chan runs.Event, 8)
 	go func() {
 		defer close(out)
-		out <- rest.RunEvent{Event: ev}
+		out <- runs.Event{Event: ev}
 		for re := range busCh {
 			out <- re
 			if re.Err != nil || re.Event.Type == eventlog.EventTerminal {
