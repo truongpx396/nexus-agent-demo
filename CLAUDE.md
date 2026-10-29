@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-A single-binary Go reimplementation of `truongpx396/nexus-agent` (a multi-tenant, production-grade AI agent platform) that keeps every architectural seam and control but collapses deployment topology. Go 1.25, Postgres + PgBouncer + Redis, React web app in `web/`.
+A single-binary Go reimplementation of `truongpx396/nexus-agent` (a multi-tenant, production-grade AI agent platform) that keeps every architectural seam and control but collapses deployment topology. Go 1.26, Postgres + PgBouncer + Redis, React web app in `web/`.
 
 ## Commands
 
@@ -12,13 +12,13 @@ go test ./...                   # = make test: unit + property tests, no externa
 go test ./kernel -run TestName -v                                  # single test
 go test -race -tags=integration ./...                              # integration (CI runs this)
 go test -tags=integration ./tests/integration -run TestName -v     # single integration test
-golangci-lint run --build-tags=integration ./...                   # what CI runs (v2.5.0)
+golangci-lint run --build-tags=integration ./...                   # what CI runs (v2.15.0)
 make eval                       # eval release gate (also a CI job)
 make pr-size                    # changed lines vs origin/main; CI's pr-size workflow fails above 1000 (see Conventions)
 go build ./... && go vet ./... && golangci-lint run --build-tags=integration ./... && go test ./...   # pre-"done" check
 ```
 
-- `make lint` omits `--build-tags=integration`, so it skips integration-tagged files that CI lints. Use the command above. CI pins golangci-lint v2.5.0; a newer local binary can report findings CI won't.
+- `make lint` omits `--build-tags=integration`, so it skips integration-tagged files that CI lints. Use the command above. CI pins golangci-lint v2.15.0 (`.github/workflows/ci.yml`); a differently-versioned local binary can report findings CI won't. golangci-lint refuses to run when it was built with an older Go than `go.mod`'s `go` directive, so bump the pin whenever that directive moves past the Go the pinned release was built with. `govulncheck` runs against the exact Go patch `go.mod` names (`setup-go` reads it), so keep that directive on a patched release.
 - Integration tests start their own disposable Postgres + PgBouncer (testcontainers): Docker must be running, `make up` is not needed. They are the fastest, cleanest signal when runtime behavior looks wrong — prefer them over debugging the long-lived local stack.
 - Live-model evals are behind the `liveeval` build tag. Correctness tests never call a live model; they use `internal/provider/fake`.
 - CI also runs `govulncheck`, and `npm run lint` + `npm run build` in `web/`.

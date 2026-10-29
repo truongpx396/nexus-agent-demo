@@ -136,7 +136,7 @@ func setupPostgresAndPgBouncer(t *testing.T) (appPool *pgxpool.Pool, cleanup fun
 	pbReq := testcontainers.ContainerRequest{
 		Image:        "edoburu/pgbouncer:latest",
 		ExposedPorts: []string{"5432/tcp"},
-		Env: map[string]string{
+		Env: map[string]string{ //nolint:gosec // disposable test container's own credentials
 			"DATABASE_URL":      "postgres://nexus:nexus@postgres:5432/nexus",
 			"POOL_MODE":         "transaction",
 			"AUTH_TYPE":         "scram-sha-256",
@@ -204,7 +204,7 @@ type testRunStarter struct {
 	kernel *kernel.Kernel
 }
 
-func (a *testRunStarter) StartRun(_ context.Context, req runs.Request) (<-chan runs.Event, error) {
+func (a *testRunStarter) StartRun(ctx context.Context, req runs.Request) (<-chan runs.Event, error) {
 	st := &kernel.RunState{TenantID: req.TenantID, SessionID: req.SessionID, Seal: kernel.SealFunc(req.Seal)}
 	cfg := kernel.RunConfig{
 		System: "You are a helpful agent.", ModelID: req.ModelID, MaxTurns: 10, Input: req.Input,
@@ -214,7 +214,7 @@ func (a *testRunStarter) StartRun(_ context.Context, req runs.Request) (<-chan r
 	ch := make(chan runs.Event, 8)
 	go func() {
 		defer close(ch)
-		for ev, err := range a.kernel.Run(context.Background(), st, cfg) {
+		for ev, err := range a.kernel.Run(context.WithoutCancel(ctx), st, cfg) {
 			ch <- runs.Event{Event: ev, Err: err}
 			if err != nil {
 				return

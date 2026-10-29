@@ -207,7 +207,7 @@ func (d *Delegations) Spawn(ctx context.Context, req SpawnRequest) (uuid.UUID, e
 	if tracer := childKernel.Tracer; tracer != nil {
 		link = tracer.Detach(ctx)
 	}
-	go func() {
+	go func() { //nolint:gosec // deliberately detached: the child run outlives the delegating request; its trace is linked via Tracer.Detach/Attach, not parented
 		bg := context.Background()
 		if tracer := childKernel.Tracer; tracer != nil {
 			bg = tracer.Attach(bg, link)

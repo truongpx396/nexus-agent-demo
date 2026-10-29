@@ -399,7 +399,8 @@ func serve(ctx context.Context) error {
 	}
 	go func() {
 		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		// ctx is already cancelled here, so the shutdown deadline hangs off a copy that keeps its values but not its cancellation.
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
 		if err := httpSrv.Shutdown(shutdownCtx); err != nil {
 			log.Error().Err(err).Msg("nexusd: graceful shutdown failed")

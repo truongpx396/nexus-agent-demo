@@ -67,6 +67,18 @@ func TestExtractivePass_EmptyAndSingleton(t *testing.T) {
 	}
 }
 
+func TestExtractivePass_TwoMessagesAreBothKeptWithNoOmissionNote(t *testing.T) {
+	first := provider.TextMessage("user", "first message")
+	second := provider.TextMessage("assistant", "second message")
+	got := ExtractivePass([]provider.Message{first, second})
+	if want := line(first) + "\n" + line(second); got != want {
+		t.Errorf("ExtractivePass(two messages) = %q, want %q", got, want)
+	}
+	if strings.Contains(got, "omitted") {
+		t.Errorf("ExtractivePass(two messages) = %q, want no omission note when nothing was omitted", got)
+	}
+}
+
 func TestCondensePrompt_InstructsAgainstClaimingAnEffectOutcome(t *testing.T) {
 	// This is an instruction TO the condenser model, so it necessarily
 	// names "completed"/"failed" — what matters is that it forbids

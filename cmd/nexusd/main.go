@@ -28,12 +28,12 @@ const (
 	// migrations are an admin operation, not a tenant-scoped one, and DDL
 	// has no reason to go through the transaction-pooling tier the runtime
 	// path depends on.
-	defaultMigrateDSN = "postgres://nexus:nexus@localhost:5433/nexus"
+	defaultMigrateDSN = "postgres://nexus:nexus@localhost:5433/nexus" //nolint:gosec // local-dev default matching deploy/docker-compose.yml, not a real credential
 	// defaultAppDSN connects THROUGH PgBouncer in transaction-pooling
 	// mode, as nexus_app — an ordinary role with no RLS bypass (migrations/
 	// 0000_app_role.sql). nexus, the migration role, is a superuser and
 	// would silently see every tenant's rows regardless of RLS.
-	defaultAppDSN = "postgres://nexus_app:nexus_app@localhost:6432/nexus"
+	defaultAppDSN = "postgres://nexus_app:nexus_app@localhost:6432/nexus" //nolint:gosec // local-dev default matching deploy/docker-compose.yml, not a real credential
 	// defaultRedisAddr matches deploy/docker-compose.yml's host mapping
 	// (6380, not Redis's usual 6379 — see that file's own comment on why).
 	// internal/cost.Gate uses it for the tenant-ceiling epoch-marked

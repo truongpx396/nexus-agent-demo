@@ -210,7 +210,7 @@ func (r *RedisStreams) claim(ctx context.Context, owner string, msg redis.XMessa
 	job.Status = StatusLeased
 	job.LeaseOwner = owner
 
-	raw, err := json.Marshal(job)
+	raw, err := json.Marshal(job) //nolint:gosec // SessionKey is the per-session serial-lock routing key, not a secret
 	if err != nil {
 		return Job{}, fmt.Errorf("marshal claimed job %s: %w", job.JobID, err)
 	}
@@ -259,7 +259,7 @@ func (r *RedisStreams) promoteDelayed(ctx context.Context) error {
 }
 
 func (r *RedisStreams) pushDelayed(ctx context.Context, job Job, at time.Time) error {
-	raw, err := json.Marshal(job)
+	raw, err := json.Marshal(job) //nolint:gosec // SessionKey is the per-session serial-lock routing key, not a secret
 	if err != nil {
 		return fmt.Errorf("marshal delayed job %s: %w", job.JobID, err)
 	}

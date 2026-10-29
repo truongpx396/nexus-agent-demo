@@ -259,25 +259,26 @@ func (s *Server) startRun(ctx context.Context, tenantID, userID uuid.UUID, sessi
 		release()
 		return uuid.Nil, fmt.Errorf("start run: %w", err)
 	}
-	go s.drainAndNotify(tenantID, launched.SessionID, recipientAddress, launched.Events, release)
+	go s.drainAndNotify(context.WithoutCancel(ctx), tenantID, launched.SessionID, recipientAddress, launched.Events, release)
 	return launched.SessionID, nil
 }
 
 // resumeRun mirrors internal/surfaces/telegram's own (its doc comment).
 func (s *Server) resumeRun(ctx context.Context, tenantID, sessionID uuid.UUID, recipientAddress, input string, release func()) (uuid.UUID, error) {
-	events, err := s.Resume.ResumeConversation(context.Background(), tenantID, sessionID, input)
+	runCtx := context.WithoutCancel(ctx) // a run outlives this webhook request
+	events, err := s.Resume.ResumeConversation(runCtx, tenantID, sessionID, input)
 	if err != nil {
 		release()
 		return uuid.Nil, fmt.Errorf("resume conversation: %w", err)
 	}
-	go s.drainAndNotify(tenantID, sessionID, recipientAddress, events, release)
+	go s.drainAndNotify(runCtx, tenantID, sessionID, recipientAddress, events, release)
 	return sessionID, nil
 }
 
 // drainAndNotify mirrors internal/surfaces/telegram's own (its doc
 // comment) — the only consumer of a run's event channel on this surface,
 // fresh or resumed alike.
-func (s *Server) drainAndNotify(tenantID, sessionID uuid.UUID, recipientAddress string, events <-chan runs.Event, release func()) {
+func (s *Server) drainAndNotify(ctx context.Context, tenantID, sessionID uuid.UUID, recipientAddress string, events <-chan runs.Event, release func()) {
 	defer release()
 	if s.Outbox == nil {
 		for range events {
@@ -289,11 +290,11 @@ func (s *Server) drainAndNotify(tenantID, sessionID uuid.UUID, recipientAddress 
 		if re.Err != nil {
 			continue
 		}
-		payload, ok := s.notificationPayload(context.Background(), tenantID, sessionID, re.Event)
+		payload, ok := s.notificationPayload(ctx, tenantID, sessionID, re.Event)
 		if !ok {
 			continue
 		}
-		if err := s.Outbox.Deliver(context.Background(), tenantID, sessionID, re.Event.Seq, "email", recipientAddress, payload, sender); err != nil {
+		if err := s.Outbox.Deliver(ctx, tenantID, sessionID, re.Event.Seq, "email", recipientAddress, payload, sender); err != nil {
 			log.Error().Err(err).Any("session_id", sessionID).Msg("email: deliver notification")
 		}
 	}

@@ -44,16 +44,18 @@ func ShouldCondense(transcript []provider.Message, thresholdBytes int) (bool, in
 // count — enough to preserve the shape of what was condensed without an
 // LLM call, for when the compaction budget reservation is refused.
 func ExtractivePass(transcript []provider.Message) string {
-	switch len(transcript) {
-	case 0:
+	n := len(transcript)
+	if n == 0 {
 		return ""
+	}
+	first, last := line(transcript[0]), line(transcript[n-1])
+	switch n {
 	case 1:
-		return line(transcript[0])
+		return first
 	case 2:
-		return line(transcript[0]) + "\n" + line(transcript[1])
+		return first + "\n" + last
 	default:
-		return fmt.Sprintf("%s\n[extractive: %d messages omitted]\n%s",
-			line(transcript[0]), len(transcript)-2, line(transcript[len(transcript)-1]))
+		return fmt.Sprintf("%s\n[extractive: %d messages omitted]\n%s", first, n-2, last)
 	}
 }
 
