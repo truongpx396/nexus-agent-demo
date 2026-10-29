@@ -97,13 +97,25 @@ func TestRunCtl_ResumeConversation_ConcurrentCallersResumeExactlyOnce(t *testing
 	const callers = 8
 	// Open every connection up front: the pool otherwise dials them lazily,
 	// which staggers the callers enough to hide the race this test is for.
-	warm := make([]*pgxpool.Conn, callers)
-	for i := range warm {
-		c, err := pool.Acquire(ctx)
-		if err != nil {
-			t.Fatalf("warm connection %d: %v", i, err)
+	// Bounded, so a pool smaller than callers fails here with a clear error
+	// instead of hanging until the package timeout.
+	warmCtx, cancelWarm := context.WithTimeout(ctx, 30*time.Second)
+	defer cancelWarm()
+	var warm []*pgxpool.Conn
+	// Release on any exit: t.Fatalf runs the deferred cleanup, and
+	// pool.Close() waits for every held connection — without this a failed
+	// warm-up would turn into the very hang the timeout above is there to avoid.
+	defer func() {
+		for _, c := range warm {
+			c.Release()
 		}
-		warm[i] = c
+	}()
+	for i := 0; i < callers; i++ {
+		c, err := pool.Acquire(warmCtx)
+		if err != nil {
+			t.Fatalf("warm connection %d of %d (pool max %d): %v", i+1, callers, pool.Config().MaxConns, err)
+		}
+		warm = append(warm, c)
 	}
 	for _, c := range warm {
 		c.Release()

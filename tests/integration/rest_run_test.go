@@ -179,7 +179,16 @@ func setupPostgresAndPgBouncer(t *testing.T) (appPool *pgxpool.Pool, cleanup fun
 		t.Fatalf("apply migrations: %v", err)
 	}
 
-	appPool, err = pgxpool.New(ctx, appDSN)
+	// An explicit pool size: pgxpool's default is max(4, NumCPU), so a test
+	// that needs N connections at once (resume_race_test.go holds eight) would
+	// pass on a many-core laptop and block forever on a CI runner. 20 matches
+	// production (cmd/nexusd appPoolMaxConns) and PgBouncer's DEFAULT_POOL_SIZE.
+	appCfg, err := pgxpool.ParseConfig(appDSN)
+	if err != nil {
+		t.Fatalf("parse pgbouncer dsn: %v", err)
+	}
+	appCfg.MaxConns = 20
+	appPool, err = pgxpool.NewWithConfig(ctx, appCfg)
 	if err != nil {
 		t.Fatalf("connect through pgbouncer: %v", err)
 	}
