@@ -7,8 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 )
 
 // InvalidationReason names why a caller invalidated a session's outstanding
@@ -70,14 +69,14 @@ func (a *Approvals) Invalidate(ctx context.Context, tenantID, sessionID uuid.UUI
 		pending.Status, pending.Reason = ApprovalInvalidated, string(reason)
 
 		toolID := pending.ToolID
-		if _, err := a.appendEvent(ctx, tx, tenantID, sessionID, store.EventApprovalInvalidated, &toolID, nil,
+		if _, err := a.appendEvent(ctx, tx, tenantID, sessionID, eventlog.EventApprovalInvalidated, &toolID, nil,
 			approvalDecisionPayload{ApprovalID: pending.ApprovalID, ToolID: pending.ToolID, Reason: string(reason)},
 		); err != nil {
 			return err
 		}
 
 		ref := pending.ToolUseEventID
-		if _, err := a.appendEvent(ctx, tx, tenantID, sessionID, store.EventToolResult, &toolID, &ref,
+		if _, err := a.appendEvent(ctx, tx, tenantID, sessionID, eventlog.EventToolResult, &toolID, &ref,
 			syntheticResultPayload{IsError: true, Synthetic: true, Reason: "approval_invalidated: " + string(reason)},
 		); err != nil {
 			return err
@@ -123,7 +122,7 @@ func (i *Inputs) Invalidate(ctx context.Context, tenantID, sessionID uuid.UUID, 
 				return err
 			}
 			ir.Status, ir.Reason = InputInvalidated, string(reason)
-			if _, err := i.appendEvent(ctx, tx, tenantID, sessionID, store.EventInputInvalidated, nil, nil,
+			if _, err := i.appendEvent(ctx, tx, tenantID, sessionID, eventlog.EventInputInvalidated, nil, nil,
 				inputRequestIDPayload{InputRequestID: ir.InputRequestID},
 			); err != nil {
 				return err

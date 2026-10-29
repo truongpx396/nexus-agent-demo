@@ -674,6 +674,23 @@ passes, including the new concurrent-delivery tests and
 `TestRunCtl_ResumeConversation_ConcurrentCallersResumeExactlyOnce` (8 callers released together
 against a pre-warmed connection pool; it fails 6 runs out of 6 without 18.4's compare-and-set).
 
+### Phase 19 — Hexagonal architecture: persistence and use-case seams
+
+Not part of the original 67-pattern coverage and, like Phases 13 and 18, nothing here is a new
+architectural idea: it closes the gap between "every seam is a Go interface" and a core that
+actually has no knowledge of its adapters. An architecture review (2026-10-29) found
+ports-and-adapters applied at the volatile edges (`provider.Provider`, `queue.Port`,
+`tools.SandboxExec`, `audit.Signer`, `controlplane.Port`) but not at persistence or the use-case
+layer: `kernel.Kernel` held a concrete `*store.Store` and passed `pgx.Tx` through its hooks; every
+surface opened tenant transactions itself; the session-plus-DEK admission sequence existed five
+times (REST, Telegram, Zalo, email, cron) together with five copies of `RunRequest`/`RunEvent`/
+`SealFunc`/`RunStarter`; and the kernel loop could only be exercised against Postgres. Nothing was
+deployed, so each task below is a straight refactor with no data migration.
+
+| # | Task | Closes |
+|---|---|---|
+| 19.1 | `internal/eventlog`: the event-log domain model (`Event`, the `EventType` taxonomy, `Actor`, `CurrentSchemaVersion`, `Condensation`, the session statuses) moves out of `internal/store`, which keeps only the Postgres adapter. The move is a mechanical rename (`store.X` → `eventlog.X`, no behavior change). `tests/contract` gains a leaf rule (eventlog imports nothing from this module and no database or cache driver), and its matcher now treats a forbidden path as a package tree — before, entries were matched by exact path, so "`internal/version` imports nothing else in this module" (forbidding the non-package `…/internal`) could not fail and "kernel must not import surfaces" missed `internal/surfaces/rest` | `kernel/` cannot become persistence-free while its vocabulary lives in the Postgres package; two boundary rules were vacuous |
+
 ---
 
 ## 3. Effort summary

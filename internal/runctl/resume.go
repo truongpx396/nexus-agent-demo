@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
@@ -39,8 +40,8 @@ func (e ErrUnresolvedClaims) Error() string {
 // kernel.Kernel.Continue — whose own first step, Hygiene, synthesizes a
 // result for whatever tool_use a prior process left unpaired, never
 // re-executing it.
-func (c *Control) Resume(ctx context.Context, tenantID, sessionID uuid.UUID) iter.Seq2[store.Event, error] {
-	return func(yield func(store.Event, error) bool) {
+func (c *Control) Resume(ctx context.Context, tenantID, sessionID uuid.UUID) iter.Seq2[eventlog.Event, error] {
+	return func(yield func(eventlog.Event, error) bool) {
 		var claimIDs []uuid.UUID
 		if err := c.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 			claims, err := store.ListInFlightClaims(ctx, tx, sessionID)
@@ -52,28 +53,28 @@ func (c *Control) Resume(ctx context.Context, tenantID, sessionID uuid.UUID) ite
 			}
 			return nil
 		}); err != nil {
-			yield(store.Event{}, err)
+			yield(eventlog.Event{}, err)
 			return
 		}
 		if len(claimIDs) > 0 {
-			yield(store.Event{}, ErrUnresolvedClaims{SessionID: sessionID, ClaimIDs: claimIDs})
+			yield(eventlog.Event{}, ErrUnresolvedClaims{SessionID: sessionID, ClaimIDs: claimIDs})
 			return
 		}
 
 		st, sess, err := c.loadRunState(ctx, tenantID, sessionID)
 		if err != nil {
-			yield(store.Event{}, err)
+			yield(eventlog.Event{}, err)
 			return
 		}
-		if sess.Status == store.SessionStatusCompleted || sess.Status == store.SessionStatusFailed {
-			yield(store.Event{}, fmt.Errorf("runctl: session %s is already terminal (%s); nothing to resume", sessionID, sess.Status))
+		if sess.Status == eventlog.SessionStatusCompleted || sess.Status == eventlog.SessionStatusFailed {
+			yield(eventlog.Event{}, fmt.Errorf("runctl: session %s is already terminal (%s); nothing to resume", sessionID, sess.Status))
 			return
 		}
-		if sess.Status == store.SessionStatusSuspended {
-			yield(store.Event{}, fmt.Errorf("runctl: session %s is suspended on a pending approval or input request; resolve it (internal/oversight) rather than calling Resume", sessionID))
+		if sess.Status == eventlog.SessionStatusSuspended {
+			yield(eventlog.Event{}, fmt.Errorf("runctl: session %s is suspended on a pending approval or input request; resolve it (internal/oversight) rather than calling Resume", sessionID))
 			return
 		}
-		if sess.Status == store.SessionStatusAwaitingInput {
+		if sess.Status == eventlog.SessionStatusAwaitingInput {
 			// A conversational session paused here deliberately (kernel/
 			// terminal.go's suspendForUserInput) — it isn't a crashed or
 			// interrupted run needing kernel.Continue's Hygiene-first
@@ -81,7 +82,7 @@ func (c *Control) Resume(ctx context.Context, tenantID, sessionID uuid.UUID) ite
 			// that through kernel.Continue would resume with no new input
 			// at all, which isn't what Continue is for; ResumeConversation
 			// is the one correct path back out of this status.
-			yield(store.Event{}, fmt.Errorf("runctl: session %s is awaiting the next conversation turn; call ResumeConversation with the new message rather than Resume", sessionID))
+			yield(eventlog.Event{}, fmt.Errorf("runctl: session %s is awaiting the next conversation turn; call ResumeConversation with the new message rather than Resume", sessionID))
 			return
 		}
 

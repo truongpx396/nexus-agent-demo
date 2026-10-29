@@ -28,6 +28,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/delegate"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 	"github.com/truongpx396/nexus-agent-demo/internal/permissions"
 	"github.com/truongpx396/nexus-agent-demo/internal/plan"
@@ -118,7 +119,7 @@ func TestPlan_ZeroTokenRouting(t *testing.T) {
 	}
 
 	final := r.getSession(t, sessionID)
-	if final.Status != store.SessionStatusCompleted {
+	if final.Status != eventlog.SessionStatusCompleted {
 		t.Fatalf("session status = %q, want completed", final.Status)
 	}
 	if got := counting.count(); got != 2 {
@@ -129,10 +130,10 @@ func TestPlan_ZeroTokenRouting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list events: %v", err)
 	}
-	if !hasEventType(events, store.EventPlanTransition) {
+	if !hasEventType(events, eventlog.EventPlanTransition) {
 		t.Fatalf("no plan_transition event was logged")
 	}
-	if !hasEventType(events, store.EventPlanCompleted) {
+	if !hasEventType(events, eventlog.EventPlanCompleted) {
 		t.Fatalf("no plan_completed event was logged")
 	}
 }
@@ -262,7 +263,7 @@ func TestDelegate_RoundTrip(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Run: %v", err)
 		}
-		if ev.Type == store.EventDelegationRequested {
+		if ev.Type == eventlog.EventDelegationRequested {
 			sawDelegationRequested = true
 		}
 	}
@@ -270,11 +271,11 @@ func TestDelegate_RoundTrip(t *testing.T) {
 		t.Fatalf("parent run never appended delegation_requested")
 	}
 	parentAfterSuspend := r.getSession(t, parentID)
-	if parentAfterSuspend.Status != store.SessionStatusSuspended {
+	if parentAfterSuspend.Status != eventlog.SessionStatusSuspended {
 		t.Fatalf("parent status = %q, want suspended", parentAfterSuspend.Status)
 	}
 
-	final := waitForStatus(t, r, parentID, store.SessionStatusCompleted)
+	final := waitForStatus(t, r, parentID, eventlog.SessionStatusCompleted)
 	if final.TerminalReason == nil || *final.TerminalReason != "completed" {
 		t.Fatalf("parent terminal reason = %v, want completed", final.TerminalReason)
 	}
@@ -283,7 +284,7 @@ func TestDelegate_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list parent events: %v", err)
 	}
-	if !hasEventType(events, store.EventDelegationReturned) {
+	if !hasEventType(events, eventlog.EventDelegationReturned) {
 		t.Fatalf("parent's own log never shows delegation_returned")
 	}
 
@@ -532,7 +533,7 @@ func TestSpawn_ChildrenNestUnderParentTraceSpan(t *testing.T) {
 	parentSpan.End()
 
 	for _, childID := range childIDs {
-		waitForStatus(t, r, childID, store.SessionStatusCompleted)
+		waitForStatus(t, r, childID, eventlog.SessionStatusCompleted)
 	}
 
 	// waitForStatus above only proves the child's session ROW reached

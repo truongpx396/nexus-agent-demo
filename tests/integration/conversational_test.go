@@ -4,7 +4,7 @@
 // migrations/0023_conversational_sessions.sql) are the real, backend-level
 // replacement for the web UI's earlier client-side "chain of separate
 // sessions" hack: a plain content reply pauses the session
-// (store.SessionStatusAwaitingInput) instead of terminating it, and
+// (eventlog.SessionStatusAwaitingInput) instead of terminating it, and
 // POST /v1/runs/{id}/steer transparently resumes it in place
 // (internal/surfaces/rest/runctl.go's handleSteerRun) — same session_id,
 // same audit trail, same cost ceiling, same Rule-of-Two taint state across
@@ -29,6 +29,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/authn"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
@@ -158,7 +159,7 @@ func TestKernel_ConversationalRunPausesInsteadOfTerminating(t *testing.T) {
 		AutonomyLevel: "supervised", Conversational: true,
 	}
 
-	var events []store.Event
+	var events []eventlog.Event
 	for ev, err := range k.Run(ctx, runState, cfg) {
 		if err != nil {
 			t.Fatalf("Run() yielded error: %v", err)
@@ -166,11 +167,11 @@ func TestKernel_ConversationalRunPausesInsteadOfTerminating(t *testing.T) {
 		events = append(events, ev)
 	}
 
-	if len(events) == 0 || events[len(events)-1].Type != store.EventAwaitingInput {
+	if len(events) == 0 || events[len(events)-1].Type != eventlog.EventAwaitingInput {
 		t.Fatalf("last event type = %v, want awaiting_input", events[len(events)-1].Type)
 	}
 	for _, ev := range events {
-		if ev.Type == store.EventTerminal {
+		if ev.Type == eventlog.EventTerminal {
 			t.Fatal("a conversational pause must never append a terminal event")
 		}
 	}
@@ -179,8 +180,8 @@ func TestKernel_ConversationalRunPausesInsteadOfTerminating(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get session: %v", err)
 	}
-	if sess.Status != store.SessionStatusAwaitingInput {
-		t.Fatalf("session status = %q, want %q", sess.Status, store.SessionStatusAwaitingInput)
+	if sess.Status != eventlog.SessionStatusAwaitingInput {
+		t.Fatalf("session status = %q, want %q", sess.Status, eventlog.SessionStatusAwaitingInput)
 	}
 	if sess.TerminalReason != nil {
 		t.Fatalf("terminal_reason = %v, want nil (a conversational pause is not a terminal state)", *sess.TerminalReason)
@@ -209,7 +210,7 @@ func TestKernel_NonConversationalRunStillTerminatesOnPlainReply(t *testing.T) {
 	runState := &kernel.RunState{TenantID: tenantID, SessionID: sessionID, Seal: seal}
 	cfg := kernel.RunConfig{System: "test", ModelID: "test-model", MaxTurns: 5, Input: "hello", AutonomyLevel: "supervised"} // Conversational left at its zero value
 
-	var events []store.Event
+	var events []eventlog.Event
 	for ev, err := range k.Run(ctx, runState, cfg) {
 		if err != nil {
 			t.Fatalf("Run() yielded error: %v", err)
@@ -217,15 +218,15 @@ func TestKernel_NonConversationalRunStillTerminatesOnPlainReply(t *testing.T) {
 		events = append(events, ev)
 	}
 
-	if len(events) == 0 || events[len(events)-1].Type != store.EventTerminal {
+	if len(events) == 0 || events[len(events)-1].Type != eventlog.EventTerminal {
 		t.Fatalf("last event type = %v, want terminal", events[len(events)-1].Type)
 	}
 	sess, err := getSessionDirect(ctx, st, tenantID, sessionID)
 	if err != nil {
 		t.Fatalf("get session: %v", err)
 	}
-	if sess.Status != store.SessionStatusCompleted {
-		t.Fatalf("session status = %q, want %q", sess.Status, store.SessionStatusCompleted)
+	if sess.Status != eventlog.SessionStatusCompleted {
+		t.Fatalf("session status = %q, want %q", sess.Status, eventlog.SessionStatusCompleted)
 	}
 }
 
@@ -263,7 +264,7 @@ func TestKernel_ResumeConversationContinuesAndPreservesTranscript(t *testing.T) 
 	}
 	firstTurnTranscriptLen := len(runState.Transcript)
 
-	var events []store.Event
+	var events []eventlog.Event
 	for ev, err := range k.ResumeConversation(ctx, runState, cfg, "tell me more") {
 		if err != nil {
 			t.Fatalf("ResumeConversation() yielded error: %v", err)
@@ -274,7 +275,7 @@ func TestKernel_ResumeConversationContinuesAndPreservesTranscript(t *testing.T) 
 	if len(runState.Transcript) <= firstTurnTranscriptLen {
 		t.Fatalf("Transcript did not grow across the resumed turn: had %d, now %d", firstTurnTranscriptLen, len(runState.Transcript))
 	}
-	if len(events) == 0 || events[len(events)-1].Type != store.EventAwaitingInput {
+	if len(events) == 0 || events[len(events)-1].Type != eventlog.EventAwaitingInput {
 		t.Fatalf("last event type = %v, want awaiting_input (the resumed turn is ALSO a plain reply)", events[len(events)-1].Type)
 	}
 
@@ -285,9 +286,9 @@ func TestKernel_ResumeConversationContinuesAndPreservesTranscript(t *testing.T) 
 	var userMessages, awaitingInputs int
 	for _, e := range full {
 		switch e.Type { //nolint:exhaustive // only user_message/awaiting_input matter to this assertion
-		case store.EventUserMessage:
+		case eventlog.EventUserMessage:
 			userMessages++
-		case store.EventAwaitingInput:
+		case eventlog.EventAwaitingInput:
 			awaitingInputs++
 		}
 	}
@@ -367,7 +368,7 @@ func TestRunCtl_ResumeConversation_RefusesWhenNotAwaitingInput(t *testing.T) {
 	}
 	if sess, err := getSessionDirect(ctx, st, tenantID, sessionID); err != nil {
 		t.Fatalf("get session: %v", err)
-	} else if sess.Status == store.SessionStatusAwaitingInput {
+	} else if sess.Status == eventlog.SessionStatusAwaitingInput {
 		t.Fatalf("test setup bug: session is already awaiting_input (status=%q)", sess.Status)
 	}
 
@@ -466,18 +467,18 @@ func TestRunCtl_ResumeConversation_Succeeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResumeConversation refused a genuinely awaiting_input session: %v", err)
 	}
-	if appended.Type != store.EventUserMessage {
+	if appended.Type != eventlog.EventUserMessage {
 		t.Fatalf("ResumeConversation's own appended event type = %v, want user_message", appended.Type)
 	}
 
-	var last store.Event
+	var last eventlog.Event
 	for ev, err := range ctl.Resume(ctx, tenantID, sessionID) {
 		if err != nil {
 			t.Fatalf("Resume() yielded error: %v", err)
 		}
 		last = ev
 	}
-	if last.Type != store.EventAwaitingInput {
+	if last.Type != eventlog.EventAwaitingInput {
 		t.Fatalf("last event type = %v, want awaiting_input", last.Type)
 	}
 
@@ -485,8 +486,8 @@ func TestRunCtl_ResumeConversation_Succeeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get session: %v", err)
 	}
-	if sess.Status != store.SessionStatusAwaitingInput {
-		t.Fatalf("session status = %q, want %q", sess.Status, store.SessionStatusAwaitingInput)
+	if sess.Status != eventlog.SessionStatusAwaitingInput {
+		t.Fatalf("session status = %q, want %q", sess.Status, eventlog.SessionStatusAwaitingInput)
 	}
 }
 
@@ -572,8 +573,8 @@ func TestRunCtl_EndIdleConversation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get session: %v", err)
 	}
-	if sess.Status != store.SessionStatusFailed {
-		t.Fatalf("session status = %q, want %q", sess.Status, store.SessionStatusFailed)
+	if sess.Status != eventlog.SessionStatusFailed {
+		t.Fatalf("session status = %q, want %q", sess.Status, eventlog.SessionStatusFailed)
 	}
 	if sess.TerminalReason == nil || *sess.TerminalReason != "idle_timeout" {
 		t.Fatalf("terminal_reason = %v, want %q", sess.TerminalReason, "idle_timeout")
@@ -585,7 +586,7 @@ func TestRunCtl_EndIdleConversation(t *testing.T) {
 	}
 	var terminals int
 	for _, e := range full {
-		if e.Type == store.EventTerminal {
+		if e.Type == eventlog.EventTerminal {
 			terminals++
 		}
 	}
@@ -766,7 +767,7 @@ func TestRESTConversationalSession_MultiTurnSameSessionID(t *testing.T) {
 			}
 			count := 0
 			for _, e := range events {
-				if e.Type == store.EventAwaitingInput {
+				if e.Type == eventlog.EventAwaitingInput {
 					count++
 				}
 			}
@@ -821,7 +822,7 @@ func TestRESTConversationalSession_MultiTurnSameSessionID(t *testing.T) {
 		}
 		waitForAwaitingInputCount(sessionID, i+2) // turn 1 already produced 1; this is the (i+2)th
 	}
-	waitForStatus(created.RunID, store.SessionStatusAwaitingInput)
+	waitForStatus(created.RunID, eventlog.SessionStatusAwaitingInput)
 
 	// The URL/session id never changed across all three turns (every
 	// request above used the SAME created.RunID) -- now verify the durable
@@ -834,13 +835,13 @@ func TestRESTConversationalSession_MultiTurnSameSessionID(t *testing.T) {
 	var userMessages, contents, awaitingInputs, terminals int
 	for _, e := range events {
 		switch e.Type { //nolint:exhaustive // only these four types matter to this assertion
-		case store.EventUserMessage:
+		case eventlog.EventUserMessage:
 			userMessages++
-		case store.EventContent:
+		case eventlog.EventContent:
 			contents++
-		case store.EventAwaitingInput:
+		case eventlog.EventAwaitingInput:
 			awaitingInputs++
-		case store.EventTerminal:
+		case eventlog.EventTerminal:
 			terminals++
 		}
 	}
@@ -871,5 +872,5 @@ func TestRESTConversationalSession_MultiTurnSameSessionID(t *testing.T) {
 	if cancelResp.StatusCode != http.StatusOK {
 		t.Fatalf("POST cancel status = %d, want 200", cancelResp.StatusCode)
 	}
-	waitForStatus(created.RunID, store.SessionStatusFailed)
+	waitForStatus(created.RunID, eventlog.SessionStatusFailed)
 }

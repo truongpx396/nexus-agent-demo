@@ -6,6 +6,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/memory"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/queue"
@@ -140,7 +141,7 @@ func (a *kernelRunStarter) StartRun(ctx context.Context, req rest.RunRequest) (<
 		defer close(ch)
 		for re := range busCh {
 			ch <- re
-			if re.Err != nil || re.Event.Type == store.EventTerminal {
+			if re.Err != nil || re.Event.Type == eventlog.EventTerminal {
 				return
 			}
 		}

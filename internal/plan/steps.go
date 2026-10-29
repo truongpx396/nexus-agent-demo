@@ -10,6 +10,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	"github.com/truongpx396/nexus-agent-demo/internal/delegate"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
@@ -21,7 +22,7 @@ import (
 // kind in this file spends none.
 func (e *Executor) runAgentStep(ctx context.Context, tenantID, sessionID uuid.UUID, step Step) (Context, bool, error) {
 	if err := e.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		_, err := e.appendEvent(ctx, tx, tenantID, sessionID, store.EventUserMessage, nil, nil, agentInputPayload{Body: step.Agent.Input})
+		_, err := e.appendEvent(ctx, tx, tenantID, sessionID, eventlog.EventUserMessage, nil, nil, agentInputPayload{Body: step.Agent.Input})
 		return err
 	}); err != nil {
 		return nil, false, err
@@ -59,7 +60,7 @@ func (e *Executor) continueAgentStep(ctx context.Context, tenantID, sessionID uu
 	}); err != nil {
 		return nil, false, err
 	}
-	if status == store.SessionStatusSuspended {
+	if status == eventlog.SessionStatusSuspended {
 		return nil, true, nil
 	}
 
@@ -183,6 +184,6 @@ func (e *Executor) runInputRequest(ctx context.Context, tenantID, sessionID uuid
 
 func (e *Executor) suspend(ctx context.Context, tenantID, sessionID uuid.UUID) error {
 	return e.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		return store.UpdateSessionStatus(ctx, tx, sessionID, store.SessionStatusSuspended, nil)
+		return store.UpdateSessionStatus(ctx, tx, sessionID, eventlog.SessionStatusSuspended, nil)
 	})
 }

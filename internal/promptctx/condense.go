@@ -70,7 +70,7 @@ func line(m provider.Message) string {
 // CondenserModelID) — the same Provider port every other call goes through
 // (task 7.11: "off the paying loop" means a cheaper metered call, never an
 // unmetered one). The instruction explicitly forbids claiming an external
-// effect completed or failed, matching internal/store.Condensation's own
+// effect completed or failed, matching internal/eventlog.Condensation's own
 // invariant (condensation_test.go) that a condensation can never answer
 // whether an effect completed.
 func CondensePrompt(transcript []provider.Message) provider.Prompt {

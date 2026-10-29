@@ -7,8 +7,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
 // DecryptFunc reverses a SealFunc for one event: given the event whose
@@ -16,7 +16,7 @@ import (
 // returns the plaintext. Its own seam, not internal/crypto directly, for
 // the same reason SealFunc is: Rehydrate below stays free of any crypto/DB
 // dependency.
-type DecryptFunc func(ctx context.Context, e store.Event) (plaintext []byte, err error)
+type DecryptFunc func(ctx context.Context, e eventlog.Event) (plaintext []byte, err error)
 
 // reasoningOpaque is the shape a ChunkReasoning chunk's Opaque bytes decode
 // as (README task 13.7): a provider adapter that supports extended thinking
@@ -55,7 +55,7 @@ type reasoningOpaque struct {
 // Resume itself is an honest interim for Phase 6's real Checkpoint-driven
 // resume. history must already be in seq order (store.ListEvents' own
 // contract).
-func Rehydrate(ctx context.Context, history []store.Event, decrypt DecryptFunc) ([]provider.Message, map[uuid.UUID]string, error) {
+func Rehydrate(ctx context.Context, history []eventlog.Event, decrypt DecryptFunc) ([]provider.Message, map[uuid.UUID]string, error) {
 	var transcript []provider.Message
 	toolUseIDs := map[uuid.UUID]string{}
 
@@ -76,7 +76,7 @@ func Rehydrate(ctx context.Context, history []store.Event, decrypt DecryptFunc) 
 
 	for _, e := range history {
 		switch e.Type { //nolint:exhaustive // deliberately narrow: only the event types that ever became a transcript message during Run get one here too; every other type falls to default (see the comment below it)
-		case store.EventThought:
+		case eventlog.EventThought:
 			flushResults()
 			var p thoughtPayload
 			if err := decodeEvent(ctx, e, decrypt, &p); err != nil {
@@ -86,14 +86,14 @@ func Rehydrate(ctx context.Context, history []store.Event, decrypt DecryptFunc) 
 			if err := json.Unmarshal(p.Opaque, &r); err == nil && (r.Thinking != "" || r.Signature != "") {
 				pendingAssistant = append(pendingAssistant, provider.ContentBlock{Kind: provider.BlockThinking, Text: r.Thinking, Signature: r.Signature})
 			}
-		case store.EventContent:
+		case eventlog.EventContent:
 			flushResults()
 			var p contentPayload
 			if err := decodeEvent(ctx, e, decrypt, &p); err != nil {
 				return nil, nil, err
 			}
 			pendingAssistant = append(pendingAssistant, provider.ContentBlock{Kind: provider.BlockText, Text: p.Body})
-		case store.EventToolUse:
+		case eventlog.EventToolUse:
 			flushResults()
 			var p toolUsePayload
 			if err := decodeEvent(ctx, e, decrypt, &p); err != nil {
@@ -101,7 +101,7 @@ func Rehydrate(ctx context.Context, history []store.Event, decrypt DecryptFunc) 
 			}
 			toolUseIDs[e.EventID] = p.ToolUseID
 			pendingAssistant = append(pendingAssistant, provider.ContentBlock{Kind: provider.BlockToolUse, ToolUseID: p.ToolUseID, ToolName: p.ToolName, Input: p.Input})
-		case store.EventUserMessage:
+		case eventlog.EventUserMessage:
 			flushAssistant()
 			flushResults()
 			var p userMessagePayload
@@ -109,7 +109,7 @@ func Rehydrate(ctx context.Context, history []store.Event, decrypt DecryptFunc) 
 				return nil, nil, err
 			}
 			transcript = append(transcript, provider.TextMessage("user", p.Body))
-		case store.EventToolResult:
+		case eventlog.EventToolResult:
 			flushAssistant()
 			var p toolResultPayload
 			if err := decodeEvent(ctx, e, decrypt, &p); err != nil {
@@ -144,9 +144,9 @@ func Rehydrate(ctx context.Context, history []store.Event, decrypt DecryptFunc) 
 // not an error — the ordinary case for the overwhelming majority of
 // sessions. history must already be in seq order (store.ListEvents' own
 // contract) — the same contract Rehydrate itself has.
-func RehydrateTaint(ctx context.Context, history []store.Event, decrypt DecryptFunc) ([3]bool, error) {
+func RehydrateTaint(ctx context.Context, history []eventlog.Event, decrypt DecryptFunc) ([3]bool, error) {
 	for i := len(history) - 1; i >= 0; i-- {
-		if history[i].Type != store.EventTaintTransition {
+		if history[i].Type != eventlog.EventTaintTransition {
 			continue
 		}
 		var p taintTransitionPayload
@@ -158,7 +158,7 @@ func RehydrateTaint(ctx context.Context, history []store.Event, decrypt DecryptF
 	return [3]bool{}, nil
 }
 
-func decodeEvent(ctx context.Context, e store.Event, decrypt DecryptFunc, out any) error {
+func decodeEvent(ctx context.Context, e eventlog.Event, decrypt DecryptFunc, out any) error {
 	plaintext, err := decrypt(ctx, e)
 	if err != nil {
 		return fmt.Errorf("kernel: decrypt event %s (%s): %w", e.EventID, e.Type, err)

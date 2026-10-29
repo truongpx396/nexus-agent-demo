@@ -8,8 +8,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
 // TerminalReason is the typed union every run ends under (README task 2.3).
@@ -38,7 +38,7 @@ const (
 	ReasonRefused TerminalReason = "refused"
 	// ReasonIdleTimeout is a conversational run's (RunConfig.Conversational)
 	// own wall-clock backstop: cmd/nexusd's idle-conversation sweep ends a
-	// session that has sat in store.SessionStatusAwaitingInput too long
+	// session that has sat in eventlog.SessionStatusAwaitingInput too long
 	// with nobody answering (mirrors internal/teams's own backstop for a
 	// team stuck 'active' too long) — deliberately distinct from
 	// ReasonAborted, an explicit human cancel, so a golden-signal query can
@@ -145,7 +145,7 @@ func buildTerminalPayload(t Terminal) (terminalEventPayload, error) {
 
 // --- terminal helpers ---
 
-func (k *Kernel) terminate(ctx context.Context, st *RunState, yield func(store.Event, error) bool, t Terminal) {
+func (k *Kernel) terminate(ctx context.Context, st *RunState, yield func(eventlog.Event, error) bool, t Terminal) {
 	// Set before anything below can fail, so the root span's deferred End
 	// (terminalSpanAttrs) still reflects why this call is ending even on an
 	// early return here — a best-effort observability signal, never the
@@ -154,17 +154,17 @@ func (k *Kernel) terminate(ctx context.Context, st *RunState, yield func(store.E
 
 	payload, err := buildTerminalPayload(t)
 	if err != nil {
-		yield(store.Event{}, err)
+		yield(eventlog.Event{}, err)
 		return
 	}
 	ev, err := k.appendTerminal(ctx, st, payload)
 	if err != nil {
-		yield(store.Event{}, err)
+		yield(eventlog.Event{}, err)
 		return
 	}
-	status := store.SessionStatusCompleted
+	status := eventlog.SessionStatusCompleted
 	if t.Reason != ReasonCompleted {
-		status = store.SessionStatusFailed
+		status = eventlog.SessionStatusFailed
 	}
 	reason := string(t.Reason)
 	if err := k.updateStatus(ctx, st, status, &reason); err != nil {
@@ -186,13 +186,13 @@ func (k *Kernel) terminate(ctx context.Context, st *RunState, yield func(store.E
 // Kernel.Resume (README task 5.8), driven by internal/oversight once a
 // human decides; general crash/steer resume from an arbitrary point is
 // still Phase 6's internal/runctl + checkpoint.
-func (k *Kernel) suspendForApproval(ctx context.Context, st *RunState, yield func(store.Event, error) bool, toolUseEventID uuid.UUID, toolID *string, input json.RawMessage, result ToolResult) {
+func (k *Kernel) suspendForApproval(ctx context.Context, st *RunState, yield func(eventlog.Event, error) bool, toolUseEventID uuid.UUID, toolID *string, input json.RawMessage, result ToolResult) {
 	ev, err := k.appendApprovalRequested(ctx, st, toolID, result.Reason, result.AskKind)
 	if err != nil {
-		yield(store.Event{}, err)
+		yield(eventlog.Event{}, err)
 		return
 	}
-	if err := k.updateStatus(ctx, st, store.SessionStatusSuspended, nil); err != nil {
+	if err := k.updateStatus(ctx, st, eventlog.SessionStatusSuspended, nil); err != nil {
 		yield(ev, fmt.Errorf("approval_requested event %s appended but session status update failed: %w", ev.EventID, err))
 		return
 	}
@@ -228,17 +228,17 @@ func (k *Kernel) suspendForApproval(ctx context.Context, st *RunState, yield fun
 // internal/delegate once the child reaches its own terminal state — never a
 // human decision, which is what makes this a DIFFERENT resolution path from
 // Resume even though the suspend shape is identical.
-func (k *Kernel) suspendForDelegation(ctx context.Context, st *RunState, yield func(store.Event, error) bool, toolUseEventID uuid.UUID, toolID *string, childSessionID uuid.UUID) {
+func (k *Kernel) suspendForDelegation(ctx context.Context, st *RunState, yield func(eventlog.Event, error) bool, toolUseEventID uuid.UUID, toolID *string, childSessionID uuid.UUID) {
 	tid := ""
 	if toolID != nil {
 		tid = *toolID
 	}
-	ev, err := k.appendEvent(ctx, st, store.EventDelegationRequested, store.ActorSystem, toolID, nil, nil, delegationRequestedPayload{ToolID: tid, ChildSessionID: childSessionID})
+	ev, err := k.appendEvent(ctx, st, eventlog.EventDelegationRequested, eventlog.ActorSystem, toolID, nil, nil, delegationRequestedPayload{ToolID: tid, ChildSessionID: childSessionID})
 	if err != nil {
-		yield(store.Event{}, err)
+		yield(eventlog.Event{}, err)
 		return
 	}
-	if err := k.updateStatus(ctx, st, store.SessionStatusSuspended, nil); err != nil {
+	if err := k.updateStatus(ctx, st, eventlog.SessionStatusSuspended, nil); err != nil {
 		yield(ev, fmt.Errorf("delegation_requested event %s appended but session status update failed: %w", ev.EventID, err))
 		return
 	}
@@ -270,13 +270,13 @@ func (k *Kernel) suspendForDelegation(ctx context.Context, st *RunState, yield f
 // back out, driven by the human's next message, not an out-of-band
 // decision. cmd/nexusd's idle-conversation sweep is the backstop that ends
 // one nobody ever answers.
-func (k *Kernel) suspendForUserInput(ctx context.Context, st *RunState, yield func(store.Event, error) bool) {
-	ev, err := k.appendEvent(ctx, st, store.EventAwaitingInput, store.ActorSystem, nil, nil, nil, awaitingInputPayload{})
+func (k *Kernel) suspendForUserInput(ctx context.Context, st *RunState, yield func(eventlog.Event, error) bool) {
+	ev, err := k.appendEvent(ctx, st, eventlog.EventAwaitingInput, eventlog.ActorSystem, nil, nil, nil, awaitingInputPayload{})
 	if err != nil {
-		yield(store.Event{}, err)
+		yield(eventlog.Event{}, err)
 		return
 	}
-	if err := k.updateStatus(ctx, st, store.SessionStatusAwaitingInput, nil); err != nil {
+	if err := k.updateStatus(ctx, st, eventlog.SessionStatusAwaitingInput, nil); err != nil {
 		yield(ev, fmt.Errorf("awaiting_input event %s appended but session status update failed: %w", ev.EventID, err))
 		return
 	}
@@ -290,7 +290,7 @@ func (k *Kernel) suspendForUserInput(ctx context.Context, st *RunState, yield fu
 // trigger class ends the run; only ContextOverflow gets its own dedicated
 // reason (README task 2.9's "never fails over on context overflow" is a
 // property of Wrap, not of this switch).
-func (k *Kernel) terminateFromStreamError(ctx context.Context, st *RunState, yield func(store.Event, error) bool, err error) {
+func (k *Kernel) terminateFromStreamError(ctx context.Context, st *RunState, yield func(eventlog.Event, error) bool, err error) {
 	switch provider.ClassifyTrigger(err) {
 	case provider.TriggerContextOverflow:
 		k.terminate(ctx, st, yield, TerminalContextOverflow(err.Error()))

@@ -10,6 +10,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
@@ -36,36 +37,36 @@ func activeKeyID(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) (string, e
 	return keyID, nil
 }
 
-func (d deps) appendEvent(ctx context.Context, tx pgx.Tx, tenantID, sessionID uuid.UUID, typ store.EventType, toolID *string, pairRef *uuid.UUID, payload any) (store.Event, error) {
+func (d deps) appendEvent(ctx context.Context, tx pgx.Tx, tenantID, sessionID uuid.UUID, typ eventlog.EventType, toolID *string, pairRef *uuid.UUID, payload any) (eventlog.Event, error) {
 	plaintext, err := json.Marshal(payload)
 	if err != nil {
-		return store.Event{}, fmt.Errorf("plan: marshal %s payload: %w", typ, err)
+		return eventlog.Event{}, fmt.Errorf("plan: marshal %s payload: %w", typ, err)
 	}
 	keyID, err := activeKeyID(ctx, tx, sessionID)
 	if err != nil {
-		return store.Event{}, err
+		return eventlog.Event{}, err
 	}
 	dek, err := d.Keys.Unwrap(ctx, tx, keyID)
 	if err != nil {
-		return store.Event{}, fmt.Errorf("plan: unwrap key for session %s: %w", sessionID, err)
+		return eventlog.Event{}, fmt.Errorf("plan: unwrap key for session %s: %w", sessionID, err)
 	}
 	sealed, err := crypto.Seal(dek, plaintext, tenantID.String(), sessionID.String())
 	if err != nil {
-		return store.Event{}, fmt.Errorf("plan: seal %s payload: %w", typ, err)
+		return eventlog.Event{}, fmt.Errorf("plan: seal %s payload: %w", typ, err)
 	}
-	e := store.Event{
+	e := eventlog.Event{
 		EventID: uuid.New(), SessionID: sessionID, TenantID: tenantID,
-		SchemaVersion: store.CurrentSchemaVersion, Type: typ,
+		SchemaVersion: eventlog.CurrentSchemaVersion, Type: typ,
 		Payload: sealed, PayloadDigest: crypto.Digest(plaintext), KeyID: dek.KeyID,
-		Actor: store.ActorSystem, ToolID: toolID, PairRef: pairRef,
+		Actor: eventlog.ActorSystem, ToolID: toolID, PairRef: pairRef,
 	}
 	out, err := store.Append(ctx, tx, e)
 	if err != nil {
-		return store.Event{}, fmt.Errorf("plan: append %s: %w", typ, err)
+		return eventlog.Event{}, fmt.Errorf("plan: append %s: %w", typ, err)
 	}
 	if d.Chain != nil {
 		if _, err := d.Chain.Append(ctx, tx, tenantID, sessionID, out.Seq, out.EventID, string(out.Type), out.PayloadDigest); err != nil {
-			return store.Event{}, fmt.Errorf("plan: chain %s: %w", typ, err)
+			return eventlog.Event{}, fmt.Errorf("plan: chain %s: %w", typ, err)
 		}
 	}
 	return out, nil
@@ -76,27 +77,27 @@ func (d deps) appendEvent(ctx context.Context, tx pgx.Tx, tenantID, sessionID uu
 // to find on a session's very first append) and durably appends it —
 // Executor.Start's own doc comment explains why this is the one call site
 // in this package that can't use the ordinary appendEvent.
-func (d deps) appendFirstEvent(ctx context.Context, tx pgx.Tx, tenantID, sessionID uuid.UUID, seal kernel.SealFunc, typ store.EventType, payload any) (store.Event, error) {
+func (d deps) appendFirstEvent(ctx context.Context, tx pgx.Tx, tenantID, sessionID uuid.UUID, seal kernel.SealFunc, typ eventlog.EventType, payload any) (eventlog.Event, error) {
 	plaintext, err := json.Marshal(payload)
 	if err != nil {
-		return store.Event{}, fmt.Errorf("plan: marshal %s payload: %w", typ, err)
+		return eventlog.Event{}, fmt.Errorf("plan: marshal %s payload: %w", typ, err)
 	}
 	sealed, digest, keyID, err := seal(plaintext)
 	if err != nil {
-		return store.Event{}, fmt.Errorf("plan: seal %s payload: %w", typ, err)
+		return eventlog.Event{}, fmt.Errorf("plan: seal %s payload: %w", typ, err)
 	}
-	e := store.Event{
+	e := eventlog.Event{
 		EventID: uuid.New(), SessionID: sessionID, TenantID: tenantID,
-		SchemaVersion: store.CurrentSchemaVersion, Type: typ,
-		Payload: sealed, PayloadDigest: digest, KeyID: keyID, Actor: store.ActorSystem,
+		SchemaVersion: eventlog.CurrentSchemaVersion, Type: typ,
+		Payload: sealed, PayloadDigest: digest, KeyID: keyID, Actor: eventlog.ActorSystem,
 	}
 	out, err := store.Append(ctx, tx, e)
 	if err != nil {
-		return store.Event{}, fmt.Errorf("plan: append %s: %w", typ, err)
+		return eventlog.Event{}, fmt.Errorf("plan: append %s: %w", typ, err)
 	}
 	if d.Chain != nil {
 		if _, err := d.Chain.Append(ctx, tx, tenantID, sessionID, out.Seq, out.EventID, string(out.Type), out.PayloadDigest); err != nil {
-			return store.Event{}, fmt.Errorf("plan: chain %s: %w", typ, err)
+			return eventlog.Event{}, fmt.Errorf("plan: chain %s: %w", typ, err)
 		}
 	}
 	return out, nil
@@ -105,9 +106,9 @@ func (d deps) appendFirstEvent(ctx context.Context, tx pgx.Tx, tenantID, session
 // decryptWith returns a decrypt closure over a fresh per-call DEK cache —
 // mirrors internal/oversight.Resumer.loadRunState's own inline closure,
 // factored out here since both Executor.Start and Executor.Resume need it.
-func (d deps) decryptWith(tenantID, sessionID uuid.UUID) func(ctx context.Context, e store.Event) ([]byte, error) {
+func (d deps) decryptWith(tenantID, sessionID uuid.UUID) func(ctx context.Context, e eventlog.Event) ([]byte, error) {
 	cache := map[string]crypto.DEK{}
-	return func(ctx context.Context, e store.Event) ([]byte, error) {
+	return func(ctx context.Context, e eventlog.Event) ([]byte, error) {
 		if e.KeyID == crypto.ErasureKeyID {
 			return e.Payload, nil
 		}

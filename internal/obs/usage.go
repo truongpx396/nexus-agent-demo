@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
@@ -32,7 +33,7 @@ func ComputeToolCallCounts(ctx context.Context, st *store.Store, tenantID uuid.U
 			FROM events
 			WHERE type = $1 AND tool_id IS NOT NULL
 			GROUP BY tool_id`,
-			string(store.EventToolUse),
+			string(eventlog.EventToolUse),
 		)
 		if err != nil {
 			return fmt.Errorf("obs: query tool call counts: %w", err)

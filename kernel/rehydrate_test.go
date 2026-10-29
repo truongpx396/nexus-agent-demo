@@ -6,14 +6,14 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 )
 
 // plaintextDecrypt is a no-crypto DecryptFunc stand-in: Rehydrate/
 // RehydrateTaint only ever call decrypt and unmarshal its result, so a
 // test can hand them plaintext directly through Event.Payload without any
 // real internal/crypto machinery.
-func plaintextDecrypt(_ context.Context, e store.Event) ([]byte, error) {
+func plaintextDecrypt(_ context.Context, e eventlog.Event) ([]byte, error) {
 	return e.Payload, nil
 }
 
@@ -27,9 +27,9 @@ func marshalTaint(t *testing.T, engaged [3]bool) []byte {
 }
 
 func TestRehydrateTaint_NoTransitionEverRecordedReturnsZeroValue(t *testing.T) {
-	history := []store.Event{
-		{Type: store.EventUserMessage, Payload: []byte(`{}`)},
-		{Type: store.EventContent, Payload: []byte(`{}`)},
+	history := []eventlog.Event{
+		{Type: eventlog.EventUserMessage, Payload: []byte(`{}`)},
+		{Type: eventlog.EventContent, Payload: []byte(`{}`)},
 	}
 	got, err := RehydrateTaint(context.Background(), history, plaintextDecrypt)
 	if err != nil {
@@ -41,11 +41,11 @@ func TestRehydrateTaint_NoTransitionEverRecordedReturnsZeroValue(t *testing.T) {
 }
 
 func TestRehydrateTaint_ReturnsTheMostRecentTransition(t *testing.T) {
-	history := []store.Event{
-		{Type: store.EventUserMessage, Payload: []byte(`{}`)},
-		{Type: store.EventTaintTransition, Payload: marshalTaint(t, [3]bool{true, false, false})},
-		{Type: store.EventToolResult, Payload: []byte(`{}`)},
-		{Type: store.EventTaintTransition, Payload: marshalTaint(t, [3]bool{true, true, false})},
+	history := []eventlog.Event{
+		{Type: eventlog.EventUserMessage, Payload: []byte(`{}`)},
+		{Type: eventlog.EventTaintTransition, Payload: marshalTaint(t, [3]bool{true, false, false})},
+		{Type: eventlog.EventToolResult, Payload: []byte(`{}`)},
+		{Type: eventlog.EventTaintTransition, Payload: marshalTaint(t, [3]bool{true, true, false})},
 	}
 	got, err := RehydrateTaint(context.Background(), history, plaintextDecrypt)
 	if err != nil {
@@ -66,7 +66,7 @@ func TestRehydrateTaint_ReturnsTheMostRecentTransition(t *testing.T) {
 // field, which json.Unmarshal picks out regardless of what else is there.
 func TestRehydrateTaint_ReadsAForeignProducersPayloadShape(t *testing.T) {
 	foreign := []byte(`{"child_session_id":"11111111-1111-1111-1111-111111111111","engaged":[false,true,true]}`)
-	history := []store.Event{{Type: store.EventTaintTransition, Payload: foreign}}
+	history := []eventlog.Event{{Type: eventlog.EventTaintTransition, Payload: foreign}}
 	got, err := RehydrateTaint(context.Background(), history, plaintextDecrypt)
 	if err != nil {
 		t.Fatalf("RehydrateTaint: %v", err)
@@ -77,9 +77,9 @@ func TestRehydrateTaint_ReadsAForeignProducersPayloadShape(t *testing.T) {
 }
 
 func TestRehydrateTaint_DecryptErrorPropagates(t *testing.T) {
-	history := []store.Event{{Type: store.EventTaintTransition, Payload: []byte(`{}`)}}
+	history := []eventlog.Event{{Type: eventlog.EventTaintTransition, Payload: []byte(`{}`)}}
 	wantErr := errors.New("boom")
-	_, err := RehydrateTaint(context.Background(), history, func(context.Context, store.Event) ([]byte, error) {
+	_, err := RehydrateTaint(context.Background(), history, func(context.Context, eventlog.Event) ([]byte, error) {
 		return nil, wantErr
 	})
 	if !errors.Is(err, wantErr) {

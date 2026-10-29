@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
@@ -19,7 +20,7 @@ import (
 // each of those gives: no live RunState.Seal to reuse.
 func (e *Executor) loadRunState(ctx context.Context, tenantID, sessionID uuid.UUID) (*kernel.RunState, store.Session, error) {
 	var sess store.Session
-	var history []store.Event
+	var history []eventlog.Event
 	if err := e.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
 		sess, err = store.GetSession(ctx, tx, sessionID)
@@ -73,7 +74,7 @@ func (e *Executor) loadRunState(ctx context.Context, tenantID, sessionID uuid.UU
 // store.ReplayFullProjection already uses for a terminal event's exact
 // reason.
 func (e *Executor) lastContentText(ctx context.Context, tenantID, sessionID uuid.UUID) (string, error) {
-	var history []store.Event
+	var history []eventlog.Event
 	if err := e.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
 		history, err = store.ListEvents(ctx, tx, sessionID)
@@ -82,9 +83,9 @@ func (e *Executor) lastContentText(ctx context.Context, tenantID, sessionID uuid
 		return "", err
 	}
 
-	var last *store.Event
+	var last *eventlog.Event
 	for i := len(history) - 1; i >= 0; i-- {
-		if history[i].Type == store.EventContent {
+		if history[i].Type == eventlog.EventContent {
 			last = &history[i]
 			break
 		}

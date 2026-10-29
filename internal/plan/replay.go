@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 )
 
 type planStartedPayload struct {
@@ -46,11 +46,11 @@ type state struct {
 	Completed   bool
 }
 
-func replayState(ctx context.Context, history []store.Event, decrypt func(context.Context, store.Event) ([]byte, error)) (state, error) {
+func replayState(ctx context.Context, history []eventlog.Event, decrypt func(context.Context, eventlog.Event) ([]byte, error)) (state, error) {
 	st := state{Vars: Context{}, Iterations: map[string]int{}}
 	for _, e := range history {
 		switch e.Type { //nolint:exhaustive // only the plan.* event types (plus the ones this loop deliberately ignores) are structurally relevant to reconstructing plan state
-		case store.EventPlanStepEntered:
+		case eventlog.EventPlanStepEntered:
 			plaintext, err := decrypt(ctx, e)
 			if err != nil {
 				return state{}, err
@@ -61,7 +61,7 @@ func replayState(ctx context.Context, history []store.Event, decrypt func(contex
 			}
 			st.CurrentStep = p.StepID
 			st.Iterations[p.StepID]++
-		case store.EventPlanStepExited:
+		case eventlog.EventPlanStepExited:
 			plaintext, err := decrypt(ctx, e)
 			if err != nil {
 				return state{}, err
@@ -74,7 +74,7 @@ func replayState(ctx context.Context, history []store.Event, decrypt func(contex
 				st.Vars[k] = v
 			}
 			st.CurrentStep = ""
-		case store.EventPlanCompleted:
+		case eventlog.EventPlanCompleted:
 			st.Completed = true
 			st.CurrentStep = ""
 		}

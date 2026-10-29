@@ -56,7 +56,7 @@ const (
 	teamBackstopWindow        = 30 * time.Minute
 	// idleConversationSweepInterval is how often startIdleConversationSweepLoop
 	// checks every tenant for a conversational session (kernel.RunConfig.
-	// Conversational) sitting in store.SessionStatusAwaitingInput past
+	// Conversational) sitting in eventlog.SessionStatusAwaitingInput past
 	// idleConversationWindow with nobody sending the next message;
 	// idleConversationWindow is that window itself — the backstop that
 	// keeps an abandoned chat from holding its taint state, cost-gate

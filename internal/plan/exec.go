@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/delegate"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
@@ -48,10 +49,10 @@ type Executor struct {
 // blocks waiting for either.
 func (e *Executor) Start(ctx context.Context, tenantID, sessionID uuid.UUID, p Plan, seal kernel.SealFunc) error {
 	if err := e.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		if _, err := e.appendFirstEvent(ctx, tx, tenantID, sessionID, seal, store.EventPlanStarted, planStartedPayload{PlanID: p.PlanID.String(), Version: p.Version}); err != nil {
+		if _, err := e.appendFirstEvent(ctx, tx, tenantID, sessionID, seal, eventlog.EventPlanStarted, planStartedPayload{PlanID: p.PlanID.String(), Version: p.Version}); err != nil {
 			return err
 		}
-		return store.UpdateSessionStatus(ctx, tx, sessionID, store.SessionStatusRunning, nil)
+		return store.UpdateSessionStatus(ctx, tx, sessionID, eventlog.SessionStatusRunning, nil)
 	}); err != nil {
 		return err
 	}
@@ -110,7 +111,7 @@ func (e *Executor) ResumeGate(ctx context.Context, tenantID, sessionID uuid.UUID
 		bindings[resultVar] = value
 	}
 	if err := e.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		return store.UpdateSessionStatus(ctx, tx, sessionID, store.SessionStatusRunning, nil)
+		return store.UpdateSessionStatus(ctx, tx, sessionID, eventlog.SessionStatusRunning, nil)
 	}); err != nil {
 		return err
 	}
@@ -159,7 +160,7 @@ func (e *Executor) ResolveFanout(ctx context.Context, tenantID, fanoutID uuid.UU
 		bindings[v] = NumberValue(float64(returned))
 	}
 	if err := e.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		return store.UpdateSessionStatus(ctx, tx, sessionID, store.SessionStatusRunning, nil)
+		return store.UpdateSessionStatus(ctx, tx, sessionID, eventlog.SessionStatusRunning, nil)
 	}); err != nil {
 		return err
 	}
@@ -191,7 +192,7 @@ func gateResultVar(s Step) string {
 // one already.
 func (e *Executor) load(ctx context.Context, tenantID, sessionID uuid.UUID) (Plan, state, error) {
 	var sess store.Session
-	var history []store.Event
+	var history []eventlog.Event
 	if err := e.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
 		sess, err = store.GetSession(ctx, tx, sessionID)

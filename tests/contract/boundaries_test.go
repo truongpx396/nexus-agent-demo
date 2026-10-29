@@ -7,6 +7,8 @@
 package contract
 
 import (
+	"sort"
+	"strings"
 	"testing"
 
 	"golang.org/x/tools/go/packages"
@@ -14,8 +16,11 @@ import (
 
 const modulePrefix = "github.com/truongpx396/nexus-agent-demo/"
 
-// boundaryRule declares that pkg must never import any path under
-// forbidden. Rules name packages that do not exist yet (kernel/,
+// boundaryRule declares that pkg must never import — directly or
+// transitively — any path under forbidden. A forbidden entry P forbids P
+// itself and every package below P/, so a rule can name a whole tree
+// (".../internal/surfaces") without listing each adapter, and a package added
+// to that tree later is covered the day it lands. Rules name packages that do not exist yet (kernel/,
 // internal/surfaces, internal/controlplane land in Phase 2/7) on purpose:
 // packages.Load reports zero matches for a path that doesn't exist yet, so
 // the rule is a structural no-op until that phase's package lands — nobody
@@ -98,6 +103,27 @@ var rules = []boundaryRule{
 			modulePrefix + "kernel",
 		},
 	},
+	{
+		// The event-log domain model is the innermost layer of the hexagon:
+		// kernel/ names its types without depending on how events are stored.
+		// Keeping it free of this module and of every database/cache driver is
+		// what lets internal/store stay one adapter among several.
+		name: "internal/eventlog is a persistence-free leaf: no module packages, no database or cache drivers",
+		pkg:  modulePrefix + "internal/eventlog",
+		forbidden: []string{
+			modulePrefix + "internal",
+			modulePrefix + "cmd",
+			modulePrefix + "kernel",
+			"github.com/jackc/pgx",
+			"github.com/redis",
+		},
+	},
+}
+
+// violates reports whether imported falls under forbidden: that package
+// itself or anything below it.
+func violates(imported, forbidden string) bool {
+	return imported == forbidden || strings.HasPrefix(imported, forbidden+"/")
 }
 
 func TestImportBoundaries(t *testing.T) {
@@ -116,15 +142,32 @@ func TestImportBoundaries(t *testing.T) {
 			}
 			checked++
 
-			imported := map[string]bool{}
+			// The rule's own packages are roots, not imports: a "leaf" rule
+			// that forbids the whole module must not trip over the package
+			// it is guarding.
+			roots := map[string]bool{}
+			for _, p := range pkgs {
+				roots[p.PkgPath] = true
+			}
+			var imported []string
 			packages.Visit(pkgs, func(p *packages.Package) bool {
-				imported[p.PkgPath] = true
+				if !roots[p.PkgPath] {
+					imported = append(imported, p.PkgPath)
+				}
 				return true
 			}, nil)
+			sort.Strings(imported)
 
 			for _, forbidden := range r.forbidden {
-				if imported[forbidden] {
-					t.Errorf("%s imports %s, which violates a boundary rule in README.md §4", r.pkg, forbidden)
+				var hits []string
+				for _, path := range imported {
+					if violates(path, forbidden) {
+						hits = append(hits, path)
+					}
+				}
+				if len(hits) > 0 {
+					t.Errorf("%s imports %s (%d package(s) under %s in all), which violates a boundary rule in README.md §4",
+						r.pkg, hits[0], len(hits), forbidden)
 				}
 			}
 		})

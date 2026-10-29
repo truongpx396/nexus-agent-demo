@@ -30,8 +30,8 @@ type Kernel struct {
     Tracer obs.Tracer; TraceContent bool; OnChunk OnChunk
 }
 
-func (k *Kernel) Run(ctx, *RunState, RunConfig) iter.Seq2[store.Event, error]
-func (k *Kernel) Seed(ctx, *RunState, RunConfig) iter.Seq2[store.Event, error]              // opening event, durably appended BEFORE queueing
+func (k *Kernel) Run(ctx, *RunState, RunConfig) iter.Seq2[eventlog.Event, error]
+func (k *Kernel) Seed(ctx, *RunState, RunConfig) iter.Seq2[eventlog.Event, error]              // opening event, durably appended BEFORE queueing
 func (k *Kernel) Resume(ctx, *RunState, RunConfig, PendingResolution) iter.Seq2[...]         // one approval/input-suspended tool_use
 func (k *Kernel) ResumeDelegation(ctx, *RunState, RunConfig, DelegationResolution) iter.Seq2[...]
 func (k *Kernel) Continue(ctx, *RunState, RunConfig) iter.Seq2[...]
@@ -138,7 +138,7 @@ Approvals.Create(ctx, CreateApprovalRequest) (Approval, error)
 Approvals.Grant(ctx, tenant, id, decidedBy) / GrantModified(…, modifiedInput) / Deny(…, reason) (Approval, error)
 Approvals.ListPending / Get / Invalidate(ctx, tenant, session, InvalidationReason)
 Inputs.RequestInput / Answer / Expire / Invalidate                  // zero authorization value
-Resumer.Grant / GrantModified / Deny(…) iter.Seq2[store.Event, error] // resumes the ONE suspended tool_use
+Resumer.Grant / GrantModified / Deny(…) iter.Seq2[eventlog.Event, error] // resumes the ONE suspended tool_use
 ```
 
 Approval and input share **suspension and nothing else** (distinct lifecycles, distinct terminal behavior). Suspension is durable
@@ -148,13 +148,13 @@ Approval and input share **suspension and nothing else** (distinct lifecycles, d
 
 ```go
 // internal/runctl — Fork/Cancel/TightenAutonomy/Steer stay synchronous (none drives the turn loop)
-Control.Steer(ctx, tenant, session, input) (store.Event, error)          // drained at a turn boundary; into a suspended run ⇒ invalidates its approval
+Control.Steer(ctx, tenant, session, input) (eventlog.Event, error)          // drained at a turn boundary; into a suspended run ⇒ invalidates its approval
 Control.Cancel(ctx, tenant, session, reason) error                       // sole producer of `aborted`
-Control.Resume(ctx, tenant, session) iter.Seq2[store.Event, error]
+Control.Resume(ctx, tenant, session) iter.Seq2[eventlog.Event, error]
 Control.TightenAutonomy(ctx, tenant, session, target) error              // ratchet; no widening function exists
 Control.Replay(ctx, tenant, session) (ReplayResult, error)               // PURE: no model call, no tool, no append
 Control.Fork(ctx, tenant, parent, atSeq, ForkOverrides) (ForkResult, error) // effects disabled; reports digest divergence
-Control.ResumeConversation(ctx, tenant, session, input) (store.Event, error)
+Control.ResumeConversation(ctx, tenant, session, input) (eventlog.Event, error)
 Control.EndIdleConversation(ctx, tenant, session) error                  // → idle_timeout
 Control.ResolveClaim(ctx, tenant, session, claimID, status, reason) (store.Claim, error) // probe or human; never re-execution
 ```

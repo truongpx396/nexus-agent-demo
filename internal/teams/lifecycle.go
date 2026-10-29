@@ -11,6 +11,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
@@ -97,7 +98,7 @@ func (s *Service) CreateTeam(ctx context.Context, req CreateTeamRequest) (uuid.U
 		for i, m := range req.Members {
 			agentIDs[i] = m.AgentID
 		}
-		_, err = s.appendEvent(ctx, tx, req.TenantID, req.CreatorSessionID, store.EventTeamCreated, nil, nil, teamCreatedPayload{
+		_, err = s.appendEvent(ctx, tx, req.TenantID, req.CreatorSessionID, eventlog.EventTeamCreated, nil, nil, teamCreatedPayload{
 			TeamID: teamID, Name: req.Name, Roster: agentIDs, CardCount: len(req.Cards),
 		})
 		return err
@@ -206,7 +207,7 @@ func (s *Service) OnMemberTerminal(ctx context.Context, tenantID, memberSessionI
 	if member.TeamID == nil {
 		return nil
 	}
-	if member.Status != store.SessionStatusCompleted && member.Status != store.SessionStatusFailed {
+	if member.Status != eventlog.SessionStatusCompleted && member.Status != eventlog.SessionStatusFailed {
 		return nil
 	}
 
@@ -280,7 +281,7 @@ func (s *Service) endTeam(ctx context.Context, tenantID, teamID uuid.UUID, statu
 	}
 
 	return s.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		_, err := s.appendEvent(ctx, tx, tenantID, coordinatorSessionID, store.EventTeamEnded, nil, nil, teamEndedPayload{
+		_, err := s.appendEvent(ctx, tx, tenantID, coordinatorSessionID, eventlog.EventTeamEnded, nil, nil, teamEndedPayload{
 			TeamID: teamID, Status: string(status), Reason: reason,
 		})
 		return err

@@ -6,8 +6,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/memory"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
 // TeamIDFor resolves sessionID's own team_id — the ONLY input the four
@@ -84,7 +84,7 @@ func (s *Service) foldCardRead(ctx context.Context, tenantID, readerSessionID uu
 		s.cfg.Pipeline.FoldTaint(readerSessionID, c.TaintState)
 	}
 	return s.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		_, err := s.appendEvent(ctx, tx, tenantID, readerSessionID, store.EventTaintTransition, nil, nil, cardReadTaintTransitionPayload{
+		_, err := s.appendEvent(ctx, tx, tenantID, readerSessionID, eventlog.EventTaintTransition, nil, nil, cardReadTaintTransitionPayload{
 			CardID: c.CardID, Engaged: c.TaintState,
 		})
 		return err
@@ -132,7 +132,7 @@ func (s *Service) WriteCard(ctx context.Context, req WriteCardRequest) (Card, er
 			return err
 		}
 		if cardScan == ScanFlagged {
-			_, err = s.appendEvent(ctx, tx, req.TenantID, req.WrittenBySessionID, store.EventBoardCardFlagged, nil, nil, boardCardFlaggedPayload{
+			_, err = s.appendEvent(ctx, tx, req.TenantID, req.WrittenBySessionID, eventlog.EventBoardCardFlagged, nil, nil, boardCardFlaggedPayload{
 				CardID: card.CardID, TeamID: req.TeamID, Findings: findingStrs,
 			})
 		}

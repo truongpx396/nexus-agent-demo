@@ -24,6 +24,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
@@ -88,7 +89,7 @@ func (o *Outbox) Deliver(ctx context.Context, tenantID, sessionID uuid.UUID, seq
 			return err
 		}
 		if created {
-			_, err = o.appendEvent(ctx, tx, tenantID, sessionID, store.EventDeliveryEnqueued, nil, nil,
+			_, err = o.appendEvent(ctx, tx, tenantID, sessionID, eventlog.EventDeliveryEnqueued, nil, nil,
 				deliveryEnqueuedPayload{DeliveryID: delivery.DeliveryID.String(), SurfaceID: surfaceID, Recipient: recipient})
 		}
 		return err
@@ -114,9 +115,9 @@ func (o *Outbox) Deliver(ctx context.Context, tenantID, sessionID uuid.UUID, seq
 		}
 	}
 
-	eventType := store.EventDeliveryDelivered
+	eventType := eventlog.EventDeliveryDelivered
 	if sendErr != nil {
-		eventType = store.EventDeliveryFailed
+		eventType = eventlog.EventDeliveryFailed
 	}
 
 	err = o.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
@@ -154,44 +155,44 @@ func (o *Outbox) activeKeyID(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID
 	return keyID, nil
 }
 
-func (o *Outbox) appendEvent(ctx context.Context, tx pgx.Tx, tenantID, sessionID uuid.UUID, typ store.EventType, toolID *string, pairRef *uuid.UUID, payload any) (store.Event, error) {
+func (o *Outbox) appendEvent(ctx context.Context, tx pgx.Tx, tenantID, sessionID uuid.UUID, typ eventlog.EventType, toolID *string, pairRef *uuid.UUID, payload any) (eventlog.Event, error) {
 	plaintext, err := json.Marshal(payload)
 	if err != nil {
-		return store.Event{}, fmt.Errorf("surfaces: marshal %s payload: %w", typ, err)
+		return eventlog.Event{}, fmt.Errorf("surfaces: marshal %s payload: %w", typ, err)
 	}
 	keyID, err := o.activeKeyID(ctx, tx, sessionID)
 	if err != nil {
-		return store.Event{}, err
+		return eventlog.Event{}, err
 	}
 	dek, err := o.Keys.Unwrap(ctx, tx, keyID)
 	if err != nil {
-		return store.Event{}, fmt.Errorf("surfaces: unwrap key for session %s: %w", sessionID, err)
+		return eventlog.Event{}, fmt.Errorf("surfaces: unwrap key for session %s: %w", sessionID, err)
 	}
 	sealed, err := crypto.Seal(dek, plaintext, tenantID.String(), sessionID.String())
 	if err != nil {
-		return store.Event{}, fmt.Errorf("surfaces: seal %s payload: %w", typ, err)
+		return eventlog.Event{}, fmt.Errorf("surfaces: seal %s payload: %w", typ, err)
 	}
 
-	e := store.Event{
+	e := eventlog.Event{
 		EventID:       uuid.New(),
 		SessionID:     sessionID,
 		TenantID:      tenantID,
-		SchemaVersion: store.CurrentSchemaVersion,
+		SchemaVersion: eventlog.CurrentSchemaVersion,
 		Type:          typ,
 		Payload:       sealed,
 		PayloadDigest: crypto.Digest(plaintext),
 		KeyID:         dek.KeyID,
-		Actor:         store.ActorSystem,
+		Actor:         eventlog.ActorSystem,
 		ToolID:        toolID,
 		PairRef:       pairRef,
 	}
 	out, err := store.Append(ctx, tx, e)
 	if err != nil {
-		return store.Event{}, fmt.Errorf("surfaces: append %s: %w", typ, err)
+		return eventlog.Event{}, fmt.Errorf("surfaces: append %s: %w", typ, err)
 	}
 	if o.Chain != nil {
 		if _, err := o.Chain.Append(ctx, tx, tenantID, sessionID, out.Seq, out.EventID, string(out.Type), out.PayloadDigest); err != nil {
-			return store.Event{}, fmt.Errorf("surfaces: chain %s: %w", typ, err)
+			return eventlog.Event{}, fmt.Errorf("surfaces: chain %s: %w", typ, err)
 		}
 	}
 	return out, nil

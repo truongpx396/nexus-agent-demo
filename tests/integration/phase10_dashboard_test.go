@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
@@ -49,11 +50,11 @@ func TestComputeGoldenSignals(t *testing.T) {
 			}
 		}
 		completedReason := "completed"
-		if err := store.UpdateSessionStatus(ctx, tx, completed, store.SessionStatusCompleted, &completedReason); err != nil {
+		if err := store.UpdateSessionStatus(ctx, tx, completed, eventlog.SessionStatusCompleted, &completedReason); err != nil {
 			return err
 		}
 		stuckReason := "stuck_terminated"
-		if err := store.UpdateSessionStatus(ctx, tx, stuck, store.SessionStatusFailed, &stuckReason); err != nil {
+		if err := store.UpdateSessionStatus(ctx, tx, stuck, eventlog.SessionStatusFailed, &stuckReason); err != nil {
 			return err
 		}
 
@@ -96,20 +97,20 @@ func TestComputeGoldenSignals(t *testing.T) {
 		}
 
 		// One approval_mismatch event against that same session -> mismatch rate 1/1.
-		if _, err := store.Append(ctx, tx, store.Event{
+		if _, err := store.Append(ctx, tx, eventlog.Event{
 			EventID: uuid.New(), SessionID: completed, TenantID: r.tenantID,
-			SchemaVersion: store.CurrentSchemaVersion, Type: store.EventApprovalMismatch,
-			PayloadDigest: []byte{0}, KeyID: "test", Actor: store.ActorSystem,
+			SchemaVersion: eventlog.CurrentSchemaVersion, Type: eventlog.EventApprovalMismatch,
+			PayloadDigest: []byte{0}, KeyID: "test", Actor: eventlog.ActorSystem,
 		}); err != nil {
 			return err
 		}
 
 		// One taint_transition event, also against completed (stuck's log
 		// never touches a Rule-of-Two leg) -> transition rate 1/2.
-		_, err := store.Append(ctx, tx, store.Event{
+		_, err := store.Append(ctx, tx, eventlog.Event{
 			EventID: uuid.New(), SessionID: completed, TenantID: r.tenantID,
-			SchemaVersion: store.CurrentSchemaVersion, Type: store.EventTaintTransition,
-			PayloadDigest: []byte{1}, KeyID: "test", Actor: store.ActorSystem,
+			SchemaVersion: eventlog.CurrentSchemaVersion, Type: eventlog.EventTaintTransition,
+			PayloadDigest: []byte{1}, KeyID: "test", Actor: eventlog.ActorSystem,
 		})
 		if err != nil {
 			return err

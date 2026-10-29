@@ -9,6 +9,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools"
 )
@@ -58,7 +59,7 @@ func (t *ClaimTracker) Open(ctx context.Context, tenantID, sessionID uuid.UUID, 
 			return err
 		}
 		if created {
-			_, err = t.appendEvent(ctx, tx, tenantID, sessionID, store.EventEffectClaimed, &toolID, nil,
+			_, err = t.appendEvent(ctx, tx, tenantID, sessionID, eventlog.EventEffectClaimed, &toolID, nil,
 				claimedPayload{ClaimID: claim.ClaimID.String(), ToolID: toolID})
 		}
 		return err
@@ -97,7 +98,7 @@ func (t *ClaimTracker) Complete(ctx context.Context, tenantID, sessionID, claimI
 		if err != nil {
 			return err
 		}
-		_, err = t.appendEvent(ctx, tx, tenantID, sessionID, store.EventEffectClaimResolved, &claim.ToolID, nil,
+		_, err = t.appendEvent(ctx, tx, tenantID, sessionID, eventlog.EventEffectClaimResolved, &claim.ToolID, nil,
 			claimResolvedPayload{ClaimID: claimID.String(), Status: string(status), Reason: reason})
 		return err
 	})
@@ -117,7 +118,7 @@ func (c *Control) ResolveClaim(ctx context.Context, tenantID, sessionID, claimID
 		if err != nil {
 			return err
 		}
-		_, err = d.appendEvent(ctx, tx, tenantID, sessionID, store.EventEffectClaimResolved, &claim.ToolID, nil,
+		_, err = d.appendEvent(ctx, tx, tenantID, sessionID, eventlog.EventEffectClaimResolved, &claim.ToolID, nil,
 			claimResolvedPayload{ClaimID: claimID.String(), Status: string(status), Reason: reason})
 		return err
 	})

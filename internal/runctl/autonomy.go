@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/permissions"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
@@ -49,7 +50,7 @@ func (c *Control) TightenAutonomy(ctx context.Context, tenantID, sessionID uuid.
 		if _, err := tx.Exec(ctx, `UPDATE sessions SET autonomy_level = $2 WHERE session_id = $1`, sessionID, target); err != nil {
 			return fmt.Errorf("runctl: update autonomy_level: %w", err)
 		}
-		_, err = d.appendEvent(ctx, tx, tenantID, sessionID, store.EventAutonomyTightened, nil, nil,
+		_, err = d.appendEvent(ctx, tx, tenantID, sessionID, eventlog.EventAutonomyTightened, nil, nil,
 			autonomyTightenedPayload{From: sess.AutonomyLevel, To: target})
 		return err
 	})

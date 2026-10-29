@@ -10,7 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
 
@@ -23,39 +23,39 @@ import (
 // `^math/rand\.`, not `math/rand/v2`), and the correct choice here regardless:
 // this generator backs no security decision, so the ban's rationale doesn't
 // apply.
-func genHistory(rng *rand.Rand, n int) (history []store.Event, wantPaired map[uuid.UUID]bool) {
+func genHistory(rng *rand.Rand, n int) (history []eventlog.Event, wantPaired map[uuid.UUID]bool) {
 	wantPaired = map[uuid.UUID]bool{}
 
 	for i := 0; i < n; i++ {
 		switch rng.IntN(6) {
 		case 0, 1: // paired tool_use + tool_result
-			tu := store.Event{EventID: uuid.New(), Type: store.EventToolUse}
+			tu := eventlog.Event{EventID: uuid.New(), Type: eventlog.EventToolUse}
 			history = append(history, tu)
 			wantPaired[tu.EventID] = true
 			ref := tu.EventID
-			history = append(history, store.Event{EventID: uuid.New(), Type: store.EventToolResult, PairRef: &ref})
+			history = append(history, eventlog.Event{EventID: uuid.New(), Type: eventlog.EventToolResult, PairRef: &ref})
 
 		case 2: // orphan tool_use, no result at all — the "killed mid-turn" case
-			tu := store.Event{EventID: uuid.New(), Type: store.EventToolUse}
+			tu := eventlog.Event{EventID: uuid.New(), Type: eventlog.EventToolUse}
 			history = append(history, tu)
 			wantPaired[tu.EventID] = true
 
 		case 3: // orphan tool_result: pair_ref names nothing in this history
 			ref := uuid.New()
-			history = append(history, store.Event{EventID: uuid.New(), Type: store.EventToolResult, PairRef: &ref})
+			history = append(history, eventlog.Event{EventID: uuid.New(), Type: eventlog.EventToolResult, PairRef: &ref})
 
 		case 4: // tool_use resolved, then a stray duplicate result for the same pair_ref
-			tu := store.Event{EventID: uuid.New(), Type: store.EventToolUse}
+			tu := eventlog.Event{EventID: uuid.New(), Type: eventlog.EventToolUse}
 			history = append(history, tu)
 			wantPaired[tu.EventID] = true
 			ref := tu.EventID
-			history = append(history, store.Event{EventID: uuid.New(), Type: store.EventToolResult, PairRef: &ref})
-			history = append(history, store.Event{EventID: uuid.New(), Type: store.EventToolResult, PairRef: &ref})
+			history = append(history, eventlog.Event{EventID: uuid.New(), Type: eventlog.EventToolResult, PairRef: &ref})
+			history = append(history, eventlog.Event{EventID: uuid.New(), Type: eventlog.EventToolResult, PairRef: &ref})
 
 		default: // noise: an unrelated event, and a nil-pair_ref result
-			history = append(history, store.Event{EventID: uuid.New(), Type: store.EventContent})
+			history = append(history, eventlog.Event{EventID: uuid.New(), Type: eventlog.EventContent})
 			if rng.IntN(2) == 0 {
-				history = append(history, store.Event{EventID: uuid.New(), Type: store.EventToolResult, PairRef: nil})
+				history = append(history, eventlog.Event{EventID: uuid.New(), Type: eventlog.EventToolResult, PairRef: nil})
 			}
 		}
 	}
@@ -81,9 +81,9 @@ func TestHygienePairedResultInvariant(t *testing.T) {
 		resultCountFor := map[uuid.UUID]int{}
 		for _, e := range kept {
 			switch e.Type { //nolint:exhaustive // only tool_use/tool_result are structurally relevant to the paired-result invariant; every other event type is deliberately-ignored noise (genHistory's default case)
-			case store.EventToolUse:
+			case eventlog.EventToolUse:
 				keptToolUses[e.EventID] = true
-			case store.EventToolResult:
+			case eventlog.EventToolResult:
 				if e.PairRef == nil {
 					t.Fatalf("trial %d: a nil-pair_ref tool_result survived Hygiene", trial)
 				}

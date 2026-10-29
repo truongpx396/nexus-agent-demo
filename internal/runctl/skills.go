@@ -9,6 +9,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
@@ -49,7 +50,7 @@ func NewSkillEventRecorder(st *store.Store, keys *crypto.KeyStore, chain *audit.
 // Activated implements builtin.SkillEvents.Activated.
 func (r *SkillEventRecorder) Activated(ctx context.Context, tenantID, sessionID uuid.UUID, skillID string, heldToolIDs []string) error {
 	err := r.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		_, err := r.appendEvent(ctx, tx, tenantID, sessionID, store.EventSkillActivated, &skillID, nil,
+		_, err := r.appendEvent(ctx, tx, tenantID, sessionID, eventlog.EventSkillActivated, &skillID, nil,
 			skillActivatedPayload{SkillID: skillID, HeldToolIDs: heldToolIDs})
 		return err
 	})
@@ -62,7 +63,7 @@ func (r *SkillEventRecorder) Activated(ctx context.Context, tenantID, sessionID 
 // CapabilityIgnored implements builtin.SkillEvents.CapabilityIgnored.
 func (r *SkillEventRecorder) CapabilityIgnored(ctx context.Context, tenantID, sessionID uuid.UUID, skillID, toolID string) error {
 	err := r.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		_, err := r.appendEvent(ctx, tx, tenantID, sessionID, store.EventSkillCapabilityIgnored, &toolID, nil,
+		_, err := r.appendEvent(ctx, tx, tenantID, sessionID, eventlog.EventSkillCapabilityIgnored, &toolID, nil,
 			skillCapabilityIgnoredPayload{SkillID: skillID, ToolID: toolID})
 		return err
 	})

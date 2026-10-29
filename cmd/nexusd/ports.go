@@ -14,6 +14,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
 	"github.com/truongpx396/nexus-agent-demo/internal/config"
 	"github.com/truongpx396/nexus-agent-demo/internal/delegate"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
 	"github.com/truongpx396/nexus-agent-demo/internal/retrieval"
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
@@ -29,7 +30,7 @@ import (
 // — the seam kernel/types.go declares locally so kernel itself never
 // imports internal/audit (not on its own import allowlist).
 func chainReceiptFunc(chain *audit.Chain) kernel.ReceiptFunc {
-	return func(ctx context.Context, tx pgx.Tx, e store.Event) error {
+	return func(ctx context.Context, tx pgx.Tx, e eventlog.Event) error {
 		_, err := chain.Append(ctx, tx, e.TenantID, e.SessionID, e.Seq, e.EventID, string(e.Type), e.PayloadDigest)
 		return err
 	}
@@ -329,7 +330,7 @@ func (p *nexusdOversightPort) onResumed(ctx context.Context, tenantID uuid.UUID,
 // handing back a channel the way a fresh run's 202 does. See rest.
 // ResumeOutcome's own doc comment for why that's an acceptable trade for
 // this endpoint.
-func drainResume(events iter.Seq2[store.Event, error]) rest.ResumeOutcome {
+func drainResume(events iter.Seq2[eventlog.Event, error]) rest.ResumeOutcome {
 	var out rest.ResumeOutcome
 	for ev, err := range events {
 		if err != nil {

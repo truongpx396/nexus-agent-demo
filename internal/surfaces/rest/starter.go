@@ -5,8 +5,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
 // SealFunc seals one event's plaintext payload — the same shape
@@ -51,11 +51,11 @@ type RunRequest struct {
 	Conversational bool
 }
 
-// RunEvent is one item from the channel StartRun returns — store.Event
-// mirrors kernel.Kernel.Run's iter.Seq2[store.Event, error] shape exactly,
+// RunEvent is one item from the channel StartRun returns — eventlog.Event
+// mirrors kernel.Kernel.Run's iter.Seq2[eventlog.Event, error] shape exactly,
 // without this package needing to name the kernel package to say so.
 type RunEvent struct {
-	Event store.Event
+	Event eventlog.Event
 	Err   error
 }
 

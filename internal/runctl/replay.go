@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
@@ -18,7 +19,7 @@ import (
 // version — proof the path in store.Upcast is actually exercised against
 // this session's real history, not merely present in the registry.
 type ReplayResult struct {
-	History          []store.Event
+	History          []eventlog.Event
 	Synthetic        []kernel.SyntheticResult
 	Projection       store.Projection
 	UpcastedPayloads int
@@ -34,7 +35,7 @@ type ReplayResult struct {
 // selective-decrypt layering ReplayFullProjection and kernel.Rehydrate
 // already use elsewhere in this codebase).
 func (c *Control) Replay(ctx context.Context, tenantID, sessionID uuid.UUID) (ReplayResult, error) {
-	var history []store.Event
+	var history []eventlog.Event
 	if err := c.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
 		history, err = store.ListEvents(ctx, tx, sessionID)

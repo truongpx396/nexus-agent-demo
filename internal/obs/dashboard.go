@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
@@ -207,7 +208,7 @@ func queryApprovalSignals(ctx context.Context, tx pgx.Tx, g *GoldenSignals) erro
 	if err := tx.QueryRow(ctx, `SELECT count(*) FROM approvals WHERE decided_at IS NOT NULL`).Scan(&decided); err != nil {
 		return fmt.Errorf("obs: count decided approvals: %w", err)
 	}
-	if err := tx.QueryRow(ctx, `SELECT count(*) FROM events WHERE type = $1`, string(store.EventApprovalMismatch)).Scan(&mismatches); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM events WHERE type = $1`, string(eventlog.EventApprovalMismatch)).Scan(&mismatches); err != nil {
 		return fmt.Errorf("obs: count approval_mismatch events: %w", err)
 	}
 	g.ApprovalMismatchRate = safeDiv(mismatches, decided)
@@ -230,7 +231,7 @@ func queryTaintTransitionRate(ctx context.Context, tx pgx.Tx, g *GoldenSignals) 
 	var sessionsWithTransition int
 	err := tx.QueryRow(ctx,
 		`SELECT count(DISTINCT session_id) FROM events WHERE type = $1`,
-		string(store.EventTaintTransition),
+		string(eventlog.EventTaintTransition),
 	).Scan(&sessionsWithTransition)
 	if err != nil {
 		return fmt.Errorf("obs: count taint_transition sessions: %w", err)

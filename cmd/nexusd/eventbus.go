@@ -9,8 +9,8 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
 
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
 )
 
@@ -131,7 +131,7 @@ func subscribeRunEvents(ctx context.Context, redisClient *redis.Client, sessionI
 				continue
 			}
 			out <- rest.RunEvent{Event: *wire.Event, Err: evErr}
-			if evErr != nil || wire.Event.Type == store.EventTerminal {
+			if evErr != nil || wire.Event.Type == eventlog.EventTerminal {
 				return
 			}
 		}
@@ -160,7 +160,7 @@ func resumeConversationEvents(ctx context.Context, redisClient *redis.Client, ct
 		out <- rest.RunEvent{Event: ev}
 		for re := range busCh {
 			out <- re
-			if re.Err != nil || re.Event.Type == store.EventTerminal {
+			if re.Err != nil || re.Event.Type == eventlog.EventTerminal {
 				return
 			}
 		}

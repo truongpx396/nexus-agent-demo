@@ -24,6 +24,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
 	"github.com/truongpx396/nexus-agent-demo/internal/permissions"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
@@ -92,7 +93,7 @@ func setupOversightRig(t *testing.T) *oversightRig {
 }
 
 func (r *oversightRig) receiptFunc() kernel.ReceiptFunc {
-	return func(ctx context.Context, tx pgx.Tx, e store.Event) error {
+	return func(ctx context.Context, tx pgx.Tx, e eventlog.Event) error {
 		_, err := r.chain.Append(ctx, tx, e.TenantID, e.SessionID, e.Seq, e.EventID, string(e.Type), e.PayloadDigest)
 		return err
 	}
@@ -192,9 +193,9 @@ func newFileWritePipeline(t *testing.T, workspaceRoot string) (*tools.Pipeline, 
 	return pipeline, []provider.ToolSchema{{Name: d.ID.String(), Description: d.Description, InputSchema: d.InputSchema}}
 }
 
-func runToCompletion(t *testing.T, k *kernel.Kernel, st *kernel.RunState, cfg kernel.RunConfig) []store.Event {
+func runToCompletion(t *testing.T, k *kernel.Kernel, st *kernel.RunState, cfg kernel.RunConfig) []eventlog.Event {
 	t.Helper()
-	var events []store.Event
+	var events []eventlog.Event
 	for ev, err := range k.Run(context.Background(), st, cfg) {
 		if err != nil {
 			t.Fatalf("Run: %v", err)
@@ -204,7 +205,7 @@ func runToCompletion(t *testing.T, k *kernel.Kernel, st *kernel.RunState, cfg ke
 	return events
 }
 
-func hasEventType(events []store.Event, typ store.EventType) bool {
+func hasEventType(events []eventlog.Event, typ eventlog.EventType) bool {
 	for _, e := range events {
 		if e.Type == typ {
 			return true
@@ -247,10 +248,10 @@ func TestOversightApproval_GrantModifiedExecutesApproverInput(t *testing.T) {
 	st0 := &kernel.RunState{TenantID: rig.tenantID, SessionID: sessionID, Seal: rig.seal(t, sessionID)}
 
 	events := runToCompletion(t, k, st0, cfg)
-	if !hasEventType(events, store.EventApprovalRequested) {
+	if !hasEventType(events, eventlog.EventApprovalRequested) {
 		t.Fatal("expected an approval_requested event")
 	}
-	if got := rig.getSession(t, sessionID).Status; got != store.SessionStatusSuspended {
+	if got := rig.getSession(t, sessionID).Status; got != eventlog.SessionStatusSuspended {
 		t.Fatalf("session status = %q, want suspended", got)
 	}
 
@@ -276,7 +277,7 @@ func TestOversightApproval_GrantModifiedExecutesApproverInput(t *testing.T) {
 	}
 
 	final := rig.getSession(t, sessionID)
-	if final.Status != store.SessionStatusCompleted {
+	if final.Status != eventlog.SessionStatusCompleted {
 		t.Fatalf("final status = %q, want completed", final.Status)
 	}
 
@@ -348,7 +349,7 @@ func TestOversightApproval_MismatchRefusesExecution(t *testing.T) {
 	}
 
 	final := rig.getSession(t, sessionID)
-	if final.Status != store.SessionStatusFailed {
+	if final.Status != eventlog.SessionStatusFailed {
 		t.Fatalf("final status = %q, want failed", final.Status)
 	}
 	if final.TerminalReason == nil || *final.TerminalReason != "permission_denied" {
@@ -409,10 +410,10 @@ func TestOversightApproval_SimulatedConsentHasNoEffect(t *testing.T) {
 	st0 := &kernel.RunState{TenantID: rig.tenantID, SessionID: sessionID, Seal: rig.seal(t, sessionID)}
 	events := runToCompletion(t, k, st0, cfg)
 
-	if !hasEventType(events, store.EventApprovalRequested) {
+	if !hasEventType(events, eventlog.EventApprovalRequested) {
 		t.Fatal("a tool_use smuggling approval-shaped input fields still suspended for real approval — the fix would be a REGRESSION, not this test being wrong, if it ever stops suspending")
 	}
-	if got := rig.getSession(t, sessionID).Status; got != store.SessionStatusSuspended {
+	if got := rig.getSession(t, sessionID).Status; got != eventlog.SessionStatusSuspended {
 		t.Fatalf("status = %q, want suspended (simulated consent must not auto-approve)", got)
 	}
 	if _, err := os.Stat(filepath.Join(workspaceRoot, sessionID.String(), "out.txt")); !os.IsNotExist(err) {

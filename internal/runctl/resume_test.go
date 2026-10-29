@@ -7,7 +7,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 )
 
 // TestErrUnresolvedClaims_Error is README task 13.8 (closing
@@ -32,7 +32,7 @@ func TestErrUnresolvedClaims_Error(t *testing.T) {
 // file's own doc comment explains why), so each copy gets its own test.
 func TestCurrentActiveKeyID(t *testing.T) {
 	t.Run("finds the most recent non-erasure key", func(t *testing.T) {
-		history := []store.Event{{KeyID: "key-1"}, {KeyID: "key-2"}}
+		history := []eventlog.Event{{KeyID: "key-1"}, {KeyID: "key-2"}}
 		got, err := currentActiveKeyID(history)
 		if err != nil {
 			t.Fatalf("currentActiveKeyID: %v", err)
@@ -43,7 +43,7 @@ func TestCurrentActiveKeyID(t *testing.T) {
 	})
 
 	t.Run("skips a trailing erasure key", func(t *testing.T) {
-		history := []store.Event{{KeyID: "key-1"}, {KeyID: crypto.ErasureKeyID}}
+		history := []eventlog.Event{{KeyID: "key-1"}, {KeyID: crypto.ErasureKeyID}}
 		got, err := currentActiveKeyID(history)
 		if err != nil {
 			t.Fatalf("currentActiveKeyID: %v", err)
@@ -54,7 +54,7 @@ func TestCurrentActiveKeyID(t *testing.T) {
 	})
 
 	t.Run("errors when no active key exists", func(t *testing.T) {
-		if _, err := currentActiveKeyID([]store.Event{{KeyID: crypto.ErasureKeyID}}); err == nil {
+		if _, err := currentActiveKeyID([]eventlog.Event{{KeyID: crypto.ErasureKeyID}}); err == nil {
 			t.Error("expected an error when every key is the erasure sentinel")
 		}
 	})

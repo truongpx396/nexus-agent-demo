@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools"
@@ -43,7 +44,7 @@ type Resumer struct {
 
 // Grant approves the tool_use exactly as originally requested and resumes
 // the run with it.
-func (r *Resumer) Grant(ctx context.Context, tenantID, approvalID uuid.UUID, decidedBy string) iter.Seq2[store.Event, error] {
+func (r *Resumer) Grant(ctx context.Context, tenantID, approvalID uuid.UUID, decidedBy string) iter.Seq2[eventlog.Event, error] {
 	ap, err := r.Approvals.Grant(ctx, tenantID, approvalID, decidedBy)
 	if err != nil {
 		return errSeq(err)
@@ -53,7 +54,7 @@ func (r *Resumer) Grant(ctx context.Context, tenantID, approvalID uuid.UUID, dec
 
 // GrantModified approves the tool_use with the approver's substituted
 // input and resumes the run with it.
-func (r *Resumer) GrantModified(ctx context.Context, tenantID, approvalID uuid.UUID, decidedBy string, modifiedInput json.RawMessage) iter.Seq2[store.Event, error] {
+func (r *Resumer) GrantModified(ctx context.Context, tenantID, approvalID uuid.UUID, decidedBy string, modifiedInput json.RawMessage) iter.Seq2[eventlog.Event, error] {
 	ap, err := r.Approvals.GrantModified(ctx, tenantID, approvalID, decidedBy, modifiedInput)
 	if err != nil {
 		return errSeq(err)
@@ -63,7 +64,7 @@ func (r *Resumer) GrantModified(ctx context.Context, tenantID, approvalID uuid.U
 
 // Deny refuses the tool_use and resumes the run only far enough to release
 // the paired synthetic result and terminate it.
-func (r *Resumer) Deny(ctx context.Context, tenantID, approvalID uuid.UUID, decidedBy, reason string) iter.Seq2[store.Event, error] {
+func (r *Resumer) Deny(ctx context.Context, tenantID, approvalID uuid.UUID, decidedBy, reason string) iter.Seq2[eventlog.Event, error] {
 	ap, err := r.Approvals.Deny(ctx, tenantID, approvalID, decidedBy, reason)
 	if err != nil {
 		return errSeq(err)
@@ -71,7 +72,7 @@ func (r *Resumer) Deny(ctx context.Context, tenantID, approvalID uuid.UUID, deci
 	return r.resume(ctx, tenantID, ap, kernel.ApprovalDecisionDenied, ap.Context.Input, reason)
 }
 
-func (r *Resumer) resume(ctx context.Context, tenantID uuid.UUID, ap Approval, decision kernel.ApprovalDecisionKind, originalInput json.RawMessage, reason string) iter.Seq2[store.Event, error] {
+func (r *Resumer) resume(ctx context.Context, tenantID uuid.UUID, ap Approval, decision kernel.ApprovalDecisionKind, originalInput json.RawMessage, reason string) iter.Seq2[eventlog.Event, error] {
 	st, sess, err := r.loadRunState(ctx, tenantID, ap.SessionID)
 	if err != nil {
 		return errSeq(err)
@@ -97,7 +98,7 @@ func (r *Resumer) resume(ctx context.Context, tenantID uuid.UUID, ap Approval, d
 // the original Run call already returned).
 func (r *Resumer) loadRunState(ctx context.Context, tenantID, sessionID uuid.UUID) (*kernel.RunState, store.Session, error) {
 	var sess store.Session
-	var history []store.Event
+	var history []eventlog.Event
 	err := r.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
 		sess, err = store.GetSession(ctx, tx, sessionID)
@@ -112,7 +113,7 @@ func (r *Resumer) loadRunState(ctx context.Context, tenantID, sessionID uuid.UUI
 	}
 
 	dekCache := map[string]crypto.DEK{}
-	decrypt := func(ctx context.Context, e store.Event) ([]byte, error) {
+	decrypt := func(ctx context.Context, e eventlog.Event) ([]byte, error) {
 		if e.KeyID == crypto.ErasureKeyID {
 			return e.Payload, nil // stored plaintext — see crypto.ErasureKeyID's own doc comment
 		}
@@ -171,7 +172,7 @@ func (r *Resumer) loadRunState(ctx context.Context, tenantID, sessionID uuid.UUI
 	return &kernel.RunState{TenantID: tenantID, SessionID: sessionID, Seal: seal, History: history, Transcript: transcript, ToolUseIDs: toolUseIDs}, sess, nil
 }
 
-func currentActiveKeyID(history []store.Event) (string, error) {
+func currentActiveKeyID(history []eventlog.Event) (string, error) {
 	for i := len(history) - 1; i >= 0; i-- {
 		if history[i].KeyID != crypto.ErasureKeyID {
 			return history[i].KeyID, nil
@@ -180,9 +181,9 @@ func currentActiveKeyID(history []store.Event) (string, error) {
 	return "", fmt.Errorf("oversight: session has no active key in its history")
 }
 
-func errSeq(err error) iter.Seq2[store.Event, error] {
-	return func(yield func(store.Event, error) bool) {
-		yield(store.Event{}, err)
+func errSeq(err error) iter.Seq2[eventlog.Event, error] {
+	return func(yield func(eventlog.Event, error) bool) {
+		yield(eventlog.Event{}, err)
 	}
 }
 

@@ -8,10 +8,10 @@ import (
 	"strings"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 	"github.com/truongpx396/nexus-agent-demo/internal/promptctx"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
 // runTurns is the turn loop both Run (from turn 1, after its own preamble)
@@ -21,7 +21,7 @@ import (
 // appended event is durably committed (store.Append, inside InTenantTx)
 // before it is yielded, so a caller forwarding these events (e.g. over SSE)
 // never shows a client something that isn't already in the log.
-func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yield func(store.Event, error) bool, startTurn int) {
+func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yield func(eventlog.Event, error) bool, startTurn int) {
 	maxTurns := cfg.MaxTurns
 	if maxTurns <= 0 {
 		maxTurns = defaultMaxTurns
@@ -50,7 +50,7 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 		for _, s := range synth {
 			ev, err := k.appendToolResult(ctx, st, s.PairRef, s.ToolID, ToolResult{IsError: true, Synthetic: true, Reason: s.Reason})
 			if err != nil {
-				yield(store.Event{}, err)
+				yield(eventlog.Event{}, err)
 				return
 			}
 			synthBlocks = append(synthBlocks, provider.ContentBlock{
@@ -70,7 +70,7 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 		})
 		bev, err := k.appendBudgetDecision(ctx, st, reservation)
 		if err != nil {
-			yield(store.Event{}, err)
+			yield(eventlog.Event{}, err)
 			return
 		}
 		if !yield(bev, nil) {
@@ -91,9 +91,9 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 		// same index Prune's caller computed against view.
 		view, prunedCount := promptctx.Prune(st.Transcript, k.PrunePolicy)
 		if prunedCount > 0 {
-			ev, err := k.appendEvent(ctx, st, store.EventContextPruned, store.ActorSystem, nil, nil, nil, contextPrunedPayload{PrunedCount: prunedCount})
+			ev, err := k.appendEvent(ctx, st, eventlog.EventContextPruned, eventlog.ActorSystem, nil, nil, nil, contextPrunedPayload{PrunedCount: prunedCount})
 			if err != nil {
-				yield(store.Event{}, err)
+				yield(eventlog.Event{}, err)
 				return
 			}
 			if !yield(ev, nil) {
@@ -104,12 +104,12 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 		if ok, covered := promptctx.ShouldCondense(view, k.CondenseThresholdBytes); ok {
 			summary, degraded, condenseReservation, err := k.condense(ctx, st, cfg, view[:covered])
 			if err != nil {
-				yield(store.Event{}, err)
+				yield(eventlog.Event{}, err)
 				return
 			}
 			cbev, err := k.appendBudgetDecision(ctx, st, condenseReservation)
 			if err != nil {
-				yield(store.Event{}, err)
+				yield(eventlog.Event{}, err)
 				return
 			}
 			if !yield(cbev, nil) {
@@ -130,15 +130,15 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 			if n := len(st.History); n > 0 {
 				coveredSeq = st.History[n-1].Seq
 			}
-			cond := store.Condense(coveredSeq, summary)
-			condEv, err := k.appendEvent(ctx, st, store.EventCondensation, store.ActorSystem, nil, nil, nil, condensationPayload{
+			cond := eventlog.Condense(coveredSeq, summary)
+			condEv, err := k.appendEvent(ctx, st, eventlog.EventCondensation, eventlog.ActorSystem, nil, nil, nil, condensationPayload{
 				CondensationID:    cond.CondensationID.String(),
 				CoveredThroughSeq: cond.CoveredThroughSeq,
 				Summary:           cond.Summary,
 				Degraded:          degraded,
 			})
 			if err != nil {
-				yield(store.Event{}, err)
+				yield(eventlog.Event{}, err)
 				return
 			}
 			if !yield(condEv, nil) {
@@ -263,7 +263,7 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 		for _, r := range reasoningChunks {
 			ev, err := k.appendThought(ctx, st, cfg.ModelID, r)
 			if err != nil {
-				yield(store.Event{}, err)
+				yield(eventlog.Event{}, err)
 				return
 			}
 			// Reasoning is never shown to a client (internal/provider's doc
@@ -293,7 +293,7 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 		if contentText.Len() > 0 {
 			ev, err := k.appendContent(ctx, st, cfg.ModelID, contentText.String())
 			if err != nil {
-				yield(store.Event{}, err)
+				yield(eventlog.Event{}, err)
 				return
 			}
 			assistantBlocks = append(assistantBlocks, provider.ContentBlock{Kind: provider.BlockText, Text: contentText.String()})
@@ -302,11 +302,11 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 			}
 		}
 
-		var toolUseEvents []store.Event
+		var toolUseEvents []eventlog.Event
 		for _, tu := range toolUses {
 			ev, err := k.appendToolUseEvent(ctx, st, cfg.ModelID, tu)
 			if err != nil {
-				yield(store.Event{}, err)
+				yield(eventlog.Event{}, err)
 				return
 			}
 			toolUseEvents = append(toolUseEvents, ev)
@@ -351,7 +351,7 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 
 				ev, err := k.appendToolResult(ctx, st, toolUseEvents[i].EventID, toolUseEvents[i].ToolID, result)
 				if err != nil {
-					yield(store.Event{}, err)
+					yield(eventlog.Event{}, err)
 					return
 				}
 				resultBlocks = append(resultBlocks, provider.ContentBlock{Kind: provider.BlockToolResult, ToolUseID: tu.ToolUseID, Text: resultText(result), IsError: result.IsError})
@@ -369,9 +369,9 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 				// not this call's own outcome goes on to suspend or
 				// terminate the run.
 				if result.TaintChanged {
-					tev, err := k.appendEvent(ctx, st, store.EventTaintTransition, store.ActorSystem, nil, nil, nil, taintTransitionPayload{Engaged: result.TaintEngaged})
+					tev, err := k.appendEvent(ctx, st, eventlog.EventTaintTransition, eventlog.ActorSystem, nil, nil, nil, taintTransitionPayload{Engaged: result.TaintEngaged})
 					if err != nil {
-						yield(store.Event{}, err)
+						yield(eventlog.Event{}, err)
 						return
 					}
 					if !yield(tev, nil) {
@@ -399,9 +399,9 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 				if k.Stuck != nil {
 					verdict := k.Stuck.Record(st.SessionID, tu.ToolName, tu.Input)
 					if verdict.Suspected {
-						sev, err := k.appendEvent(ctx, st, store.EventStuckSuspected, store.ActorSystem, nil, nil, nil, stuckSuspectedPayload{Reason: string(verdict.Reason)})
+						sev, err := k.appendEvent(ctx, st, eventlog.EventStuckSuspected, eventlog.ActorSystem, nil, nil, nil, stuckSuspectedPayload{Reason: string(verdict.Reason)})
 						if err != nil {
-							yield(store.Event{}, err)
+							yield(eventlog.Event{}, err)
 							return
 						}
 						if !yield(sev, nil) {

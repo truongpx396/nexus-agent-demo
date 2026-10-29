@@ -7,8 +7,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 )
 
 // fakeBus is a minimal in-memory EventBus for testing PublishEvent/
@@ -57,7 +56,7 @@ func TestPublishEvent_WithBusSet_PublishesTheWireShapeRelayEventExpects(t *testi
 	s := &Server{broker: newBroker(), Bus: bus}
 	sessionID := uuid.New()
 	tenantID := uuid.New()
-	ev := store.Event{EventID: uuid.New(), SessionID: sessionID, TenantID: tenantID, Type: store.EventContent, Seq: 3}
+	ev := eventlog.Event{EventID: uuid.New(), SessionID: sessionID, TenantID: tenantID, Type: eventlog.EventContent, Seq: 3}
 
 	s.PublishEvent(tenantID, sessionID, ev, nil)
 
@@ -86,7 +85,7 @@ func TestPublishEvent_WithBusSet_CarriesTheErrorAsAString(t *testing.T) {
 	sessionID := uuid.New()
 	runErr := errors.New("seal event payload: boom")
 
-	s.PublishEvent(uuid.New(), sessionID, store.Event{SessionID: sessionID}, runErr)
+	s.PublishEvent(uuid.New(), sessionID, eventlog.Event{SessionID: sessionID}, runErr)
 
 	if len(bus.published) != 1 {
 		t.Fatalf("Bus.Publish called %d times, want 1", len(bus.published))
@@ -138,21 +137,21 @@ func TestRelayEvent_ClosesLocalSubscribersOnTerminal(t *testing.T) {
 	ch, unsubscribe := s.broker.subscribe(sessionID)
 	defer unsubscribe()
 
-	s.RelayEvent(sessionID, store.Event{SessionID: sessionID, Type: store.EventContent}, nil)
+	s.RelayEvent(sessionID, eventlog.Event{SessionID: sessionID, Type: eventlog.EventContent}, nil)
 	got, ok := <-ch
 	if !ok {
 		t.Fatal("channel closed after a non-terminal event, want still open")
 	}
-	if got.Event.Type != store.EventContent {
+	if got.Event.Type != eventlog.EventContent {
 		t.Fatalf("relayed event type = %v, want content", got.Event.Type)
 	}
 
-	s.RelayEvent(sessionID, store.Event{SessionID: sessionID, Type: store.EventTerminal}, nil)
+	s.RelayEvent(sessionID, eventlog.Event{SessionID: sessionID, Type: eventlog.EventTerminal}, nil)
 	got, ok = <-ch
 	if !ok {
 		t.Fatal("channel closed before delivering the terminal event itself")
 	}
-	if got.Event.Type != store.EventTerminal {
+	if got.Event.Type != eventlog.EventTerminal {
 		t.Fatalf("relayed event type = %v, want terminal", got.Event.Type)
 	}
 	if _, ok := <-ch; ok {

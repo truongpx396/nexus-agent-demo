@@ -4,8 +4,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 )
 
 // SealFunc/RunRequest/RunEvent/RunStarter mirror every other surface's own
@@ -24,7 +23,7 @@ type RunRequest struct {
 }
 
 type RunEvent struct {
-	Event store.Event
+	Event eventlog.Event
 	Err   error
 }
 

@@ -30,6 +30,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/authn"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/memory"
 	"github.com/truongpx396/nexus-agent-demo/internal/permissions"
 	"github.com/truongpx396/nexus-agent-demo/internal/permissions/safety"
@@ -87,7 +88,7 @@ func TestMemory_InjectedAtSessionStart_ProducesLeadingAuditEvent(t *testing.T) {
 		AutonomyLevel: "autonomous",
 	}
 
-	var events []store.Event
+	var events []eventlog.Event
 	for ev, err := range k.Run(ctx, st0, cfg) {
 		if err != nil {
 			t.Fatalf("Run: %v", err)
@@ -95,10 +96,10 @@ func TestMemory_InjectedAtSessionStart_ProducesLeadingAuditEvent(t *testing.T) {
 		events = append(events, ev)
 	}
 
-	if len(events) == 0 || events[0].Type != store.EventMemoryLoaded {
+	if len(events) == 0 || events[0].Type != eventlog.EventMemoryLoaded {
 		t.Fatalf("first event type = %v, want memory_loaded (injected at session start)", events)
 	}
-	if !hasEventType(events, store.EventTerminal) {
+	if !hasEventType(events, eventlog.EventTerminal) {
 		t.Fatal("run never reached a terminal event")
 	}
 }
@@ -186,12 +187,12 @@ func TestSkills_MidSessionToolRevocation_EmitsCapabilityIgnoredAndContinues(t *t
 	if err != nil {
 		t.Fatalf("list events: %v", err)
 	}
-	if !hasEventType(events, store.EventSkillCapabilityIgnored) {
+	if !hasEventType(events, eventlog.EventSkillCapabilityIgnored) {
 		t.Fatal("expected an EventSkillCapabilityIgnored event after the mid-session revocation")
 	}
 	activatedCount := 0
 	for _, e := range events {
-		if e.Type == store.EventSkillActivated {
+		if e.Type == eventlog.EventSkillActivated {
 			activatedCount++
 		}
 	}
@@ -271,7 +272,7 @@ func TestOutbox_RetriesThenDeliversAndStaysIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list events: %v", err)
 	}
-	if !hasEventType(events, store.EventDeliveryEnqueued) || !hasEventType(events, store.EventDeliveryFailed) || !hasEventType(events, store.EventDeliveryDelivered) {
+	if !hasEventType(events, eventlog.EventDeliveryEnqueued) || !hasEventType(events, eventlog.EventDeliveryFailed) || !hasEventType(events, eventlog.EventDeliveryDelivered) {
 		t.Fatal("expected enqueued, failed, and delivered events across the retry sequence")
 	}
 }
@@ -441,7 +442,7 @@ func extractRunID(t *testing.T, output string) uuid.UUID {
 	return uuid.Nil
 }
 
-func waitForTerminalEventTypes(t *testing.T, ctx context.Context, st *store.Store, tenantID, sessionID uuid.UUID) []store.EventType {
+func waitForTerminalEventTypes(t *testing.T, ctx context.Context, st *store.Store, tenantID, sessionID uuid.UUID) []eventlog.EventType {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -449,8 +450,8 @@ func waitForTerminalEventTypes(t *testing.T, ctx context.Context, st *store.Stor
 		if err != nil {
 			t.Fatalf("list events: %v", err)
 		}
-		if hasEventType(events, store.EventTerminal) {
-			types := make([]store.EventType, len(events))
+		if hasEventType(events, eventlog.EventTerminal) {
+			types := make([]eventlog.EventType, len(events))
 			for i, e := range events {
 				types[i] = e.Type
 			}

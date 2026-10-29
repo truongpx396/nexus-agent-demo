@@ -19,6 +19,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/migrations"
 )
@@ -177,7 +178,7 @@ func TestHandleWebhook_SecondMessageFromSamePeerResumesSameSession(t *testing.T)
 	}
 
 	if err := s.InTenantTx(context.Background(), tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `UPDATE sessions SET status = $2 WHERE session_id = $1`, firstSessionID, store.SessionStatusAwaitingInput)
+		_, err := tx.Exec(ctx, `UPDATE sessions SET status = $2 WHERE session_id = $1`, firstSessionID, eventlog.SessionStatusAwaitingInput)
 		return err
 	}); err != nil {
 		t.Fatalf("mark session awaiting_input: %v", err)
@@ -283,7 +284,7 @@ func TestServer_NotificationPayload_DecryptsContentEvent(t *testing.T) {
 	}
 
 	srv := &Server{Store: s, KeyStore: keys}
-	ev := store.Event{Type: store.EventContent, Payload: sealed, KeyID: dek.KeyID}
+	ev := eventlog.Event{Type: eventlog.EventContent, Payload: sealed, KeyID: dek.KeyID}
 	payload, ok := srv.notificationPayload(context.Background(), tenantID, sessionID, ev)
 	if !ok {
 		t.Fatal("notificationPayload returned ok=false for a real content event")
