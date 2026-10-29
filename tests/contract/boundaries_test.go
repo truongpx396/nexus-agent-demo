@@ -126,9 +126,9 @@ var rules = []boundaryRule{
 		// below follow the same rule: they find a conversation with
 		// Reader.FindByKey, open the events a notification quotes with
 		// Reader.EventOpener, and dedupe redeliveries through
-		// surfaces.InboundDedup. (Cron and MCP still touch the database —
-		// the schedule table, the connector tables — and are not yet covered;
-		// see docs/build-phases.md Phase 19.)
+		// surfaces.InboundDedup. (MCP still touches the database — the
+		// connector tables — and is not yet covered; see docs/build-phases.md
+		// Phase 19.)
 		name: "the REST surface must not itself import internal/store, internal/crypto or a database/cache driver",
 		pkg:  modulePrefix + "internal/surfaces/rest",
 		forbidden: []string{
@@ -153,6 +153,21 @@ var rules = []boundaryRule{
 			"github.com/jackc/pgx",
 			"github.com/redis",
 		},
+	},
+	{
+		// The scheduler decides which schedules are valid, the route, the
+		// autonomy default and when the next run is; ScheduleStore does the
+		// rest, with the session-plus-schedule step as ONE method so the tick
+		// stays exactly-once. Its adapter is internal/surfaces/cron/postgres.
+		name: "the cron surface must not itself import internal/store, internal/crypto or a database/cache driver",
+		pkg:  modulePrefix + "internal/surfaces/cron",
+		forbidden: []string{
+			modulePrefix + "internal/store",
+			modulePrefix + "internal/crypto",
+			"github.com/jackc/pgx",
+			"github.com/redis",
+		},
+		direct: true,
 	},
 	{
 		name: "the telegram surface must not itself import internal/store, internal/crypto or a database/cache driver",

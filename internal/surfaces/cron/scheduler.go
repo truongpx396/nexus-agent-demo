@@ -9,15 +9,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	robfigcron "github.com/robfig/cron/v3"
 	"github.com/rs/zerolog/log"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/harness"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/runs"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
 // TenantLister lists every tenant this deployment knows about — backed by
@@ -25,7 +22,7 @@ import (
 // migrations/0000_app_role.sql; there is no cross-tenant query through the
 // ordinary pool), the same pattern cmd/nexusd's own listTenantIDs already
 // uses for the anchor loop. This scheduler never queries cron_schedules
-// itself outside a per-tenant Store.InTenantTx — see runOnce's own doc
+// itself outside a per-tenant ScheduleStore call — see RunOnce's own doc
 // comment.
 type TenantLister interface {
 	ListTenantIDs(ctx context.Context) ([]uuid.UUID, error)
@@ -35,14 +32,24 @@ type TenantLister interface {
 // run for each — one goroutine, started alongside cmd/nexusd's other
 // background loops (startAnchorLoop).
 type Scheduler struct {
-	Store                 *store.Store
-	KeyStore              *crypto.KeyStore
+	Schedules             ScheduleStore
 	Starter               runs.Starter
 	Tenants               TenantLister
 	CatalogManifestDigest []byte
 
 	// PollInterval is how often runOnce is called; defaults to 30s.
 	PollInterval time.Duration
+
+	// Now is the clock; nil means time.Now. A schedule's next run is computed
+	// from it, so a test needs to be able to move it.
+	Now func() time.Time
+}
+
+func (s *Scheduler) now() time.Time {
+	if s.Now != nil {
+		return s.Now()
+	}
+	return time.Now()
 }
 
 func (s *Scheduler) pollInterval() time.Duration {
@@ -62,16 +69,16 @@ func (s *Scheduler) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			s.runOnce(ctx)
+			s.RunOnce(ctx)
 		}
 	}
 }
 
-// runOnce is one poll pass: list tenants (admin connection), then for
+// RunOnce is one poll pass (Run calls it on a ticker): list tenants (admin connection), then for
 // EACH tenant, an ordinary tenant-scoped query for its own due rows — this
 // is never a single cross-tenant query, because the runtime pool
 // (nexus_app) cannot make one (TenantLister's own doc comment).
-func (s *Scheduler) runOnce(ctx context.Context) {
+func (s *Scheduler) RunOnce(ctx context.Context) {
 	tenantIDs, err := s.Tenants.ListTenantIDs(ctx)
 	if err != nil {
 		log.Error().Err(err).Msg("cron: list tenants")
@@ -82,39 +89,12 @@ func (s *Scheduler) runOnce(ctx context.Context) {
 	}
 }
 
-type dueSchedule struct {
-	ScheduleID    uuid.UUID
-	UserID        uuid.UUID
-	CronExpr      string
-	Input         string
-	AutonomyLevel string
-}
-
 func (s *Scheduler) runTenant(ctx context.Context, tenantID uuid.UUID) {
-	var due []dueSchedule
-	err := s.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		rows, err := tx.Query(ctx,
-			`SELECT schedule_id, user_id, cron_expr, input, autonomy_level
-			 FROM cron_schedules WHERE enabled AND (next_run_at IS NULL OR next_run_at <= now())`,
-		)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var d dueSchedule
-			if err := rows.Scan(&d.ScheduleID, &d.UserID, &d.CronExpr, &d.Input, &d.AutonomyLevel); err != nil {
-				return err
-			}
-			due = append(due, d)
-		}
-		return rows.Err()
-	})
+	due, err := s.Schedules.Due(ctx, tenantID)
 	if err != nil {
 		log.Error().Err(err).Any("tenant_id", tenantID).Msg("cron: list due schedules")
 		return
 	}
-
 	for _, d := range due {
 		s.fire(ctx, tenantID, d)
 	}
@@ -124,11 +104,11 @@ func (s *Scheduler) runTenant(ctx context.Context, tenantID uuid.UUID) {
 // create-session-then-StartRun sequence, resolved as the synthetic
 // principal_kind=scheduler capability.PrincipalScheduler pre-declared for
 // exactly this (internal/surfaces/capability.go).
-func (s *Scheduler) fire(ctx context.Context, tenantID uuid.UUID, d dueSchedule) {
+func (s *Scheduler) fire(ctx context.Context, tenantID uuid.UUID, d Schedule) {
 	sched, err := robfigcron.ParseStandard(d.CronExpr)
 	if err != nil {
-		log.Error().Err(err).Any("schedule_id", d.ScheduleID).Msg("cron: unparseable cron_expr, disabling schedule")
-		s.disable(ctx, tenantID, d.ScheduleID)
+		log.Error().Err(err).Any("schedule_id", d.ID).Msg("cron: unparseable cron_expr, disabling schedule")
+		s.disable(ctx, tenantID, d.ID)
 		return
 	}
 
@@ -144,50 +124,28 @@ func (s *Scheduler) fire(ctx context.Context, tenantID uuid.UUID, d dueSchedule)
 		autonomy = "supervised"
 	}
 
-	now := time.Now().UTC()
-	var dek crypto.DEK
-	err = s.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		var derr error
-		dek, derr = s.KeyStore.NewDEK(ctx, tx, tenantID)
-		if derr != nil {
-			return derr
-		}
-		if err := store.CreateSession(ctx, tx, store.Session{
-			SessionID:     sessionID,
-			SessionKey:    sessionID.String(),
-			TenantID:      tenantID,
-			SurfaceID:     "cron",
-			UserID:        d.UserID,
-			AgentVersion:  1,
-			HarnessDigest: digest,
-			DataLabel:     string(provider.DataLabelInternal),
-			RouteModelID:  route.ModelID,
-			RouteReason:   route.Reason,
-			AutonomyLevel: autonomy,
-		}); err != nil {
-			return err
-		}
-		_, err := tx.Exec(ctx,
-			`UPDATE cron_schedules SET last_run_at = $1, next_run_at = $2 WHERE schedule_id = $3`,
-			now, sched.Next(now), d.ScheduleID,
-		)
-		return err
+	now := s.now().UTC()
+	seal, err := s.Schedules.Fire(ctx, Firing{
+		TenantID: tenantID, Schedule: d, SessionID: sessionID,
+		HarnessDigest: digest, DataLabel: string(provider.DataLabelInternal),
+		ModelID: route.ModelID, RouteReason: route.Reason, Autonomy: autonomy,
+		RanAt: now, NextRunAt: sched.Next(now),
 	})
 	if err != nil {
-		log.Error().Err(err).Any("schedule_id", d.ScheduleID).Msg("cron: create session for due schedule")
+		log.Error().Err(err).Any("schedule_id", d.ID).Msg("cron: create session for due schedule")
 		return
 	}
 
 	req := runs.Request{
 		SessionID: sessionID, TenantID: tenantID,
-		Seal:          runs.SealFor(dek, tenantID, sessionID),
+		Seal:          seal,
 		Input:         d.Input,
 		ModelID:       route.ModelID,
 		AutonomyLevel: autonomy,
 	}
 	events, err := s.Starter.StartRun(context.Background(), req)
 	if err != nil {
-		log.Error().Err(err).Any("schedule_id", d.ScheduleID).Msg("cron: start run for due schedule")
+		log.Error().Err(err).Any("schedule_id", d.ID).Msg("cron: start run for due schedule")
 		return
 	}
 	go drain(events)
@@ -205,10 +163,7 @@ func drain(events <-chan runs.Event) {
 }
 
 func (s *Scheduler) disable(ctx context.Context, tenantID, scheduleID uuid.UUID) {
-	if err := s.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `UPDATE cron_schedules SET enabled = false WHERE schedule_id = $1`, scheduleID)
-		return err
-	}); err != nil {
+	if err := s.Schedules.Disable(ctx, tenantID, scheduleID); err != nil {
 		log.Error().Err(err).Any("schedule_id", scheduleID).Msg("cron: disable unparseable schedule")
 	}
 }
