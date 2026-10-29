@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/audit"
+	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
 	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
@@ -33,7 +33,7 @@ type Approvals struct {
 	DefaultTTL time.Duration
 }
 
-func NewApprovals(st *store.Store, keys *cryptopg.KeyStore, chain *audit.Chain) *Approvals {
+func NewApprovals(st *store.Store, keys *cryptopg.KeyStore, chain *auditpg.Chain) *Approvals {
 	return &Approvals{deps: deps{Store: st, Keys: keys, Chain: chain}}
 }
 

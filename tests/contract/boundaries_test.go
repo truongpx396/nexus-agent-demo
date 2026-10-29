@@ -106,7 +106,19 @@ var rules = []boundaryRule{
 		pkg:  modulePrefix + "internal/crypto",
 		forbidden: []string{
 			modulePrefix + "internal/store",
-			modulePrefix + "internal/audit",
+			modulePrefix + "internal/audit/postgres",
+			"github.com/jackc/pgx",
+			"github.com/redis",
+		},
+	},
+	{
+		// The receipt vocabulary, the hash and the signer protocol. The chain
+		// that appends, anchors and verifies receipts in a transaction is
+		// internal/audit/postgres.
+		name: "audit must not reach the database or cache",
+		pkg:  modulePrefix + "internal/audit",
+		forbidden: []string{
+			modulePrefix + "internal/store",
 			"github.com/jackc/pgx",
 			"github.com/redis",
 		},

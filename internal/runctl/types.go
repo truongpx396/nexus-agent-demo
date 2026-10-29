@@ -13,7 +13,7 @@
 package runctl
 
 import (
-	"github.com/truongpx396/nexus-agent-demo/internal/audit"
+	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
 	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
@@ -31,7 +31,7 @@ import (
 type Control struct {
 	Store     *store.Store
 	Keys      *cryptopg.KeyStore
-	Chain     *audit.Chain
+	Chain     *auditpg.Chain
 	Approvals *oversight.Approvals
 	Inputs    *oversight.Inputs
 	Kernel    *kernel.Kernel
@@ -67,7 +67,7 @@ type Control struct {
 type deps struct {
 	Store *store.Store
 	Keys  *cryptopg.KeyStore
-	Chain *audit.Chain
+	Chain *auditpg.Chain
 }
 
 func (c *Control) deps() deps { return deps{Store: c.Store, Keys: c.Keys, Chain: c.Chain} }

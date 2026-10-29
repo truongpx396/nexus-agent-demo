@@ -23,6 +23,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
+	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
@@ -40,7 +41,7 @@ import (
 // fakeSigner is an in-process Ed25519 Signer usable without standing up
 // cmd/signerd — the same reason internal/provider/fake exists: a
 // correctness test must not depend on a live external process, only on the
-// real internal/audit.Chain logic this fake feeds real key material to.
+// real internal/auditpg.Chain logic this fake feeds real key material to.
 type fakeSigner struct {
 	priv  ed25519.PrivateKey
 	pub   ed25519.PublicKey
@@ -69,7 +70,7 @@ func (s *fakeSigner) PublicKey(context.Context) (ed25519.PublicKey, string, erro
 type oversightRig struct {
 	st       *store.Store
 	keys     *cryptopg.KeyStore
-	chain    *audit.Chain
+	chain    *auditpg.Chain
 	tenantID uuid.UUID
 }
 
@@ -90,7 +91,7 @@ func setupOversightRig(t *testing.T) *oversightRig {
 	}
 	return &oversightRig{
 		st: st, keys: cryptopg.NewKeyStore(kek),
-		chain: audit.NewChain(newFakeSigner(t)), tenantID: tenantID,
+		chain: auditpg.NewChain(newFakeSigner(t)), tenantID: tenantID,
 	}
 }
 

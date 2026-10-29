@@ -15,6 +15,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
+	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/authn"
 	"github.com/truongpx396/nexus-agent-demo/internal/connectors"
 	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
@@ -148,7 +149,7 @@ func serve(ctx context.Context) error {
 	// imported only by cmd/signerd, enforced by
 	// tests/contract/boundaries_test.go.
 	signer := audit.NewSignerClient(cfg.SignerdSocket)
-	chain := audit.NewChain(signer)
+	chain := auditpg.NewChain(signer)
 
 	// Moved ahead of newToolPipeline (Phase 2's own original ordering had
 	// this after) — Phase 11's connectors.Vault needs a live Redis client

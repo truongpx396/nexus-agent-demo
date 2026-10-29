@@ -12,7 +12,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"golang.org/x/oauth2"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/audit"
+	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/config"
 	"github.com/truongpx396/nexus-agent-demo/internal/connectors"
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
@@ -51,7 +51,7 @@ import (
 // Ledger/Spawner fields are satisfied by delegations/nexusdDelegationSpawner
 // immediately — Wire only needs to land before the FIRST real dispatch,
 // which is well after serve() finishes wiring everything.
-func newToolPipeline(st *store.Store, keyStore *cryptopg.KeyStore, chain *audit.Chain, delegations *delegate.Delegations, teamsSvc *teams.Service, vault *connectors.Vault, gate *cost.Gate) (*tools.Pipeline, []provider.ToolSchema, []byte, []skills.SkillBundle, *mcp.Port) {
+func newToolPipeline(st *store.Store, keyStore *cryptopg.KeyStore, chain *auditpg.Chain, delegations *delegate.Delegations, teamsSvc *teams.Service, vault *connectors.Vault, gate *cost.Gate) (*tools.Pipeline, []provider.ToolSchema, []byte, []skills.SkillBundle, *mcp.Port) {
 	reg := tools.NewRegistry()
 	if err := reg.DeclareNamespace("platform", "nexusd"); err != nil {
 		fatalf("declare platform namespace: %v", err)
@@ -311,7 +311,7 @@ func loadSkillCatalog(reg *tools.Registry) (*skills.Catalog, []skills.SkillBundl
 // small transaction (not the caller's): internal/crypto/shred.go's
 // ReconcileDerivedArtifacts is the backstop for whatever this misses, per
 // its own doc comment.
-func derivedArtifactRecorder(st *store.Store, chain *audit.Chain) tools.DerivedArtifactRecorder {
+func derivedArtifactRecorder(st *store.Store, chain *auditpg.Chain) tools.DerivedArtifactRecorder {
 	_ = chain // reserved: a future phase may want a receipt per spill too; not required by task 5.4 itself
 	return func(ctx context.Context, tenantID, sessionID uuid.UUID, kind, path string) error {
 		return st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {

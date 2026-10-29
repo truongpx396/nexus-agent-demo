@@ -31,7 +31,7 @@ import (
 	tcredis "github.com/testcontainers/testcontainers-go/modules/redis"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/audit"
+	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
@@ -133,7 +133,7 @@ type phase6Rig struct {
 	env      *phase6Env
 	st       *store.Store
 	keys     *cryptopg.KeyStore
-	chain    *audit.Chain
+	chain    *auditpg.Chain
 	tenantID uuid.UUID
 }
 
@@ -153,7 +153,7 @@ func newPhase6Rig(t *testing.T) *phase6Rig {
 	}
 	return &phase6Rig{
 		env: env, st: st, keys: cryptopg.NewKeyStore(kek),
-		chain: audit.NewChain(newFakeSigner(t)), tenantID: tenantID,
+		chain: auditpg.NewChain(newFakeSigner(t)), tenantID: tenantID,
 	}
 }
 

@@ -54,7 +54,7 @@ type ForkResult struct {
 //     approvals table is keyed by session_id, and the child gets a BRAND
 //     NEW one.
 //   - Its own budget and audit chain likewise falls out for free:
-//     internal/cost.Gate and internal/audit.Chain both key their state by
+//     internal/cost.Gate and internal/auditpg.Chain both key their state by
 //     session_id (and tenant_id), never inherited across a fork.
 //
 // The child's transcript is NOT a copy of the parent's own events — the

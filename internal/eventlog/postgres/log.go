@@ -23,7 +23,7 @@ import (
 )
 
 // ReceiptFunc extends the tenant's hash-chained audit receipt
-// (internal/audit.Chain.Append) for one event the log just appended. It runs
+// (internal/auditpg.Chain.Append) for one event the log just appended. It runs
 // inside the same transaction as the append, so an event is never observable
 // without a receipt for it.
 type ReceiptFunc func(ctx context.Context, tx pgx.Tx, e eventlog.Event) error

@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/audit"
+	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/controlplane"
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
@@ -77,7 +77,7 @@ func (a *nexusdBudgetBackend) ReportCost(ctx context.Context, req controlplane.R
 // nexusdAuditBackend implements controlplane.AuditBackend.
 type nexusdAuditBackend struct {
 	store *store.Store
-	chain *audit.Chain
+	chain *auditpg.Chain
 }
 
 func (a *nexusdAuditBackend) EmitReceipt(ctx context.Context, req controlplane.EmitAuditReceiptV1) error {
@@ -121,7 +121,7 @@ func (a *nexusdContentAccessBackend) AuthorizeContentAccess(ctx context.Context,
 // controlplane.Port this process serves — see this file's own top-of-file
 // comment for why the translation lives here rather than inside
 // internal/controlplane itself.
-func newControlPlane(st *store.Store, gate *cost.Gate, chain *audit.Chain, approvals *oversight.Approvals, grants *obs.Grants) *controlplane.LocalPort {
+func newControlPlane(st *store.Store, gate *cost.Gate, chain *auditpg.Chain, approvals *oversight.Approvals, grants *obs.Grants) *controlplane.LocalPort {
 	return controlplane.NewLocalPort(
 		runspg.Sessions{Store: st},
 		newNexusdBudgetBackend(gate),

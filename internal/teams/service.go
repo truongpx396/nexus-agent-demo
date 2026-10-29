@@ -5,7 +5,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/audit"
+	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
 	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
@@ -57,7 +57,7 @@ type Service struct {
 	cfg Config
 }
 
-func NewService(st *store.Store, keys *cryptopg.KeyStore, chain *audit.Chain) *Service {
+func NewService(st *store.Store, keys *cryptopg.KeyStore, chain *auditpg.Chain) *Service {
 	return &Service{deps: deps{Store: st, Keys: keys, Chain: chain}}
 }
 

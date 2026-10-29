@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/audit"
+	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
@@ -74,7 +74,7 @@ type erasurePayload struct {
 // non-nil — nil is valid for tests with no audit chain wired). The caller
 // (store.Store.InTenantTx) commits tx; ReconcileDerivedArtifacts is the
 // backstop proving no derived row outlives its source even so.
-func EraseTenant(ctx context.Context, tx pgx.Tx, chain *audit.Chain, tenantID uuid.UUID, reason string) (crypto.ErasureResult, error) {
+func EraseTenant(ctx context.Context, tx pgx.Tx, chain *auditpg.Chain, tenantID uuid.UUID, reason string) (crypto.ErasureResult, error) {
 	keyIDs, err := ShredTenant(ctx, tx, tenantID)
 	if err != nil {
 		return crypto.ErasureResult{}, err
@@ -94,7 +94,7 @@ func EraseTenant(ctx context.Context, tx pgx.Tx, chain *audit.Chain, tenantID uu
 // session: shred whichever key(s) sealed its events (ordinarily one), and
 // the same in-transaction derived-artifact hard-delete + EventErasure as
 // EraseTenant.
-func EraseSession(ctx context.Context, tx pgx.Tx, chain *audit.Chain, tenantID, sessionID uuid.UUID, reason string) (crypto.ErasureResult, error) {
+func EraseSession(ctx context.Context, tx pgx.Tx, chain *auditpg.Chain, tenantID, sessionID uuid.UUID, reason string) (crypto.ErasureResult, error) {
 	rows, err := tx.Query(ctx, `SELECT DISTINCT key_id FROM events WHERE session_id = $1 AND key_id != $2`, sessionID, crypto.ErasureKeyID)
 	if err != nil {
 		return crypto.ErasureResult{}, fmt.Errorf("crypto: find keys for session %s: %w", sessionID, err)
@@ -152,7 +152,7 @@ func sessionsForKeys(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, keyIDs 
 	return ids, rows.Err()
 }
 
-func finishErasure(ctx context.Context, tx pgx.Tx, chain *audit.Chain, tenantID uuid.UUID, sessionIDs []uuid.UUID, shreddedKeyIDs []string, reason string) (crypto.ErasureResult, error) {
+func finishErasure(ctx context.Context, tx pgx.Tx, chain *auditpg.Chain, tenantID uuid.UUID, sessionIDs []uuid.UUID, shreddedKeyIDs []string, reason string) (crypto.ErasureResult, error) {
 	artifacts, err := deleteDerivedArtifacts(ctx, tx, sessionIDs)
 	if err != nil {
 		return crypto.ErasureResult{}, err
@@ -193,7 +193,7 @@ func deleteDerivedArtifacts(ctx context.Context, tx pgx.Tx, sessionIDs []uuid.UU
 	return out, rows.Err()
 }
 
-func appendErasureEvent(ctx context.Context, tx pgx.Tx, chain *audit.Chain, tenantID, sessionID uuid.UUID, shreddedKeyIDs []string, reason string) (eventlog.Event, error) {
+func appendErasureEvent(ctx context.Context, tx pgx.Tx, chain *auditpg.Chain, tenantID, sessionID uuid.UUID, shreddedKeyIDs []string, reason string) (eventlog.Event, error) {
 	plaintext, err := json.Marshal(erasurePayload{Reason: reason, ShreddedKeyIDs: shreddedKeyIDs, ErasedAt: time.Now().UTC().Format(time.RFC3339)})
 	if err != nil {
 		return eventlog.Event{}, fmt.Errorf("crypto: marshal erasure payload: %w", err)

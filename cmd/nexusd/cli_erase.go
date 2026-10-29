@@ -12,6 +12,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
+	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/retrieval"
@@ -49,7 +50,7 @@ func runErase(ctx context.Context, args []string) error {
 	_ = cryptopg.NewKeyStore(kek) // erasure only shreds/reads encryption_keys rows directly; KeyStore isn't needed for that path itself
 
 	signer := audit.NewSignerClient(envOr("NEXUS_SIGNERD_SOCKET", defaultSignerdSocket))
-	chain := audit.NewChain(signer)
+	chain := auditpg.NewChain(signer)
 
 	if *tenantName != "" {
 		tenantID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("nexus-agent-demo/tenant/"+*tenantName))

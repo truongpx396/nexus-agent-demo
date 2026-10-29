@@ -12,7 +12,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/audit"
+	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/delegate"
 	"github.com/truongpx396/nexus-agent-demo/internal/queue"
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
@@ -26,7 +26,7 @@ import (
 // chain, logging (not panicking on) a break or a gap — an alert a real
 // deployment would ship to its paging system, not a reason to crash the
 // process that is the source of truth for the very thing it's checking.
-func startAnchorLoop(ctx context.Context, st *store.Store, chain *audit.Chain) (stop func()) {
+func startAnchorLoop(ctx context.Context, st *store.Store, chain *auditpg.Chain) (stop func()) {
 	ticker := time.NewTicker(anchorInterval)
 	done := make(chan struct{})
 	go func() {
@@ -43,7 +43,7 @@ func startAnchorLoop(ctx context.Context, st *store.Store, chain *audit.Chain) (
 	return func() { close(done) }
 }
 
-func anchorAndVerifyAllTenants(ctx context.Context, st *store.Store, chain *audit.Chain) {
+func anchorAndVerifyAllTenants(ctx context.Context, st *store.Store, chain *auditpg.Chain) {
 	tenantIDs, err := listTenantIDs(ctx)
 	if err != nil {
 		log.Error().Err(err).Msg("nexusd: list tenants for anchor/verify pass")

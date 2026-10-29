@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/audit"
+	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
@@ -23,14 +23,14 @@ import (
 type GrantStore struct {
 	st    *store.Store
 	keys  *cryptopg.KeyStore
-	chain *audit.Chain
+	chain *auditpg.Chain
 }
 
 var _ obs.GrantStore = (*GrantStore)(nil)
 
 // NewGrantStore returns a GrantStore. chain may be nil, in which case audit
 // events are appended without a signed receipt (a minimal wiring for tests).
-func NewGrantStore(st *store.Store, keys *cryptopg.KeyStore, chain *audit.Chain) *GrantStore {
+func NewGrantStore(st *store.Store, keys *cryptopg.KeyStore, chain *auditpg.Chain) *GrantStore {
 	return &GrantStore{st: st, keys: keys, chain: chain}
 }
 
