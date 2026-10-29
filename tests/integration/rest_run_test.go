@@ -35,61 +35,23 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/authn"
 	"github.com/truongpx396/nexus-agent-demo/internal/controlplane"
-	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
 	"github.com/truongpx396/nexus-agent-demo/internal/runs"
+	runspg "github.com/truongpx396/nexus-agent-demo/internal/runs/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 	"github.com/truongpx396/nexus-agent-demo/migrations"
 )
 
-// testSessionStore is this package's own controlplane.SessionStore, mirroring
-// cmd/nexusd's own nexusdSessionStore (which lives in package main and can't
-// be imported from a test binary) — real session+budget creation against the
-// same *store.Store these tests already build, nothing stubbed.
-type testSessionStore struct{ store *store.Store }
-
-func (a *testSessionStore) CreateSession(ctx context.Context, req controlplane.AdmitRunV1) (controlplane.AdmitRunResultV1, error) {
-	var budgetCeiling *cost.Money
-	if req.BudgetUSD != "" {
-		amount, err := cost.ParseDecimal(req.BudgetUSD, cost.DefaultCurrency)
-		if err != nil {
-			return controlplane.AdmitRunResultV1{Admitted: false, Reason: "invalid budget_usd: " + err.Error()}, nil
-		}
-		budgetCeiling = &amount
-	}
-	err := a.store.InTenantTx(ctx, req.TenantID, func(ctx context.Context, tx pgx.Tx) error {
-		if err := store.CreateSession(ctx, tx, store.Session{
-			SessionID: req.SessionID, SessionKey: req.SessionID.String(), TenantID: req.TenantID,
-			SurfaceID: req.SurfaceID, UserID: req.UserID, AgentID: uuid.Nil, AgentVersion: 1,
-			HarnessDigest: req.HarnessDigest, DataLabel: req.DataLabel,
-			RouteModelID: req.RouteModelID, RouteReason: req.RouteReason, AutonomyLevel: req.Autonomy,
-			Conversational: req.Conversational,
-		}); err != nil {
-			return err
-		}
-		if budgetCeiling != nil {
-			if _, err := cost.CreateBudget(ctx, tx, req.TenantID, cost.BudgetScopeSession, &req.SessionID, *budgetCeiling); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return controlplane.AdmitRunResultV1{}, err
-	}
-	return controlplane.AdmitRunResultV1{Admitted: true}, nil
-}
-
 // unusedControlPlaneBackend stubs the three controlplane backends this
 // package's own REST/CLI-parity tests never exercise (they wire
 // kernel.NoopBudgetGate and no audit chain, exactly like Phase 2's own
-// original fixtures) — only AdmitRun (testSessionStore, above) is real.
+// original fixtures) — only AdmitRun (runspg.Sessions) is real.
 type unusedControlPlaneBackend struct{}
 
 func (unusedControlPlaneBackend) Reserve(context.Context, controlplane.ReserveBudgetV1) (controlplane.ReserveBudgetResultV1, error) {
@@ -110,7 +72,7 @@ func (unusedControlPlaneBackend) AuthorizeContentAccess(context.Context, control
 
 func newTestControlPlane(st *store.Store) *controlplane.LocalPort {
 	stub := unusedControlPlaneBackend{}
-	return controlplane.NewLocalPort(&testSessionStore{store: st}, stub, stub, stub, stub)
+	return controlplane.NewLocalPort(runspg.Sessions{Store: st}, stub, stub, stub, stub)
 }
 
 // mustIssueToken mints a bearer token authenticating (tenantID, userID)

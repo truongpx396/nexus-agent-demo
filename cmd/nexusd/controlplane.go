@@ -13,6 +13,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
+	runspg "github.com/truongpx396/nexus-agent-demo/internal/runs/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
@@ -26,48 +27,6 @@ import (
 // so the translation between their domain types and controlplane's v1
 // shapes lives here instead — the same nexusdOversightPort/
 // nexusdRunCtlPort idiom this file already uses for every other seam.
-
-// nexusdSessionStore implements controlplane.SessionStore.
-type nexusdSessionStore struct {
-	store *store.Store
-}
-
-func (a *nexusdSessionStore) CreateSession(ctx context.Context, req controlplane.AdmitRunV1) (controlplane.AdmitRunResultV1, error) {
-	var budgetCeiling *cost.Money
-	if req.BudgetUSD != "" {
-		amount, err := cost.ParseDecimal(req.BudgetUSD, cost.DefaultCurrency)
-		if err != nil {
-			return controlplane.AdmitRunResultV1{Admitted: false, Reason: "invalid budget_usd: " + err.Error()}, nil
-		}
-		budgetCeiling = &amount
-	}
-
-	err := a.store.InTenantTx(ctx, req.TenantID, func(ctx context.Context, tx pgx.Tx) error {
-		if err := store.CreateSession(ctx, tx, store.Session{
-			SessionID: req.SessionID, SessionKey: req.SessionID.String(), TenantID: req.TenantID,
-			SurfaceID: req.SurfaceID, UserID: req.UserID, AgentID: uuid.Nil, AgentVersion: 1,
-			HarnessDigest: req.HarnessDigest, DataLabel: req.DataLabel,
-			RouteModelID: req.RouteModelID, RouteReason: req.RouteReason, AutonomyLevel: req.Autonomy,
-			Conversational: req.Conversational,
-		}); err != nil {
-			return err
-		}
-		if budgetCeiling != nil {
-			// budgets.scope_ref has an FK to sessions — created in the SAME
-			// transaction as the session row above, so a caller never
-			// observes a session with no way to enforce the ceiling it
-			// asked for.
-			if _, err := cost.CreateBudget(ctx, tx, req.TenantID, cost.BudgetScopeSession, &req.SessionID, *budgetCeiling); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return controlplane.AdmitRunResultV1{}, err
-	}
-	return controlplane.AdmitRunResultV1{Admitted: true}, nil
-}
 
 // nexusdBudgetBackend implements controlplane.BudgetBackend. reservations
 // holds each Reserve call's real cost.Reservation (unexported fields and
@@ -164,7 +123,7 @@ func (a *nexusdContentAccessBackend) AuthorizeContentAccess(ctx context.Context,
 // internal/controlplane itself.
 func newControlPlane(st *store.Store, gate *cost.Gate, chain *audit.Chain, approvals *oversight.Approvals, grants *obs.Grants) *controlplane.LocalPort {
 	return controlplane.NewLocalPort(
-		&nexusdSessionStore{store: st},
+		runspg.Sessions{Store: st},
 		newNexusdBudgetBackend(gate),
 		&nexusdAuditBackend{store: st, chain: chain},
 		&nexusdApprovalBackend{approvals: approvals},

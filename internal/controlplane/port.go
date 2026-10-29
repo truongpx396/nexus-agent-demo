@@ -74,9 +74,13 @@ type Port interface {
 // type a bare string here means a future non-Go control-plane client needs
 // no internal/cost import at all to construct this request.
 type AdmitRunV1 struct {
-	TenantID      uuid.UUID
-	UserID        uuid.UUID
-	SessionID     uuid.UUID
+	TenantID  uuid.UUID
+	UserID    uuid.UUID
+	SessionID uuid.UUID
+	// SessionKey is the surface's own stable handle for the conversation
+	// (a chat id, a mail thread), which a later message uses to find this
+	// session again. Empty means the session is addressed only by SessionID.
+	SessionKey    string
 	SurfaceID     string
 	DataLabel     string
 	RouteModelID  string
