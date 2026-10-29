@@ -280,7 +280,7 @@ func serve(ctx context.Context) error {
 	srv.RunCtl = &nexusdRunCtlPort{ctl: ctl}
 	srv.Skills = &nexusdSkillSetPort{store: st, bundles: admittedSkillBundles}
 	srv.MCP = mcpPort
-	srv.Outbox = &surfaces.Outbox{Store: st, Keys: keyStore, Chain: chain}
+	srv.Outbox = &surfaces.Outbox{Ledger: surfpg.NewLedger(st, keyStore, chain)}
 	srv.OutboxSender = logSender{}
 
 	srv.Exporter = spanExp
@@ -333,7 +333,7 @@ func serve(ctx context.Context) error {
 	// Phase 11: four more thin surfaces over the same kernel (README §11) —
 	// each starts runs through the one starter every surface shares.
 	channels := &MessagingChannels{Store: st, Keys: keyStore}
-	outbox := &surfaces.Outbox{Store: st, Keys: keyStore, Chain: chain}
+	outbox := &surfaces.Outbox{Ledger: surfpg.NewLedger(st, keyStore, chain)}
 
 	// Starter and Resume are the same two values for all three chat surfaces,
 	// so a fresh message and a resumed one drive the SAME underlying

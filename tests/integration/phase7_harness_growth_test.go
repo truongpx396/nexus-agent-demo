@@ -43,6 +43,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/cli"
+	surfpg "github.com/truongpx396/nexus-agent-demo/internal/surfaces/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools/builtin"
@@ -242,7 +243,7 @@ func TestOutbox_RetriesThenDeliversAndStaysIdempotent(t *testing.T) {
 	sealFn, _ := rig.seal(t, sessionID)
 	rig.seedOneEvent(t, sessionID, sealFn)
 
-	ob := &surfaces.Outbox{Store: rig.st, Keys: rig.keys, Chain: rig.chain}
+	ob := &surfaces.Outbox{Ledger: surfpg.NewLedger(rig.st, rig.keys, rig.chain)}
 	sender := &flakySender{failuresRemaining: 2}
 
 	for i := 0; i < 2; i++ {
@@ -287,7 +288,7 @@ func TestOutbox_FailsPermanentlyAfterCapAndNeverSendsAgain(t *testing.T) {
 	sealFn, _ := rig.seal(t, sessionID)
 	rig.seedOneEvent(t, sessionID, sealFn)
 
-	ob := &surfaces.Outbox{Store: rig.st, Keys: rig.keys, Chain: rig.chain}
+	ob := &surfaces.Outbox{Ledger: surfpg.NewLedger(rig.st, rig.keys, rig.chain)}
 	sender := &flakySender{alwaysFail: true}
 
 	for i := 0; i < 3; i++ {
