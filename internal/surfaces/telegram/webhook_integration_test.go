@@ -18,8 +18,11 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
+	"github.com/truongpx396/nexus-agent-demo/internal/controlplane"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
+	"github.com/truongpx396/nexus-agent-demo/internal/runs"
+	runspg "github.com/truongpx396/nexus-agent-demo/internal/runs/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/migrations"
 )
@@ -97,7 +100,7 @@ func TestHandleWebhook_ValidUpdateCreatesARealSessionAndStartsARun(t *testing.T)
 	srv := &Server{
 		Store:    s,
 		KeyStore: crypto.NewKeyStore(kek),
-		Starter:  starter,
+		Launcher: newLauncher(s, crypto.NewKeyStore(kek), starter),
 		Channels: fakeChannels{secret: "s", ok: true},
 	}
 
@@ -209,7 +212,7 @@ func TestHandleWebhook_CreatesConversationalSessionWithDeterministicKey(t *testi
 		t.Fatalf("GenerateKEK: %v", err)
 	}
 	starter := &fakeStarter{}
-	srv := &Server{Store: s, KeyStore: crypto.NewKeyStore(kek), Starter: starter, Channels: fakeChannels{secret: "s", ok: true}}
+	srv := &Server{Store: s, KeyStore: crypto.NewKeyStore(kek), Launcher: newLauncher(s, crypto.NewKeyStore(kek), starter), Channels: fakeChannels{secret: "s", ok: true}}
 
 	rec := postWebhook(t, srv, tenantID, newWebhookBody(t, 999, "please help"))
 	if rec.Code != http.StatusOK {
@@ -255,7 +258,7 @@ func TestHandleWebhook_SecondMessageFromSamePeerResumesSameSession(t *testing.T)
 	starter := &fakeStarter{}
 	resumer := &fakeResumer{}
 	srv := &Server{
-		Store: s, KeyStore: crypto.NewKeyStore(kek), Starter: starter, Resume: resumer,
+		Store: s, KeyStore: crypto.NewKeyStore(kek), Launcher: newLauncher(s, crypto.NewKeyStore(kek), starter), Resume: resumer,
 		Channels: fakeChannels{secret: "s", ok: true},
 	}
 
@@ -322,7 +325,7 @@ func TestHandleWebhook_SamePeerAfterNonAwaitingInputStartsFreshReusingKey(t *tes
 	starter := &fakeStarter{}
 	resumer := &fakeResumer{}
 	srv := &Server{
-		Store: s, KeyStore: crypto.NewKeyStore(kek), Starter: starter, Resume: resumer,
+		Store: s, KeyStore: crypto.NewKeyStore(kek), Launcher: newLauncher(s, crypto.NewKeyStore(kek), starter), Resume: resumer,
 		Channels: fakeChannels{secret: "s", ok: true},
 	}
 
@@ -436,7 +439,7 @@ func TestHandleWebhook_DuplicateUpdateIDAcknowledgedWithoutASecondRun(t *testing
 		t.Fatalf("GenerateKEK: %v", err)
 	}
 	starter := &fakeStarter{}
-	srv := &Server{Store: s, KeyStore: crypto.NewKeyStore(kek), Starter: starter, Channels: fakeChannels{secret: "s", ok: true}}
+	srv := &Server{Store: s, KeyStore: crypto.NewKeyStore(kek), Launcher: newLauncher(s, crypto.NewKeyStore(kek), starter), Channels: fakeChannels{secret: "s", ok: true}}
 
 	body := newWebhookBodyWithUpdateID(t, 4242, 999, "please help")
 	rec := postWebhook(t, srv, tenantID, body)
@@ -494,7 +497,7 @@ func TestHandleWebhook_SessionLockAcquiredAndReleasedAroundDispatch(t *testing.T
 	}
 	starter := &fakeStarter{}
 	locker := &fakeLocker{acquireResults: []bool{true}, done: make(chan struct{})}
-	srv := &Server{Store: s, KeyStore: crypto.NewKeyStore(kek), Starter: starter, Channels: fakeChannels{secret: "s", ok: true}, Lock: locker}
+	srv := &Server{Store: s, KeyStore: crypto.NewKeyStore(kek), Launcher: newLauncher(s, crypto.NewKeyStore(kek), starter), Channels: fakeChannels{secret: "s", ok: true}, Lock: locker}
 
 	rec := postWebhook(t, srv, tenantID, newWebhookBody(t, 999, "please help"))
 	if rec.Code != http.StatusOK {
@@ -544,7 +547,7 @@ func TestHandleWebhook_ContendedSessionLockDropsDeliveryWithoutStartingARun(t *t
 	// Every attempt reports contention — AcquireSessionLock's own bounded
 	// retry (internal/surfaces/lock.go) exhausts all of them and gives up.
 	locker := &fakeLocker{acquireResults: []bool{false, false, false, false, false}}
-	srv := &Server{Store: s, KeyStore: crypto.NewKeyStore(kek), Starter: starter, Channels: fakeChannels{secret: "s", ok: true}, Lock: locker}
+	srv := &Server{Store: s, KeyStore: crypto.NewKeyStore(kek), Launcher: newLauncher(s, crypto.NewKeyStore(kek), starter), Channels: fakeChannels{secret: "s", ok: true}, Lock: locker}
 
 	rec := postWebhook(t, srv, tenantID, newWebhookBody(t, 999, "please help"))
 	if rec.Code != http.StatusOK {
@@ -552,5 +555,16 @@ func TestHandleWebhook_ContendedSessionLockDropsDeliveryWithoutStartingARun(t *t
 	}
 	if starter.started {
 		t.Fatal("StartRun ran despite the session lock never being granted")
+	}
+}
+
+// newLauncher is the runs.Service these tests start runs through: real session
+// admission and key provisioning over the test's own Postgres, with the fake
+// Starter standing in for the kernel.
+func newLauncher(st *store.Store, ks *crypto.KeyStore, starter runs.Starter) *runs.Service {
+	return &runs.Service{
+		Admit:   controlplane.NewLocalPort(runspg.Sessions{Store: st}, nil, nil, nil, nil),
+		Keys:    runspg.Keys{Store: st, KeyStore: ks},
+		Starter: starter,
 	}
 }

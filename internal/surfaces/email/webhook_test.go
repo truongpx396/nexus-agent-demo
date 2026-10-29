@@ -102,8 +102,8 @@ func (f *fakeLocker) Release(_ context.Context, sessionKey, token string) error 
 }
 
 func TestHandleWebhook_MissingBasicAuthRefusedBeforeBodyIsEverParsed(t *testing.T) {
-	starter := &fakeStarter{}
-	s := &Server{Channels: fakeChannels{user: "bot", pass: "secret", ok: true}, Starter: starter}
+	launcher := &fakeLauncher{}
+	s := &Server{Channels: fakeChannels{user: "bot", pass: "secret", ok: true}, Launcher: launcher}
 	tenantID := uuid.New()
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/webhooks/email/"+tenantID.String(), bytes.NewReader([]byte("not json at all")))
@@ -113,14 +113,14 @@ func TestHandleWebhook_MissingBasicAuthRefusedBeforeBodyIsEverParsed(t *testing.
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rec.Code)
 	}
-	if starter.started {
+	if launcher.started {
 		t.Fatal("a run was started despite missing Basic Auth")
 	}
 }
 
 func TestHandleWebhook_WrongBasicAuthRefused(t *testing.T) {
-	starter := &fakeStarter{}
-	s := &Server{Channels: fakeChannels{user: "bot", pass: "secret", ok: true}, Starter: starter}
+	launcher := &fakeLauncher{}
+	s := &Server{Channels: fakeChannels{user: "bot", pass: "secret", ok: true}, Launcher: launcher}
 	tenantID := uuid.New()
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/webhooks/email/"+tenantID.String(), bytes.NewReader(nil))
@@ -131,14 +131,14 @@ func TestHandleWebhook_WrongBasicAuthRefused(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rec.Code)
 	}
-	if starter.started {
+	if launcher.started {
 		t.Fatal("a run was started despite a wrong password")
 	}
 }
 
 func TestHandleWebhook_NoChannelConfiguredRefusesWithoutStartingARun(t *testing.T) {
-	starter := &fakeStarter{}
-	s := &Server{Channels: fakeChannels{ok: false}, Starter: starter}
+	launcher := &fakeLauncher{}
+	s := &Server{Channels: fakeChannels{ok: false}, Launcher: launcher}
 	tenantID := uuid.New()
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/webhooks/email/"+tenantID.String(), bytes.NewReader(nil))
@@ -148,18 +148,18 @@ func TestHandleWebhook_NoChannelConfiguredRefusesWithoutStartingARun(t *testing.
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 (no channel configured)", rec.Code)
 	}
-	if starter.started {
+	if launcher.started {
 		t.Fatal("a run was started despite no configured channel")
 	}
 }
 
 func TestHandleWebhook_RateLimitedRefusesBeforeBodyIsParsed(t *testing.T) {
-	starter := &fakeStarter{}
+	launcher := &fakeLauncher{}
 	limiter := NewRateLimiter(1, time.Hour)
 	tenantID := uuid.New()
 	limiter.Allow(tenantID.String())
 
-	s := &Server{Channels: fakeChannels{user: "bot", pass: "secret", ok: true}, Starter: starter, RateLimit: limiter}
+	s := &Server{Channels: fakeChannels{user: "bot", pass: "secret", ok: true}, Launcher: launcher, RateLimit: limiter}
 	req := httptest.NewRequest(http.MethodPost, "/v1/webhooks/email/"+tenantID.String(), bytes.NewReader([]byte("would fail to parse if reached")))
 	req.SetBasicAuth("bot", "secret")
 	rec := httptest.NewRecorder()
@@ -168,7 +168,7 @@ func TestHandleWebhook_RateLimitedRefusesBeforeBodyIsParsed(t *testing.T) {
 	if rec.Code != http.StatusTooManyRequests {
 		t.Fatalf("status = %d, want 429 (bucket pre-exhausted)", rec.Code)
 	}
-	if starter.started {
+	if launcher.started {
 		t.Fatal("a run was started despite the rate limit")
 	}
 }
@@ -180,4 +180,21 @@ func TestDescriptor_ClaimsNoStreamingOrApprovalRendering(t *testing.T) {
 	if Descriptor.CanRenderApprovalContext {
 		t.Error("Descriptor.CanRenderApprovalContext = true, want false")
 	}
+}
+
+// fakeLauncher records what a surface asked runs.Launcher to start, without a
+// database — used to prove dispatch's own start-vs-ignore decisions.
+type fakeLauncher struct {
+	started bool
+	calls   int
+	req     runs.LaunchRequest
+}
+
+func (f *fakeLauncher) Launch(_ context.Context, req runs.LaunchRequest) (runs.Launched, error) {
+	f.started = true
+	f.calls++
+	f.req = req
+	ch := make(chan runs.Event)
+	close(ch)
+	return runs.Launched{SessionID: uuid.New(), Events: ch}, nil
 }

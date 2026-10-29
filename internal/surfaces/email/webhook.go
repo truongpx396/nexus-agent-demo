@@ -23,8 +23,6 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/harness"
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/runs"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces"
@@ -74,11 +72,10 @@ type SMTPConfig struct {
 
 // Server holds everything one email webhook handler needs.
 type Server struct {
-	Store                 *store.Store
-	KeyStore              *crypto.KeyStore
-	Starter               runs.Starter
-	Channels              ChannelPort
-	CatalogManifestDigest []byte
+	Store    *store.Store
+	KeyStore *crypto.KeyStore
+	Launcher runs.Launcher
+	Channels ChannelPort
 
 	// Outbox, if set, backs durable at-least-once delivery of
 	// EventApprovalRequested — see internal/surfaces/telegram.Server's own
@@ -244,60 +241,26 @@ func (s *Server) dispatch(ctx context.Context, tenantID, userID uuid.UUID, sessi
 	return s.startRun(ctx, tenantID, userID, sessionKey, recipientAddress, input, release)
 }
 
-// startRun mirrors every other surface's own (their doc comments) —
-// duplicated per this codebase's established cross-surface idiom.
-// recipientAddress is the inbound sender's own address, used as this run's
-// outbox delivery recipient for any reply.
+// startRun launches a fresh conversational run for this message through the
+// shared run-admission use case (runs.Launcher), the same sequence REST uses.
+// recipientAddress is the delivery target for any outbox notification this run
+// produces — carried alongside (never derived from) the session id, since the
+// two identify different things (surfaces.Outbox.Deliver's own recipient
+// parameter). sessionKey is dispatch's own deterministic per-sender key:
+// the NEXT message from this email sender finds this session again through it while
+// it is awaiting_input (kernel.RunConfig.Conversational's pause-not-terminate
+// semantics).
 func (s *Server) startRun(ctx context.Context, tenantID, userID uuid.UUID, sessionKey, recipientAddress, input string, release func()) (uuid.UUID, error) {
-	route := provider.Route(provider.DataLabelInternal, provider.DifficultySimple)
-	sessionID := uuid.New()
-	digest := harness.Digest(harness.Config{
-		SystemPromptVersion:   "phase2-v1",
-		CatalogManifestDigest: s.CatalogManifestDigest,
-		PromptMode:            "phase2-single-shot",
+	launched, err := s.Launcher.Launch(ctx, runs.LaunchRequest{
+		TenantID: tenantID, UserID: userID, SurfaceID: "email", SessionKey: sessionKey,
+		Input: input, Autonomy: "supervised", Conversational: true,
 	})
-
-	var dek crypto.DEK
-	err := s.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		var derr error
-		dek, derr = s.KeyStore.NewDEK(ctx, tx, tenantID)
-		if derr != nil {
-			return derr
-		}
-		return store.CreateSession(ctx, tx, store.Session{
-			SessionID:      sessionID,
-			SessionKey:     sessionKey,
-			TenantID:       tenantID,
-			SurfaceID:      "email",
-			UserID:         userID,
-			AgentVersion:   1,
-			HarnessDigest:  digest,
-			DataLabel:      string(provider.DataLabelInternal),
-			RouteModelID:   route.ModelID,
-			RouteReason:    route.Reason,
-			AutonomyLevel:  "supervised",
-			Conversational: true,
-		})
-	})
-	if err != nil {
-		release()
-		return uuid.Nil, fmt.Errorf("create session: %w", err)
-	}
-
-	req := runs.Request{
-		SessionID: sessionID, TenantID: tenantID,
-		Seal:          runs.SealFor(dek, tenantID, sessionID),
-		Input:         input,
-		ModelID:       route.ModelID,
-		AutonomyLevel: "supervised",
-	}
-	events, err := s.Starter.StartRun(context.Background(), req)
 	if err != nil {
 		release()
 		return uuid.Nil, fmt.Errorf("start run: %w", err)
 	}
-	go s.drainAndNotify(tenantID, sessionID, recipientAddress, events, release)
-	return sessionID, nil
+	go s.drainAndNotify(tenantID, launched.SessionID, recipientAddress, launched.Events, release)
+	return launched.SessionID, nil
 }
 
 // resumeRun mirrors internal/surfaces/telegram's own (its doc comment).

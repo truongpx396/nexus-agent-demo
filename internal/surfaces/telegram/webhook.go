@@ -21,8 +21,6 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/harness"
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/runs"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces"
@@ -68,15 +66,14 @@ type ChannelPort interface {
 
 // Server holds everything one Telegram webhook handler needs.
 type Server struct {
-	Store                 *store.Store
-	KeyStore              *crypto.KeyStore
-	Starter               runs.Starter
-	Channels              ChannelPort
-	CatalogManifestDigest []byte
+	Store    *store.Store
+	KeyStore *crypto.KeyStore
+	Launcher runs.Launcher
+	Channels ChannelPort
 
 	// Resume continues an existing conversational session found awaiting
 	// the next message (handleWebhook's own session-key lookup) — nil
-	// leaves that path unavailable, degrading every message to Starter's
+	// leaves that path unavailable, degrading every message to Launcher's
 	// always-fresh-session behavior (this field's own zero value, which
 	// every pre-continuity caller has).
 	Resume runs.Resumer
@@ -255,67 +252,26 @@ func (s *Server) dispatch(ctx context.Context, tenantID, userID uuid.UUID, sessi
 	return s.startRun(ctx, tenantID, userID, sessionKey, chatID, input, release)
 }
 
-// startRun mirrors internal/surfaces/rest's handleCreateRun (session + DEK
-// creation, then runs.Starter.StartRun) — duplicated per this codebase's
-// established cross-surface idiom rather than imported, since REST and
-// Telegram share no direct dependency. chatID is the Telegram delivery
-// target for any outbox notification this run produces — carried alongside
-// (never derived from) sessionID, since the two identify different things
-// (surfaces.Outbox.Deliver's own recipient parameter). sessionKey is
-// dispatch's own deterministic per-chat key (kernel.RunConfig.
-// Conversational's pause-not-terminate semantics mean the NEXT message
-// from this chat can find this session again via that key while it's
-// awaiting_input).
+// startRun launches a fresh conversational run for this message through the
+// shared run-admission use case (runs.Launcher), the same sequence REST uses.
+// chatID is the delivery target for any outbox notification this run
+// produces — carried alongside (never derived from) the session id, since the
+// two identify different things (surfaces.Outbox.Deliver's own recipient
+// parameter). sessionKey is dispatch's own deterministic per-chat key:
+// the NEXT message from this Telegram chat finds this session again through it while
+// it is awaiting_input (kernel.RunConfig.Conversational's pause-not-terminate
+// semantics).
 func (s *Server) startRun(ctx context.Context, tenantID, userID uuid.UUID, sessionKey, chatID, input string, release func()) (uuid.UUID, error) {
-	route := provider.Route(provider.DataLabelInternal, provider.DifficultySimple)
-	sessionID := uuid.New()
-	digest := harness.Digest(harness.Config{
-		SystemPromptVersion:   "phase2-v1",
-		CatalogManifestDigest: s.CatalogManifestDigest,
-		PromptMode:            "phase2-single-shot",
+	launched, err := s.Launcher.Launch(ctx, runs.LaunchRequest{
+		TenantID: tenantID, UserID: userID, SurfaceID: "telegram", SessionKey: sessionKey,
+		Input: input, Autonomy: "supervised", Conversational: true,
 	})
-
-	var dek crypto.DEK
-	err := s.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		var derr error
-		dek, derr = s.KeyStore.NewDEK(ctx, tx, tenantID)
-		if derr != nil {
-			return derr
-		}
-		return store.CreateSession(ctx, tx, store.Session{
-			SessionID:      sessionID,
-			SessionKey:     sessionKey,
-			TenantID:       tenantID,
-			SurfaceID:      "telegram",
-			UserID:         userID,
-			AgentVersion:   1,
-			HarnessDigest:  digest,
-			DataLabel:      string(provider.DataLabelInternal),
-			RouteModelID:   route.ModelID,
-			RouteReason:    route.Reason,
-			AutonomyLevel:  "supervised",
-			Conversational: true,
-		})
-	})
-	if err != nil {
-		release()
-		return uuid.Nil, fmt.Errorf("create session: %w", err)
-	}
-
-	req := runs.Request{
-		SessionID: sessionID, TenantID: tenantID,
-		Seal:          runs.SealFor(dek, tenantID, sessionID),
-		Input:         input,
-		ModelID:       route.ModelID,
-		AutonomyLevel: "supervised",
-	}
-	events, err := s.Starter.StartRun(context.Background(), req) // a run outlives this webhook request
 	if err != nil {
 		release()
 		return uuid.Nil, fmt.Errorf("start run: %w", err)
 	}
-	go s.drainAndNotify(tenantID, sessionID, chatID, events, release)
-	return sessionID, nil
+	go s.drainAndNotify(tenantID, launched.SessionID, chatID, launched.Events, release)
+	return launched.SessionID, nil
 }
 
 // resumeRun continues sessionID (already confirmed awaiting_input by

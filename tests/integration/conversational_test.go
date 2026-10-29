@@ -728,9 +728,8 @@ func TestRESTConversationalSession_MultiTurnSameSessionID(t *testing.T) {
 	verifier := authn.NewDevVerifier(authn.PublicKey(signingKey))
 	token := mustIssueToken(t, issuer, tenantID, userID)
 
-	srv := rest.NewServer(starter, st, keyStore, nil)
+	srv := rest.NewServer(newTestLauncher(st, keyStore, starter), st, keyStore)
 	srv.Verifier = verifier
-	srv.ControlPlane = newTestControlPlane(st)
 	srv.RunCtl = &testRunCtlPort{ctl: ctl}
 	httpSrv := httptest.NewServer(srv.Handler())
 	defer httpSrv.Close()

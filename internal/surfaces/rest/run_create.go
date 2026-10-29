@@ -3,16 +3,13 @@ package rest
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/controlplane"
-	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/harness"
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/runs"
@@ -71,16 +68,6 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `"input" is required`, http.StatusBadRequest)
 		return
 	}
-	dataLabel := provider.DataLabel(req.DataLabel)
-	if dataLabel == "" {
-		dataLabel = provider.DataLabelInternal
-	}
-	difficulty := provider.Difficulty(req.Difficulty)
-	if difficulty == "" {
-		difficulty = provider.DifficultySimple
-	}
-	route := provider.Route(dataLabel, difficulty)
-
 	autonomy := req.Autonomy
 	switch autonomy {
 	case "":
@@ -118,79 +105,30 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	sessionID := uuid.New()
-	digest := harness.Digest(harness.Config{
-		SystemPromptVersion:   "phase2-v1",
-		CatalogManifestDigest: s.CatalogManifestDigest,
-		SkillSetDigest:        skillSetDigest,
-		PromptMode:            "phase2-single-shot",
-		MCPCatalogDigest:      mcpCatalogDigest,
-	})
-
-	if s.ControlPlane == nil {
-		http.Error(w, "server misconfigured: no control plane wired", http.StatusInternalServerError)
+	if s.Launcher == nil {
+		http.Error(w, "server misconfigured: no run launcher wired", http.StatusInternalServerError)
 		return
 	}
-
-	// README task 13.15: session admission (the session row, plus an
-	// optional session-scoped budget — internal/cost, Phase 4 task 4.5,
-	// created together since budgets.scope_ref has an FK to sessions) goes
-	// through internal/controlplane.Port — the versioned control-plane
-	// boundary README §2 has always described. Encryption stays entirely
-	// on this side of that boundary: the DEK is minted next, exactly as it
-	// always has been, never inside AdmitRun (that package's own doc
-	// comment on why).
-	admitResult, err := s.ControlPlane.AdmitRun(r.Context(), controlplane.AdmitRunV1{
-		TenantID: tenantID, UserID: userID, SessionID: sessionID, SurfaceID: "rest",
-		DataLabel: string(dataLabel), RouteModelID: route.ModelID, RouteReason: route.Reason,
-		Autonomy: autonomy, BudgetUSD: req.BudgetUSD, HarnessDigest: digest,
-		Conversational: req.Conversational,
+	launched, err := s.Launcher.Launch(r.Context(), runs.LaunchRequest{
+		TenantID: tenantID, UserID: userID, SurfaceID: "rest", Input: req.Input,
+		DataLabel: provider.DataLabel(req.DataLabel), Difficulty: provider.Difficulty(req.Difficulty), Autonomy: autonomy,
+		BudgetUSD: req.BudgetUSD, Conversational: req.Conversational,
+		SkillSetDigest: skillSetDigest, MCPCatalogDigest: mcpCatalogDigest, MCPCatalog: mcpCatalog,
 	})
-	if err != nil {
+	var notAdmitted *runs.NotAdmittedError
+	switch {
+	case errors.As(err, &notAdmitted):
+		http.Error(w, "create run: "+notAdmitted.Reason, http.StatusBadRequest)
+		return
+	case err != nil:
 		http.Error(w, "create run: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if !admitResult.Admitted {
-		http.Error(w, "create run: "+admitResult.Reason, http.StatusBadRequest)
-		return
-	}
-
-	var dek crypto.DEK
-	err = s.Store.InTenantTx(r.Context(), tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		var derr error
-		dek, derr = s.KeyStore.NewDEK(ctx, tx, tenantID)
-		return derr
-	})
-	if err != nil {
-		http.Error(w, "create run: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	mcpLoadedTools := make([]string, len(mcpCatalog))
-	for i, c := range mcpCatalog {
-		mcpLoadedTools[i] = c.Name
-	}
-	req2 := runs.Request{
-		SessionID:        sessionID,
-		TenantID:         tenantID,
-		Seal:             runs.SealFor(dek, tenantID, sessionID),
-		Input:            req.Input,
-		ModelID:          route.ModelID,
-		AutonomyLevel:    autonomy,
-		ExtraCatalog:     mcpCatalog,
-		ExtraLoadedTools: mcpLoadedTools,
-		Conversational:   req.Conversational,
-	}
-	events, err := s.Starter.StartRun(context.Background(), req2) // a run outlives the HTTP request that started it
-	if err != nil {
-		http.Error(w, "start run: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	go s.publishUntilDone(tenantID, sessionID, events)
+	go s.publishUntilDone(tenantID, launched.SessionID, launched.Events)
 
 	w.Header().Set("content-type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
-	_ = json.NewEncoder(w).Encode(createRunResponse{RunID: sessionID.String()})
+	_ = json.NewEncoder(w).Encode(createRunResponse{RunID: launched.SessionID.String()})
 }
 
 // publishUntilDone drains the runs.Starter's event channel, publishing each

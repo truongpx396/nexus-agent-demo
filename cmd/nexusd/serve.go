@@ -28,6 +28,8 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/queue"
 	"github.com/truongpx396/nexus-agent-demo/internal/reliability"
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
+	"github.com/truongpx396/nexus-agent-demo/internal/runs"
+	runspg "github.com/truongpx396/nexus-agent-demo/internal/runs/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/cron"
@@ -254,7 +256,17 @@ func serve(ctx context.Context) error {
 		System: starter.system, Catalog: catalog, LoadedTools: loadedTools, MaxTurns: starter.maxTurns,
 	})
 
-	srv := rest.NewServer(starter, st, keyStore, catalogManifestDigest)
+	// One run-admission use case for every surface that starts a fresh run:
+	// admit the session through the control plane, mint its key, start it.
+	controlPlane := newControlPlane(st, gate, chain, approvals, grants)
+	launcher := &runs.Service{
+		Admit:                 controlPlane,
+		Keys:                  runspg.Keys{Store: st, KeyStore: keyStore},
+		Starter:               starter,
+		CatalogManifestDigest: catalogManifestDigest,
+	}
+
+	srv := rest.NewServer(launcher, st, keyStore)
 	srv.Verifier = verifier
 	// Redis Pub/Sub-backed EventBus (broker.go's own doc comment on why this
 	// surface needs one now): every publish reaches every nexusd process,
@@ -264,7 +276,6 @@ func serve(ctx context.Context) error {
 	srv.Bus = redisEventBus{client: redisClient}
 	srv.Oversight = &nexusdOversightPort{approvals: approvals, resumer: resumer, delegations: delegations, teams: teamsSvc}
 	srv.Grants = grants
-	srv.ControlPlane = newControlPlane(st, gate, chain, approvals, grants)
 	srv.RunCtl = &nexusdRunCtlPort{ctl: ctl}
 	srv.Skills = &nexusdSkillSetPort{store: st, bundles: admittedSkillBundles}
 	srv.MCP = mcpPort
@@ -329,20 +340,20 @@ func serve(ctx context.Context) error {
 	resume := conversationResumer{ctl: ctl, redisClient: redisClient}
 
 	telegramSrv := &telegram.Server{
-		Store: st, KeyStore: keyStore, Starter: starter, Resume: resume, Channels: channels,
-		CatalogManifestDigest: catalogManifestDigest, Outbox: outbox,
+		Store: st, KeyStore: keyStore, Launcher: launcher, Resume: resume, Channels: channels,
+		Outbox:    outbox,
 		RateLimit: telegram.NewRateLimiter(20, time.Minute),
 		Lock:      sessionLock,
 	}
 	zaloSrv := &zalo.Server{
-		Store: st, KeyStore: keyStore, Starter: starter, Resume: resume, Channels: channels,
-		CatalogManifestDigest: catalogManifestDigest, Outbox: outbox,
+		Store: st, KeyStore: keyStore, Launcher: launcher, Resume: resume, Channels: channels,
+		Outbox:    outbox,
 		RateLimit: zalo.NewRateLimiter(20, time.Minute),
 		Lock:      sessionLock,
 	}
 	emailSrv := &email.Server{
-		Store: st, KeyStore: keyStore, Starter: starter, Resume: resume, Channels: channels,
-		CatalogManifestDigest: catalogManifestDigest, Outbox: outbox,
+		Store: st, KeyStore: keyStore, Launcher: launcher, Resume: resume, Channels: channels,
+		Outbox:    outbox,
 		RateLimit: email.NewRateLimiter(20, time.Minute),
 		Lock:      sessionLock,
 	}
