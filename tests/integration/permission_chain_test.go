@@ -21,6 +21,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/harness"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
@@ -113,7 +114,7 @@ func TestKernel_PermissionDeniedTerminatesRun(t *testing.T) {
 		Provider: provider.Wrap([]provider.Provider{fake.New(toolCallScript())}),
 		Tools:    scriptedToolExecutor{result: kernel.ToolResult{IsError: true, PermissionDenied: true, Reason: "denied at layer autonomy: read_only permits read-only effects only"}},
 		Budget:   kernel.NoopBudgetGate{},
-		Store:    st,
+		Log:      postgres.New(st, postgres.Hooks{}),
 	}
 	runState := &kernel.RunState{TenantID: tenantID, SessionID: sessionID, Seal: seal}
 	cfg := kernel.RunConfig{System: "test", ModelID: "test-model", MaxTurns: 5, Input: "delete the build dir", AutonomyLevel: "read_only"}
@@ -154,7 +155,7 @@ func TestKernel_AwaitingApprovalSuspendsRun(t *testing.T) {
 		Provider: provider.Wrap([]provider.Provider{fake.New(toolCallScript())}),
 		Tools:    scriptedToolExecutor{result: kernel.ToolResult{IsError: true, AwaitingApproval: true, AskKind: "once", Reason: "approval required at layer autonomy"}},
 		Budget:   kernel.NoopBudgetGate{},
-		Store:    st,
+		Log:      postgres.New(st, postgres.Hooks{}),
 	}
 	runState := &kernel.RunState{TenantID: tenantID, SessionID: sessionID, Seal: seal}
 	cfg := kernel.RunConfig{System: "test", ModelID: "test-model", MaxTurns: 5, Input: "delete the build dir", AutonomyLevel: "supervised"}

@@ -137,6 +137,9 @@ nexus-agent-demo/
 │   ├── audit/                  # chain builder, signer client, verifier, anchor
 │   ├── crypto/                 # KEK/DEK envelope, seal/open, shred, derived-artifact reconcile
 │   ├── eventlog/               # event-log domain model: Event, type taxonomy, session statuses — no persistence
+│   │   ├── postgres/           # kernel.EventLog adapter: one tenant-scoped tx per call, audit receipt in the same tx
+│   │   ├── inmem/              # kernel.EventLog adapter for tests: the loop runs with no database
+│   │   └── logtest/            # the contract suite both adapters pass
 │   ├── store/                  # Postgres adapter: events, projections, checkpoints, snapshots, claims, RLS scoping
 │   ├── queue/                  # Queue port + Redis Streams adapter + session-key lock
 │   ├── reliability/            # classifier, backoff, breaker, stuck detector
@@ -167,9 +170,12 @@ nexus-agent-demo/
 ```
 
 **Import boundary rule (enforced by a test, not a convention):**
-`kernel/` may import `internal/{provider,tools,promptctx,store,cost,reliability,obs}` and nothing else.
+`kernel/` is the core of the hexagon: it may import `internal/{eventlog,provider,tools,promptctx,cost,reliability,obs}`
+and nothing else, and reaches durable state only through the `kernel.EventLog` port — never `internal/store`,
+a database driver, or an adapter of its own ports (`internal/eventlog/{postgres,inmem}`).
 `internal/surfaces/` may not import `kernel/`. `internal/controlplane/` may not import
-`internal/{sandbox,memory,provider}`. A `tests/contract/boundaries_test.go` walks the import
+`internal/{sandbox,memory,provider}`. `internal/eventlog/` (the domain model) imports nothing from this module and no
+database driver. A `tests/contract/boundaries_test.go` walks the import
 graph with `go/packages` and fails the build on a violation — this is what keeps the
 "physical split later is a deployment change" claim true.
 

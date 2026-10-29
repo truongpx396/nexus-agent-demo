@@ -15,6 +15,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/config"
 	"github.com/truongpx396/nexus-agent-demo/internal/delegate"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
 	"github.com/truongpx396/nexus-agent-demo/internal/retrieval"
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
@@ -26,23 +27,24 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
 
-// chainReceiptFunc adapts internal/audit.Chain.Append to kernel.ReceiptFunc
-// — the seam kernel/types.go declares locally so kernel itself never
-// imports internal/audit (not on its own import allowlist).
-func chainReceiptFunc(chain *audit.Chain) kernel.ReceiptFunc {
+// chainReceiptFunc adapts internal/audit.Chain.Append to the Postgres event
+// log's receipt hook, so every appended event extends the audit chain in the
+// same transaction. kernel itself never sees internal/audit.
+func chainReceiptFunc(chain *audit.Chain) postgres.ReceiptFunc {
 	return func(ctx context.Context, tx pgx.Tx, e eventlog.Event) error {
 		_, err := chain.Append(ctx, tx, e.TenantID, e.SessionID, e.Seq, e.EventID, string(e.Type), e.PayloadDigest)
 		return err
 	}
 }
 
-// onSuspendFunc adapts oversight.Approvals.Create to kernel.OnSuspend —
+// onSuspendFunc adapts oversight.Approvals.Create to the Postgres event log's
+// suspend hook —
 // rendering the ContextPackage a human approver sees (README task 5.6:
 // "never a bare UUID") from the tool_use's own tool_id/effect_class/
 // plaintext input, all of which kernel.SuspendRequest already carries
 // (tools/pipeline.go's Ask branch is where EffectClass and CanonicalDigest
 // both originate, in the one place that already has the descriptor).
-func onSuspendFunc(approvals *oversight.Approvals) kernel.OnSuspend {
+func onSuspendFunc(approvals *oversight.Approvals) postgres.OnSuspend {
 	return func(ctx context.Context, tx pgx.Tx, req kernel.SuspendRequest) error {
 		_, err := approvals.Create(ctx, oversight.CreateApprovalRequest{
 			TenantID: req.TenantID, SessionID: req.SessionID, ToolUseEventID: req.ToolUseEventID,
@@ -53,10 +55,9 @@ func onSuspendFunc(approvals *oversight.Approvals) kernel.OnSuspend {
 	}
 }
 
-// onDelegateFunc adapts internal/delegate.Delegations.Bind to kernel.OnDelegate
-// — the seam kernel/types.go declares locally so kernel itself never
-// imports internal/delegate (not on its own import allowlist).
-func onDelegateFunc(delegations *delegate.Delegations) kernel.OnDelegate {
+// onDelegateFunc adapts internal/delegate.Delegations.Bind to the Postgres
+// event log's delegate hook. kernel itself never sees internal/delegate.
+func onDelegateFunc(delegations *delegate.Delegations) postgres.OnDelegate {
 	return func(ctx context.Context, tx pgx.Tx, req kernel.DelegateSuspendRequest) error {
 		return delegations.Bind(ctx, tx, req.ChildSessionID, req.ToolUseEventID)
 	}

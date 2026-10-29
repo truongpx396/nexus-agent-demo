@@ -18,6 +18,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/permissions"
 	"github.com/truongpx396/nexus-agent-demo/internal/permissions/safety"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
@@ -172,7 +173,7 @@ func TestRuleOfTwo_TaintStateSurvivesASimulatedProcessRestart(t *testing.T) {
 		Provider: provider.Wrap([]provider.Provider{fakeProvider}),
 		Tools:    kernel.PipelineExecutor{Pipeline: pipelineA},
 		Budget:   kernel.NoopBudgetGate{},
-		Store:    st,
+		Log:      postgres.New(st, postgres.Hooks{}),
 	}
 	runState := &kernel.RunState{TenantID: tenantID, SessionID: sessionID, Seal: seal}
 	cfg := kernel.RunConfig{
@@ -210,7 +211,7 @@ func TestRuleOfTwo_TaintStateSurvivesASimulatedProcessRestart(t *testing.T) {
 		Provider: provider.Wrap([]provider.Provider{fakeProvider}),
 		Tools:    kernel.PipelineExecutor{Pipeline: pipelineB},
 		Budget:   kernel.NoopBudgetGate{},
-		Store:    st,
+		Log:      postgres.New(st, postgres.Hooks{}),
 	}
 	ctl := &runctl.Control{Store: st, Keys: keys, Kernel: kB, System: "test", MaxTurns: 5}
 

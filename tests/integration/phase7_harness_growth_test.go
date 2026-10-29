@@ -31,6 +31,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/authn"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/memory"
 	"github.com/truongpx396/nexus-agent-demo/internal/permissions"
 	"github.com/truongpx396/nexus-agent-demo/internal/permissions/safety"
@@ -75,7 +76,7 @@ func TestMemory_InjectedAtSessionStart_ProducesLeadingAuditEvent(t *testing.T) {
 		Provider: provider.Wrap([]provider.Provider{prov}),
 		Tools:    kernel.NotImplementedToolExecutor{},
 		Budget:   kernel.NoopBudgetGate{},
-		Store:    rig.st,
+		Log:      postgres.New(rig.st, postgres.Hooks{}),
 	}
 	sealFn, _ := rig.seal(t, sessionID)
 	st0 := &kernel.RunState{TenantID: rig.tenantID, SessionID: sessionID, Seal: sealFn}
@@ -365,7 +366,7 @@ func TestRESTAndCLI_ProduceIdenticalEventSequencesAndTerminalReason(t *testing.T
 		Provider: provider.Wrap([]provider.Provider{prov}),
 		Tools:    kernel.NotImplementedToolExecutor{},
 		Budget:   kernel.NoopBudgetGate{},
-		Store:    st,
+		Log:      postgres.New(st, postgres.Hooks{}),
 	}}
 	signingKey, err := authn.GeneratePrivateKey()
 	if err != nil {

@@ -29,6 +29,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/delegate"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 	"github.com/truongpx396/nexus-agent-demo/internal/permissions"
 	"github.com/truongpx396/nexus-agent-demo/internal/plan"
@@ -74,7 +75,7 @@ func TestPlan_ZeroTokenRouting(t *testing.T) {
 		Provider: provider.Wrap([]provider.Provider{counting}),
 		Tools:    kernel.NotImplementedToolExecutor{},
 		Budget:   kernel.NoopBudgetGate{},
-		Store:    r.st, Receipts: r.receiptFunc(),
+		Log:      postgres.New(r.st, postgres.Hooks{Receipt: r.receiptFunc()}),
 	}
 	exec := &plan.Executor{Kernel: k, System: "test", MaxTurns: 10}
 	exec.Store, exec.Keys, exec.Chain = r.st, r.keys, r.chain
@@ -151,7 +152,7 @@ func (a spawnerAdapter) Spawn(ctx context.Context, req builtin.SpawnRequest) (uu
 	})
 }
 
-func onDelegateFunc(d *delegate.Delegations) kernel.OnDelegate {
+func onDelegateFunc(d *delegate.Delegations) postgres.OnDelegate {
 	return func(ctx context.Context, tx pgx.Tx, req kernel.DelegateSuspendRequest) error {
 		return d.Bind(ctx, tx, req.ChildSessionID, req.ToolUseEventID)
 	}
@@ -192,13 +193,11 @@ func buildDelegationRig(t *testing.T, r *oversightRig, prov provider.Provider, t
 	pipeline := tools.NewPipeline(tools.PipelineConfig{Registry: reg, Manifest: manifest, Chain: chain})
 
 	k := &kernel.Kernel{
-		Provider:   provider.Wrap([]provider.Provider{prov}),
-		Tools:      kernel.PipelineExecutor{Pipeline: pipeline},
-		Budget:     kernel.NoopBudgetGate{},
-		Store:      r.st,
-		Receipts:   r.receiptFunc(),
-		OnDelegate: onDelegateFunc(d),
-		Tracer:     tracer,
+		Provider: provider.Wrap([]provider.Provider{prov}),
+		Tools:    kernel.PipelineExecutor{Pipeline: pipeline},
+		Budget:   kernel.NoopBudgetGate{},
+		Tracer:   tracer,
+		Log:      postgres.New(r.st, postgres.Hooks{Receipt: r.receiptFunc(), Delegate: onDelegateFunc(d)}),
 	}
 	d.Wire(delegate.Config{Kernel: k, Pipeline: pipeline, System: "test", MaxTurns: 10})
 

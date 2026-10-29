@@ -25,6 +25,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/authn"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
@@ -169,8 +170,8 @@ func TestKernelTracerProducesRootGenerationToolTree(t *testing.T) {
 		Provider: provider.Wrap([]provider.Provider{fakeProvider}),
 		Tools:    successToolExecutor{},
 		Budget:   kernel.NoopBudgetGate{},
-		Store:    st,
 		Tracer:   tracer,
+		Log:      postgres.New(st, postgres.Hooks{}),
 	}}
 
 	signingKey, err := authn.GeneratePrivateKey()
@@ -338,9 +339,9 @@ func TestKernelTracerContentOptIn(t *testing.T) {
 		Provider:     provider.Wrap([]provider.Provider{fakeProvider}),
 		Tools:        successToolExecutor{},
 		Budget:       kernel.NoopBudgetGate{},
-		Store:        st,
 		Tracer:       tracer,
 		TraceContent: true,
+		Log:          postgres.New(st, postgres.Hooks{}),
 	}}
 
 	signingKey, err := authn.GeneratePrivateKey()

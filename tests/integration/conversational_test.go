@@ -30,6 +30,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/authn"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
@@ -151,7 +152,7 @@ func TestKernel_ConversationalRunPausesInsteadOfTerminating(t *testing.T) {
 		Provider: provider.Wrap([]provider.Provider{fake.New(contentOnlyScript("Hi there!"))}),
 		Tools:    kernel.NotImplementedToolExecutor{},
 		Budget:   kernel.NoopBudgetGate{},
-		Store:    st,
+		Log:      postgres.New(st, postgres.Hooks{}),
 	}
 	runState := &kernel.RunState{TenantID: tenantID, SessionID: sessionID, Seal: seal}
 	cfg := kernel.RunConfig{
@@ -205,7 +206,7 @@ func TestKernel_NonConversationalRunStillTerminatesOnPlainReply(t *testing.T) {
 		Provider: provider.Wrap([]provider.Provider{fake.New(contentOnlyScript("Hi there!"))}),
 		Tools:    kernel.NotImplementedToolExecutor{},
 		Budget:   kernel.NoopBudgetGate{},
-		Store:    st,
+		Log:      postgres.New(st, postgres.Hooks{}),
 	}
 	runState := &kernel.RunState{TenantID: tenantID, SessionID: sessionID, Seal: seal}
 	cfg := kernel.RunConfig{System: "test", ModelID: "test-model", MaxTurns: 5, Input: "hello", AutonomyLevel: "supervised"} // Conversational left at its zero value
@@ -245,7 +246,7 @@ func TestKernel_ResumeConversationContinuesAndPreservesTranscript(t *testing.T) 
 		)}),
 		Tools:  kernel.NotImplementedToolExecutor{},
 		Budget: kernel.NoopBudgetGate{},
-		Store:  st,
+		Log:    postgres.New(st, postgres.Hooks{}),
 	}
 	runState := &kernel.RunState{TenantID: tenantID, SessionID: sessionID, Seal: seal}
 	cfg := kernel.RunConfig{
@@ -356,7 +357,7 @@ func TestRunCtl_ResumeConversation_RefusesWhenNotAwaitingInput(t *testing.T) {
 		Provider: provider.Wrap([]provider.Provider{fake.New(contentOnlyScript("done"))}),
 		Tools:    kernel.NotImplementedToolExecutor{},
 		Budget:   kernel.NoopBudgetGate{},
-		Store:    st,
+		Log:      postgres.New(st, postgres.Hooks{}),
 	}
 	runState := &kernel.RunState{TenantID: tenantID, SessionID: sessionID, Seal: seal}
 	cfg := kernel.RunConfig{System: "test", ModelID: "test-model", MaxTurns: 5, Input: "hello", AutonomyLevel: "supervised"} // Conversational left false
@@ -439,7 +440,7 @@ func TestRunCtl_ResumeConversation_Succeeds(t *testing.T) {
 		)}),
 		Tools:  kernel.NotImplementedToolExecutor{},
 		Budget: kernel.NoopBudgetGate{},
-		Store:  st,
+		Log:    postgres.New(st, postgres.Hooks{}),
 	}
 	runState := &kernel.RunState{TenantID: tenantID, SessionID: sessionID, Seal: seal}
 	cfg := kernel.RunConfig{
@@ -550,7 +551,7 @@ func TestRunCtl_EndIdleConversation(t *testing.T) {
 		Provider: provider.Wrap([]provider.Provider{fake.New(contentOnlyScript("hi"))}),
 		Tools:    kernel.NotImplementedToolExecutor{},
 		Budget:   kernel.NoopBudgetGate{},
-		Store:    st,
+		Log:      postgres.New(st, postgres.Hooks{}),
 	}
 	runState := &kernel.RunState{TenantID: tenantID, SessionID: sessionID, Seal: seal}
 	cfg := kernel.RunConfig{
@@ -714,7 +715,7 @@ func TestRESTConversationalSession_MultiTurnSameSessionID(t *testing.T) {
 		Provider: provider.Wrap([]provider.Provider{fakeProvider}),
 		Tools:    kernel.NotImplementedToolExecutor{},
 		Budget:   kernel.NoopBudgetGate{},
-		Store:    st,
+		Log:      postgres.New(st, postgres.Hooks{}),
 	}
 	starter := &testRunStarter{kernel: k}
 	ctl := &runctl.Control{Store: st, Keys: keyStore, Kernel: k, System: "test", MaxTurns: 10}

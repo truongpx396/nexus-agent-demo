@@ -18,7 +18,7 @@ import (
 // and Resume (from turn 1, after resolving the one tool_use that suspended
 // the run) share: hygiene -> reserve -> build prompt -> stream -> classify
 // -> dispatch -> pair -> loop-or-terminate (README task 2.1). Every
-// appended event is durably committed (store.Append, inside InTenantTx)
+// appended event is durably committed (EventLog.Append)
 // before it is yielded, so a caller forwarding these events (e.g. over SSE)
 // never shows a client something that isn't already in the log.
 func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yield func(eventlog.Event, error) bool, startTurn int) {

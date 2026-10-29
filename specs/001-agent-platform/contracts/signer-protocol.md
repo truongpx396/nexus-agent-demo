@@ -28,7 +28,7 @@ anything richer (framing, multiplexing, an RPC codec) needless complexity. The p
 
 ## Receipt construction (`chain.go`)
 
-One receipt per **durably appended event**, written **in the same transaction** as the event (via `kernel.ReceiptFunc`), so an event is never
+One receipt per **durably appended event**, written **in the same transaction** as the event (via the Postgres event log's `Hooks.Receipt`), so an event is never
 observable without a receipt. Chained **per session** over **plaintext digests** — never the payload — so a lawful crypto-shredding erasure
 never breaks verification.
 

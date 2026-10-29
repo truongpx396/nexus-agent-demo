@@ -29,16 +29,41 @@ type boundaryRule struct {
 	name      string
 	pkg       string
 	forbidden []string
+	// direct restricts the check to pkg's own import declarations instead of
+	// its whole transitive closure. Use it for a rule that is true of the
+	// package itself today but cannot yet hold transitively because a
+	// dependency it legitimately imports still reaches the forbidden path.
+	direct bool
 }
 
 var rules = []boundaryRule{
 	{
-		name: "kernel must not import surfaces or controlplane",
+		name: "kernel must not import surfaces, controlplane, or an adapter of its own ports",
 		pkg:  modulePrefix + "kernel",
 		forbidden: []string{
 			modulePrefix + "internal/surfaces",
 			modulePrefix + "internal/controlplane",
+			modulePrefix + "internal/eventlog/postgres",
+			modulePrefix + "internal/eventlog/inmem",
 		},
+	},
+	{
+		// The kernel is the core of the hexagon: it reaches durable state only
+		// through kernel.EventLog, never through the Postgres adapter's
+		// plumbing. Checked on the kernel's OWN imports because it still
+		// reaches internal/store and pgx transitively — internal/cost and
+		// internal/obs each hold a Postgres-backed type next to the plain
+		// types the kernel actually uses (cost.Money/Reservation, obs.Tracer).
+		// Splitting those two packages is what would let this rule go
+		// transitive; until then this is the strongest statement that holds.
+		name: "kernel must not itself import internal/store or a database/cache driver",
+		pkg:  modulePrefix + "kernel",
+		forbidden: []string{
+			modulePrefix + "internal/store",
+			"github.com/jackc/pgx",
+			"github.com/redis",
+		},
+		direct: true,
 	},
 	{
 		// A "/..." pattern, not the bare package path: internal/surfaces
@@ -150,12 +175,20 @@ func TestImportBoundaries(t *testing.T) {
 				roots[p.PkgPath] = true
 			}
 			var imported []string
-			packages.Visit(pkgs, func(p *packages.Package) bool {
-				if !roots[p.PkgPath] {
-					imported = append(imported, p.PkgPath)
+			if r.direct {
+				for _, p := range pkgs {
+					for path := range p.Imports {
+						imported = append(imported, path)
+					}
 				}
-				return true
-			}, nil)
+			} else {
+				packages.Visit(pkgs, func(p *packages.Package) bool {
+					if !roots[p.PkgPath] {
+						imported = append(imported, p.PkgPath)
+					}
+					return true
+				}, nil)
+			}
 			sort.Strings(imported)
 
 			for _, forbidden := range r.forbidden {

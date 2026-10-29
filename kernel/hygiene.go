@@ -10,7 +10,7 @@ import (
 // SyntheticResult is what Hygiene reports for one orphaned tool_use. Hygiene
 // itself stays pure (no crypto, no store dependency) so it's cheap to
 // property-test (tests/property/paired_result_test.go); the caller
-// (kernel/loop.go) has the SealFunc and store.Store needed to turn each of
+// (kernel/loop.go) has the SealFunc and EventLog needed to turn each of
 // these into a real, sealed, appended EventToolResult.
 type SyntheticResult struct {
 	PairRef uuid.UUID // the tool_use's EventID

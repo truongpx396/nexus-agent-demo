@@ -6,11 +6,9 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
 // --- append helpers: marshal -> seal -> durably append -> track in History ---
@@ -145,18 +143,7 @@ func (k *Kernel) appendEvent(ctx context.Context, st *RunState, typ eventlog.Eve
 		PairRef:       pairRef,
 		ModelID:       modelID,
 	}
-	var out eventlog.Event
-	err = k.Store.InTenantTx(ctx, st.TenantID, func(ctx context.Context, tx pgx.Tx) error {
-		var aerr error
-		out, aerr = store.Append(ctx, tx, e)
-		if aerr != nil {
-			return aerr
-		}
-		if k.Receipts != nil {
-			return k.Receipts(ctx, tx, out)
-		}
-		return nil
-	})
+	out, err := k.Log.Append(ctx, e)
 	if err != nil {
 		return eventlog.Event{}, fmt.Errorf("append %s: %w", typ, err)
 	}
@@ -204,7 +191,7 @@ func (k *Kernel) appendApprovalRequested(ctx context.Context, st *RunState, tool
 // internal/cost.RecordDecision's own budget_decisions row (see
 // internal/cost/gate.go's doc comment on Gate for why the two aren't one
 // shared transaction): internal/cost never appends to the event log
-// itself — store.Append is the log's one sanctioned writer.
+// itself — EventLog.Append is the log's one sanctioned writer.
 func (k *Kernel) appendBudgetDecision(ctx context.Context, st *RunState, res cost.Reservation) (eventlog.Event, error) {
 	payload := budgetDecisionPayload{
 		Decision: string(res.Decision.Kind),
@@ -222,7 +209,5 @@ func (k *Kernel) appendTerminal(ctx context.Context, st *RunState, payload termi
 }
 
 func (k *Kernel) updateStatus(ctx context.Context, st *RunState, status string, terminalReason *string) error {
-	return k.Store.InTenantTx(ctx, st.TenantID, func(ctx context.Context, tx pgx.Tx) error {
-		return store.UpdateSessionStatus(ctx, tx, st.SessionID, status, terminalReason)
-	})
+	return k.Log.SetStatus(ctx, st.TenantID, st.SessionID, status, terminalReason)
 }

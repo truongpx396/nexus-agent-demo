@@ -28,6 +28,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
@@ -191,7 +192,7 @@ func TestCostGate_ConcurrentSessionsRespectOneTenantCeiling(t *testing.T) {
 		Provider: provider.Wrap([]provider.Provider{fakeProvider}),
 		Tools:    kernel.NotImplementedToolExecutor{},
 		Budget:   gate,
-		Store:    st,
+		Log:      postgres.New(st, postgres.Hooks{}),
 	}
 
 	sessionIDs := make([]uuid.UUID, numSessions)
@@ -393,7 +394,7 @@ func TestCostGate_UnreportedUsageReconcilesAtFullReservedCost(t *testing.T) {
 		Provider: provider.Wrap([]provider.Provider{fakeProvider}),
 		Tools:    kernel.NotImplementedToolExecutor{},
 		Budget:   gate,
-		Store:    st,
+		Log:      postgres.New(st, postgres.Hooks{}),
 	}
 	rst := &kernel.RunState{TenantID: tenantID, SessionID: sessionID, Seal: identitySeal}
 	for _, err := range k.Run(ctx, rst, kernel.RunConfig{System: "test agent", Input: "go", MaxTurns: 5}) {

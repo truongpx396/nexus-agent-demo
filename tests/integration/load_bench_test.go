@@ -23,6 +23,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/authn"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
@@ -76,7 +77,7 @@ func TestLoadPOSTRunsThroughput(t *testing.T) {
 			Provider: provider.Wrap([]provider.Provider{fake.New(script)}),
 			Tools:    kernel.NotImplementedToolExecutor{},
 			Budget:   kernel.NoopBudgetGate{},
-			Store:    st,
+			Log:      postgres.New(st, postgres.Hooks{}),
 		}}
 	}
 
