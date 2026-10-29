@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/truongpx396/nexus-agent-demo/internal/runs"
 )
 
 type fakeChannels struct {
@@ -26,14 +27,14 @@ func (f fakeChannels) BotToken(context.Context, uuid.UUID) (string, error) { ret
 type fakeStarter struct {
 	started bool
 	calls   int
-	req     RunRequest
+	req     runs.Request
 }
 
-func (f *fakeStarter) StartRun(_ context.Context, req RunRequest) (<-chan RunEvent, error) {
+func (f *fakeStarter) StartRun(_ context.Context, req runs.Request) (<-chan runs.Event, error) {
 	f.started = true
 	f.calls++
 	f.req = req
-	ch := make(chan RunEvent)
+	ch := make(chan runs.Event)
 	close(ch)
 	return ch, nil
 }
@@ -47,11 +48,11 @@ type fakeResumer struct {
 	input     string
 }
 
-func (f *fakeResumer) ResumeConversation(_ context.Context, _ uuid.UUID, sessionID uuid.UUID, input string) (<-chan RunEvent, error) {
+func (f *fakeResumer) ResumeConversation(_ context.Context, _ uuid.UUID, sessionID uuid.UUID, input string) (<-chan runs.Event, error) {
 	f.resumed = true
 	f.sessionID = sessionID
 	f.input = input
-	ch := make(chan RunEvent)
+	ch := make(chan runs.Event)
 	close(ch)
 	return ch, nil
 }

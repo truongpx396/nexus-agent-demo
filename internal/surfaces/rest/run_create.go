@@ -3,7 +3,6 @@ package rest
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -16,6 +15,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/harness"
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
+	"github.com/truongpx396/nexus-agent-demo/internal/runs"
 )
 
 type createRunRequest struct {
@@ -36,7 +36,7 @@ type createRunRequest struct {
 	// out of band, still applies).
 	BudgetUSD string `json:"budget_usd,omitempty"`
 	// Conversational opts this session into pause-not-terminate semantics
-	// (RunRequest.Conversational's own doc comment, kernel.RunConfig.
+	// (runs.Request.Conversational's own doc comment, kernel.RunConfig.
 	// Conversational's underlying one) — a plain reply suspends the
 	// session awaiting the caller's next message instead of ending the
 	// run, and POST .../steer transparently resumes it in place rather
@@ -170,10 +170,10 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 	for i, c := range mcpCatalog {
 		mcpLoadedTools[i] = c.Name
 	}
-	req2 := RunRequest{
+	req2 := runs.Request{
 		SessionID:        sessionID,
 		TenantID:         tenantID,
-		Seal:             sealFuncFor(dek, tenantID, sessionID),
+		Seal:             runs.SealFor(dek, tenantID, sessionID),
 		Input:            req.Input,
 		ModelID:          route.ModelID,
 		AutonomyLevel:    autonomy,
@@ -193,19 +193,7 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(createRunResponse{RunID: sessionID.String()})
 }
 
-// sealFuncFor closes over the DEK and identifiers a SealFunc needs but
-// doesn't itself carry.
-func sealFuncFor(dek crypto.DEK, tenantID, sessionID uuid.UUID) SealFunc {
-	return func(plaintext []byte) (sealed, digest []byte, keyID string, err error) {
-		sealed, err = crypto.Seal(dek, plaintext, tenantID.String(), sessionID.String())
-		if err != nil {
-			return nil, nil, "", fmt.Errorf("seal event payload: %w", err)
-		}
-		return sealed, crypto.Digest(plaintext), dek.KeyID, nil
-	}
-}
-
-// publishUntilDone drains the RunStarter's event channel, publishing each
+// publishUntilDone drains the runs.Starter's event channel, publishing each
 // event via s.PublishEvent (broker.go) — the same call cmd/nexusd's
 // queueRunner.Run makes for a queued job's own events, so this package's
 // synchronous fast path and a queued run driven by an entirely different
@@ -216,7 +204,7 @@ func sealFuncFor(dek crypto.DEK, tenantID, sessionID uuid.UUID) SealFunc {
 // terminal event exists — closing is RelayEvent's job now, triggered by
 // observing an actual EventTerminal, wherever (and whenever) it's actually
 // published from.
-func (s *Server) publishUntilDone(tenantID, sessionID uuid.UUID, events <-chan RunEvent) {
+func (s *Server) publishUntilDone(tenantID, sessionID uuid.UUID, events <-chan runs.Event) {
 	for re := range events {
 		s.PublishEvent(tenantID, sessionID, re.Event, re.Err)
 	}

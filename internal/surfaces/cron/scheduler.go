@@ -6,7 +6,6 @@ package cron
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,6 +16,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/harness"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
+	"github.com/truongpx396/nexus-agent-demo/internal/runs"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
@@ -37,7 +37,7 @@ type TenantLister interface {
 type Scheduler struct {
 	Store                 *store.Store
 	KeyStore              *crypto.KeyStore
-	Starter               RunStarter
+	Starter               runs.Starter
 	Tenants               TenantLister
 	CatalogManifestDigest []byte
 
@@ -178,9 +178,9 @@ func (s *Scheduler) fire(ctx context.Context, tenantID uuid.UUID, d dueSchedule)
 		return
 	}
 
-	req := RunRequest{
+	req := runs.Request{
 		SessionID: sessionID, TenantID: tenantID,
-		Seal:          sealFuncFor(dek, tenantID, sessionID),
+		Seal:          runs.SealFor(dek, tenantID, sessionID),
 		Input:         d.Input,
 		ModelID:       route.ModelID,
 		AutonomyLevel: autonomy,
@@ -199,7 +199,7 @@ func (s *Scheduler) fire(ctx context.Context, tenantID uuid.UUID, d dueSchedule)
 // on whatever surface actually reviews approvals — REST/web — the same as
 // any other run); it only needs to keep the channel draining so
 // kernelRunStarter's own goroutine can complete.
-func drain(events <-chan RunEvent) {
+func drain(events <-chan runs.Event) {
 	for range events {
 	}
 }
@@ -210,15 +210,5 @@ func (s *Scheduler) disable(ctx context.Context, tenantID, scheduleID uuid.UUID)
 		return err
 	}); err != nil {
 		log.Error().Err(err).Any("schedule_id", scheduleID).Msg("cron: disable unparseable schedule")
-	}
-}
-
-func sealFuncFor(dek crypto.DEK, tenantID, sessionID uuid.UUID) SealFunc {
-	return func(plaintext []byte) (sealed, digest []byte, keyID string, err error) {
-		sealed, err = crypto.Seal(dek, plaintext, tenantID.String(), sessionID.String())
-		if err != nil {
-			return nil, nil, "", fmt.Errorf("seal event payload: %w", err)
-		}
-		return sealed, crypto.Digest(plaintext), dek.KeyID, nil
 	}
 }

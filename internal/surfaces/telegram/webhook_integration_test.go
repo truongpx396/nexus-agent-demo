@@ -125,10 +125,10 @@ func TestHandleWebhook_ValidUpdateCreatesARealSessionAndStartsARun(t *testing.T)
 		t.Fatal("a valid update did not reach StartRun")
 	}
 	if starter.req.Input != "please help" {
-		t.Fatalf("RunRequest.Input = %q, want the message text", starter.req.Input)
+		t.Fatalf("runs.Request.Input = %q, want the message text", starter.req.Input)
 	}
 	if starter.req.TenantID != tenantID {
-		t.Fatalf("RunRequest.TenantID = %s, want %s", starter.req.TenantID, tenantID)
+		t.Fatalf("runs.Request.TenantID = %s, want %s", starter.req.TenantID, tenantID)
 	}
 
 	// The session this handler created must actually be durable and

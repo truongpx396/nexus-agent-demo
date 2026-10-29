@@ -8,7 +8,7 @@ import "context"
 // has no reason to import internal/tools just to name that interface; Go's
 // structural typing satisfies it without either package knowing about the
 // other's declaration, the same trick kernel.SealFunc and internal/
-// surfaces/rest.SealFunc already use for two independently-declared,
+// surfaces/runs.SealFunc already use for two independently-declared,
 // structurally-identical function types.
 type SessionSandbox struct {
 	Docker *Docker

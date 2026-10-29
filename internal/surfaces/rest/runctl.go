@@ -23,7 +23,7 @@ type ForkView struct {
 
 // RunCtlPort is the entire seam between this surface and internal/runctl —
 // cmd/nexusd supplies the concrete implementation, the same exemption
-// starter.go/oversight.go's own doc comments already grant for
+// internal/runs and oversight.go's own doc comments already grant for
 // kernel.Kernel.Run/Resume: internal/runctl transitively imports kernel,
 // which this package must never import directly
 // (tests/contract/boundaries_test.go).

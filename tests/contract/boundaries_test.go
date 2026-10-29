@@ -80,6 +80,17 @@ var rules = []boundaryRule{
 		},
 	},
 	{
+		// internal/runs is the one package every surface shares. If it could
+		// reach the kernel, so could every surface — and the failure would
+		// surface as a confusing violation of the surfaces rule instead.
+		name: "runs must not import the kernel or any surface",
+		pkg:  modulePrefix + "internal/runs",
+		forbidden: []string{
+			modulePrefix + "kernel",
+			modulePrefix + "internal/surfaces",
+		},
+	},
+	{
 		name: "controlplane must not import data-plane-only packages",
 		pkg:  modulePrefix + "internal/controlplane",
 		forbidden: []string{

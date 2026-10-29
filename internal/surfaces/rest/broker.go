@@ -22,7 +22,7 @@ const (
 // both ("nexus:events:*" / "nexus:deltas:*") for this package's own
 // broker, and telegram/zalo/email's surface adapters (which have no
 // broker of their own) SUBSCRIBE to one session's EventsChannel directly
-// so their own RunStarter/Resumer channel contract — "carries every event
+// so their own runs.Starter/runs.Resumer channel contract — "carries every event
 // of the run" — still holds even though the run itself now executes on a
 // queue worker, not a local goroutine.
 func EventsChannel(sessionID uuid.UUID) string { return eventsChannelPrefix + sessionID.String() }

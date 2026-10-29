@@ -7,166 +7,25 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
-	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/cron"
-	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/email"
-	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
-	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/telegram"
-	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/zalo"
+	"github.com/truongpx396/nexus-agent-demo/internal/runs"
 )
 
-// telegramStarterAdapter/zaloStarterAdapter/emailStarterAdapter/
-// cronStarterAdapter translate each surface's own structurally-identical-
-// but-distinct RunRequest/RunEvent/RunStarter (starter.go's own doc
-// comment on why they're duplicated per surface, not shared) into a call
-// against the SAME single *kernelRunStarter every surface ultimately
-// shares — this file is the only place that needs to know all five
-// surfaces' local types at once, matching kernelRunStarter's own doc
-// comment ("the only place a kernel.RunState/kernel.RunConfig gets built").
-//
-// telegram/zalo/email's own adapters also implement that surface's local
-// Resumer interface (ctl, wired only on those three — never cron, which
-// has no human peer to resume a conversation with) via
-// resumeConversationEvents (eventbus.go) — every one of them needs the
-// full "every event until terminal" channel, the same
-// subscribe-before-append-and-enqueue shape kernelRunStarter.StartRun
-// itself now uses (runner.go), since none of these three surfaces has a
-// broker/SSE mechanism of its own to fall back on the way REST does.
-
-type telegramStarterAdapter struct {
-	k           *kernelRunStarter
+// conversationResumer is the one runs.Resumer telegram, zalo and email share
+// (cron has no human peer to resume a conversation with). Each of them needs
+// the full "every event until terminal" channel, the same
+// subscribe-before-append-and-enqueue shape kernelRunStarter.StartRun uses
+// (runner.go), because none has a broker/SSE mechanism of its own to fall
+// back on the way REST does. The surfaces start runs through
+// *kernelRunStarter directly: it already implements runs.Starter.
+type conversationResumer struct {
 	ctl         *runctl.Control
 	redisClient *redis.Client
 }
 
-func (a telegramStarterAdapter) StartRun(ctx context.Context, req telegram.RunRequest) (<-chan telegram.RunEvent, error) {
-	events, err := a.k.StartRun(ctx, rest.RunRequest{
-		SessionID: req.SessionID, TenantID: req.TenantID, Seal: rest.SealFunc(req.Seal),
-		Input: req.Input, ModelID: req.ModelID, AutonomyLevel: req.AutonomyLevel,
-	})
-	if err != nil {
-		return nil, err
-	}
-	out := make(chan telegram.RunEvent, 8)
-	go func() {
-		defer close(out)
-		for ev := range events {
-			out <- telegram.RunEvent{Event: ev.Event, Err: ev.Err}
-		}
-	}()
-	return out, nil
-}
+var _ runs.Resumer = conversationResumer{}
 
-func (a telegramStarterAdapter) ResumeConversation(ctx context.Context, tenantID, sessionID uuid.UUID, input string) (<-chan telegram.RunEvent, error) {
-	events, err := resumeConversationEvents(ctx, a.redisClient, a.ctl, tenantID, sessionID, input)
-	if err != nil {
-		return nil, err
-	}
-	out := make(chan telegram.RunEvent, 8)
-	go func() {
-		defer close(out)
-		for ev := range events {
-			out <- telegram.RunEvent{Event: ev.Event, Err: ev.Err}
-		}
-	}()
-	return out, nil
-}
-
-type zaloStarterAdapter struct {
-	k           *kernelRunStarter
-	ctl         *runctl.Control
-	redisClient *redis.Client
-}
-
-func (a zaloStarterAdapter) StartRun(ctx context.Context, req zalo.RunRequest) (<-chan zalo.RunEvent, error) {
-	events, err := a.k.StartRun(ctx, rest.RunRequest{
-		SessionID: req.SessionID, TenantID: req.TenantID, Seal: rest.SealFunc(req.Seal),
-		Input: req.Input, ModelID: req.ModelID, AutonomyLevel: req.AutonomyLevel,
-	})
-	if err != nil {
-		return nil, err
-	}
-	out := make(chan zalo.RunEvent, 8)
-	go func() {
-		defer close(out)
-		for ev := range events {
-			out <- zalo.RunEvent{Event: ev.Event, Err: ev.Err}
-		}
-	}()
-	return out, nil
-}
-
-func (a zaloStarterAdapter) ResumeConversation(ctx context.Context, tenantID, sessionID uuid.UUID, input string) (<-chan zalo.RunEvent, error) {
-	events, err := resumeConversationEvents(ctx, a.redisClient, a.ctl, tenantID, sessionID, input)
-	if err != nil {
-		return nil, err
-	}
-	out := make(chan zalo.RunEvent, 8)
-	go func() {
-		defer close(out)
-		for ev := range events {
-			out <- zalo.RunEvent{Event: ev.Event, Err: ev.Err}
-		}
-	}()
-	return out, nil
-}
-
-type emailStarterAdapter struct {
-	k           *kernelRunStarter
-	ctl         *runctl.Control
-	redisClient *redis.Client
-}
-
-func (a emailStarterAdapter) StartRun(ctx context.Context, req email.RunRequest) (<-chan email.RunEvent, error) {
-	events, err := a.k.StartRun(ctx, rest.RunRequest{
-		SessionID: req.SessionID, TenantID: req.TenantID, Seal: rest.SealFunc(req.Seal),
-		Input: req.Input, ModelID: req.ModelID, AutonomyLevel: req.AutonomyLevel,
-	})
-	if err != nil {
-		return nil, err
-	}
-	out := make(chan email.RunEvent, 8)
-	go func() {
-		defer close(out)
-		for ev := range events {
-			out <- email.RunEvent{Event: ev.Event, Err: ev.Err}
-		}
-	}()
-	return out, nil
-}
-
-func (a emailStarterAdapter) ResumeConversation(ctx context.Context, tenantID, sessionID uuid.UUID, input string) (<-chan email.RunEvent, error) {
-	events, err := resumeConversationEvents(ctx, a.redisClient, a.ctl, tenantID, sessionID, input)
-	if err != nil {
-		return nil, err
-	}
-	out := make(chan email.RunEvent, 8)
-	go func() {
-		defer close(out)
-		for ev := range events {
-			out <- email.RunEvent{Event: ev.Event, Err: ev.Err}
-		}
-	}()
-	return out, nil
-}
-
-type cronStarterAdapter struct{ k *kernelRunStarter }
-
-func (a cronStarterAdapter) StartRun(ctx context.Context, req cron.RunRequest) (<-chan cron.RunEvent, error) {
-	events, err := a.k.StartRun(ctx, rest.RunRequest{
-		SessionID: req.SessionID, TenantID: req.TenantID, Seal: rest.SealFunc(req.Seal),
-		Input: req.Input, ModelID: req.ModelID, AutonomyLevel: req.AutonomyLevel,
-	})
-	if err != nil {
-		return nil, err
-	}
-	out := make(chan cron.RunEvent, 8)
-	go func() {
-		defer close(out)
-		for ev := range events {
-			out <- cron.RunEvent{Event: ev.Event, Err: ev.Err}
-		}
-	}()
-	return out, nil
+func (r conversationResumer) ResumeConversation(ctx context.Context, tenantID, sessionID uuid.UUID, input string) (<-chan runs.Event, error) {
+	return resumeConversationEvents(ctx, r.redisClient, r.ctl, tenantID, sessionID, input)
 }
 
 // adminTenantLister implements cron.TenantLister over the same
