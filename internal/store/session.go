@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -138,6 +139,11 @@ func CreateSession(ctx context.Context, tx pgx.Tx, s Session) error {
 	return nil
 }
 
+// ErrSessionNotFound is what GetSession wraps when no row is visible: the
+// session does not exist, or it belongs to another tenant (RLS cannot tell
+// the two apart, and neither should the caller).
+var ErrSessionNotFound = errors.New("session not found")
+
 // GetSession loads one session row, RLS-scoped like every read in this
 // package.
 func GetSession(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) (Session, error) {
@@ -163,7 +169,7 @@ func GetSession(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) (Session, e
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			return Session{}, fmt.Errorf("session %s not found (wrong tenant scope, or it does not exist)", sessionID)
+			return Session{}, fmt.Errorf("session %s (wrong tenant scope, or it does not exist): %w", sessionID, ErrSessionNotFound)
 		}
 		return Session{}, fmt.Errorf("get session %s: %w", sessionID, err)
 	}

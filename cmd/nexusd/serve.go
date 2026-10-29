@@ -266,7 +266,7 @@ func serve(ctx context.Context) error {
 		CatalogManifestDigest: catalogManifestDigest,
 	}
 
-	srv := rest.NewServer(launcher, st, keyStore)
+	srv := rest.NewServer(launcher, runspg.Reader{Store: st, KeyStore: keyStore})
 	srv.Verifier = verifier
 	// Redis Pub/Sub-backed EventBus (broker.go's own doc comment on why this
 	// surface needs one now): every publish reaches every nexusd process,

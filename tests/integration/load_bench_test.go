@@ -26,6 +26,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
+	runspg "github.com/truongpx396/nexus-agent-demo/internal/runs/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
@@ -81,7 +82,7 @@ func TestLoadPOSTRunsThroughput(t *testing.T) {
 		}}
 	}
 
-	srv := rest.NewServer(newTestLauncher(st, keyStore, newStarter()), st, keyStore)
+	srv := rest.NewServer(newTestLauncher(st, keyStore, newStarter()), runspg.Reader{Store: st, KeyStore: keyStore})
 	srv.Verifier = authn.NewDevVerifier(authn.PublicKey(signingKey))
 	httpSrv := httptest.NewServer(srv.Handler())
 	defer httpSrv.Close()

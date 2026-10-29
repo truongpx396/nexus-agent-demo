@@ -38,6 +38,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
+	runspg "github.com/truongpx396/nexus-agent-demo/internal/runs/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/skills"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces"
@@ -375,7 +376,7 @@ func TestRESTAndCLI_ProduceIdenticalEventSequencesAndTerminalReason(t *testing.T
 	issuer := authn.NewDevIssuer(signingKey)
 	token := mustIssueToken(t, issuer, tenantID, userID)
 
-	srv := rest.NewServer(newTestLauncher(st, keyStore, starter), st, keyStore)
+	srv := rest.NewServer(newTestLauncher(st, keyStore, starter), runspg.Reader{Store: st, KeyStore: keyStore})
 	srv.Verifier = authn.NewDevVerifier(authn.PublicKey(signingKey))
 	httpSrv := httptest.NewServer(srv.Handler())
 	defer httpSrv.Close()

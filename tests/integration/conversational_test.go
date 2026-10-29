@@ -34,6 +34,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
+	runspg "github.com/truongpx396/nexus-agent-demo/internal/runs/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
@@ -728,7 +729,7 @@ func TestRESTConversationalSession_MultiTurnSameSessionID(t *testing.T) {
 	verifier := authn.NewDevVerifier(authn.PublicKey(signingKey))
 	token := mustIssueToken(t, issuer, tenantID, userID)
 
-	srv := rest.NewServer(newTestLauncher(st, keyStore, starter), st, keyStore)
+	srv := rest.NewServer(newTestLauncher(st, keyStore, starter), runspg.Reader{Store: st, KeyStore: keyStore})
 	srv.Verifier = verifier
 	srv.RunCtl = &testRunCtlPort{ctl: ctl}
 	httpSrv := httptest.NewServer(srv.Handler())
