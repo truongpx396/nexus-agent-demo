@@ -126,9 +126,8 @@ var rules = []boundaryRule{
 		// below follow the same rule: they find a conversation with
 		// Reader.FindByKey, open the events a notification quotes with
 		// Reader.EventOpener, and dedupe redeliveries through
-		// surfaces.InboundDedup. (MCP still touches the database — the
-		// connector tables — and is not yet covered; see docs/build-phases.md
-		// Phase 19.)
+		// surfaces.InboundDedup. Cron and MCP follow below, so no surface
+		// touches the database directly any more.
 		name: "the REST surface must not itself import internal/store, internal/crypto or a database/cache driver",
 		pkg:  modulePrefix + "internal/surfaces/rest",
 		forbidden: []string{
@@ -161,6 +160,22 @@ var rules = []boundaryRule{
 		// stays exactly-once. Its adapter is internal/surfaces/cron/postgres.
 		name: "the cron surface must not itself import internal/store, internal/crypto or a database/cache driver",
 		pkg:  modulePrefix + "internal/surfaces/cron",
+		forbidden: []string{
+			modulePrefix + "internal/store",
+			modulePrefix + "internal/crypto",
+			"github.com/jackc/pgx",
+			"github.com/redis",
+		},
+		direct: true,
+	},
+	{
+		// The MCP resolver states what resolves (an admitted server whose
+		// live schema still matches the ref), as whom a server is called, and
+		// how long a tool list is cached; ServerDirectory holds the rows and
+		// opens a sealed credential where its key lives. Its adapter is
+		// internal/surfaces/mcp/postgres.
+		name: "the mcp surface must not itself import internal/store, internal/crypto or a database/cache driver",
+		pkg:  modulePrefix + "internal/surfaces/mcp",
 		forbidden: []string{
 			modulePrefix + "internal/store",
 			modulePrefix + "internal/crypto",
