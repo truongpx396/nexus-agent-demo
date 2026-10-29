@@ -331,7 +331,7 @@ func TestRESTRunEndToEnd(t *testing.T) {
 	token := mustIssueToken(t, issuer, tenantID, userID)
 	wrongUserToken := mustIssueToken(t, issuer, tenantID, uuid.New())
 
-	srv := rest.NewServer(newTestLauncher(st, keyStore, starter), st, keyStore)
+	srv := rest.NewServer(newTestLauncher(st, keyStore, starter), runspg.Reader{Store: st, KeyStore: keyStore})
 	srv.Verifier = verifier
 	httpSrv := httptest.NewServer(srv.Handler())
 	defer httpSrv.Close()

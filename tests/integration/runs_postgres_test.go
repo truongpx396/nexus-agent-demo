@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -11,6 +12,9 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/controlplane"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
+	eventlogpg "github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
+	"github.com/truongpx396/nexus-agent-demo/internal/runs"
 	runspg "github.com/truongpx396/nexus-agent-demo/internal/runs/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
@@ -133,4 +137,99 @@ func TestKeys_NewDEK(t *testing.T) {
 	if got, err := crypto.Open(unwrapped, sealed, tenantID.String(), "s"); err != nil || string(got) != "secret" {
 		t.Fatalf("Open with the persisted key = %q, %v; want the plaintext", got, err)
 	}
+}
+
+// TestReader pins the read side through PgBouncer as nexus_app, above all that
+// another tenant's run is indistinguishable from one that does not exist.
+func TestReader(t *testing.T) {
+	pool, cleanup := setupPostgresAndPgBouncer(t)
+	t.Cleanup(cleanup)
+	st := store.New(pool)
+	ctx := context.Background()
+
+	tenantA, tenantB, user := uuid.New(), uuid.New(), uuid.New()
+	for _, id := range []uuid.UUID{tenantA, tenantB} {
+		if err := insertTenant(ctx, st, id); err != nil {
+			t.Fatalf("insert tenant: %v", err)
+		}
+	}
+	kek, err := crypto.GenerateKEK()
+	if err != nil {
+		t.Fatalf("GenerateKEK: %v", err)
+	}
+	ks := crypto.NewKeyStore(kek)
+	reader := runspg.Reader{Store: st, KeyStore: ks}
+	log := eventlogpg.New(st, eventlogpg.Hooks{})
+
+	admit := func(tenantID, userID uuid.UUID) uuid.UUID {
+		req := admitReq(tenantID)
+		req.UserID = userID
+		if res, err := (runspg.Sessions{Store: st}).CreateSession(ctx, req); err != nil || !res.Admitted {
+			t.Fatalf("CreateSession = %+v, %v", res, err)
+		}
+		return req.SessionID
+	}
+	older, newer := admit(tenantA, user), admit(tenantA, user)
+	_ = admit(tenantA, uuid.New()) // another user's run in the same tenant
+	otherTenantRun := admit(tenantB, user)
+
+	t.Run("GetRun returns the row, and ErrNotFound for unknown or foreign-tenant ids alike", func(t *testing.T) {
+		run, err := reader.GetRun(ctx, tenantA, newer)
+		if err != nil || run.RunID != newer || run.UserID != user || run.Status != eventlog.SessionStatusQueued {
+			t.Fatalf("GetRun = %+v, %v", run, err)
+		}
+		if _, err := reader.GetRun(ctx, tenantA, uuid.New()); !errors.Is(err, runs.ErrNotFound) {
+			t.Errorf("unknown id: err = %v, want runs.ErrNotFound", err)
+		}
+		if _, err := reader.GetRun(ctx, tenantA, otherTenantRun); !errors.Is(err, runs.ErrNotFound) {
+			t.Errorf("another tenant's run: err = %v, want runs.ErrNotFound (RLS must make it indistinguishable from absent)", err)
+		}
+	})
+
+	t.Run("ListRuns is the user's own, newest first, and honours the limit", func(t *testing.T) {
+		all, err := reader.ListRuns(ctx, tenantA, user, 10)
+		if err != nil || len(all) != 2 || all[0].RunID != newer || all[1].RunID != older {
+			t.Fatalf("ListRuns = %+v, %v; want [newer, older] and no other user's run", all, err)
+		}
+		if one, _ := reader.ListRuns(ctx, tenantA, user, 1); len(one) != 1 {
+			t.Errorf("limit 1 returned %d runs", len(one))
+		}
+		if foreign, _ := reader.ListRuns(ctx, tenantB, user, 10); len(foreign) != 1 || foreign[0].RunID != otherTenantRun {
+			t.Errorf("tenant B sees %+v, want only its own run", foreign)
+		}
+	})
+
+	t.Run("Events come back in order and open to the plaintext, only for their own tenant", func(t *testing.T) {
+		dek, err := runspg.Keys{Store: st, KeyStore: ks}.NewDEK(ctx, tenantA)
+		if err != nil {
+			t.Fatalf("NewDEK: %v", err)
+		}
+		seal := runs.SealFor(dek, tenantA, newer)
+		for _, body := range []string{"first", "second"} {
+			sealed, digest, keyID, err := seal([]byte(`{"body":"` + body + `"}`))
+			if err != nil {
+				t.Fatalf("seal: %v", err)
+			}
+			if _, err := log.Append(ctx, eventlog.Event{
+				EventID: uuid.New(), SessionID: newer, TenantID: tenantA, SchemaVersion: eventlog.CurrentSchemaVersion,
+				Type: eventlog.EventContent, Payload: sealed, PayloadDigest: digest, KeyID: keyID, Actor: eventlog.ActorModel,
+			}); err != nil {
+				t.Fatalf("Append: %v", err)
+			}
+		}
+
+		events, err := reader.Events(ctx, tenantA, newer)
+		if err != nil || len(events) != 2 || events[0].Seq != 1 || events[1].Seq != 2 {
+			t.Fatalf("Events = %d event(s), %v; want 2 in sequence order", len(events), err)
+		}
+		opener := reader.EventOpener(tenantA)
+		for i, want := range []string{`{"body":"first"}`, `{"body":"second"}`} {
+			if got, err := opener.Open(ctx, events[i]); err != nil || string(got) != want {
+				t.Errorf("Open(event %d) = %q, %v; want %q", i, got, err, want)
+			}
+		}
+		if _, err := reader.EventOpener(tenantB).Open(ctx, events[0]); err == nil {
+			t.Error("tenant B opened tenant A's event")
+		}
+	})
 }

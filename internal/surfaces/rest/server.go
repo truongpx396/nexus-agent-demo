@@ -16,11 +16,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/runs"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces"
 )
 
@@ -32,8 +30,10 @@ type Server struct {
 	// every surface shares. Mandatory: a nil Launcher fails handleCreateRun
 	// closed (500) rather than panic.
 	Launcher runs.Launcher
-	Store    *store.Store
-	KeyStore *crypto.KeyStore
+	// Reader is the read side of runs (runs.Reader): run rows and their
+	// events, with payload decryption for the run's own audience. Mandatory,
+	// like Launcher.
+	Reader runs.Reader
 
 	// Verifier resolves the bearer token on every request to the principal
 	// submitting it (README task 13.1) — mandatory, unlike every other Port
@@ -142,8 +142,8 @@ type SkillSetPort interface {
 	Digest(ctx context.Context, tenantID uuid.UUID) ([]byte, error)
 }
 
-func NewServer(launcher runs.Launcher, st *store.Store, ks *crypto.KeyStore) *Server {
-	return &Server{Launcher: launcher, Store: st, KeyStore: ks, broker: newBroker()}
+func NewServer(launcher runs.Launcher, reader runs.Reader) *Server {
+	return &Server{Launcher: launcher, Reader: reader, broker: newBroker()}
 }
 
 // Handler returns the http.Handler cmd/nexusd mounts. Every route is

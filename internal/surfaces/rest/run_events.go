@@ -8,11 +8,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
+	"github.com/truongpx396/nexus-agent-demo/internal/runs"
 )
 
 // eventDTO is what an SSE frame's data carries: enough structure to render
@@ -43,13 +41,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid run id", http.StatusBadRequest)
 		return
 	}
-	sess, err := s.getSession(r.Context(), tenantID, id)
-	if err != nil {
-		http.Error(w, "run not found", http.StatusNotFound)
-		return
-	}
-	if sess.UserID != userID {
-		http.Error(w, "forbidden", http.StatusForbidden)
+	if _, ok := s.ownedRun(w, r, tenantID, userID, id); !ok {
 		return
 	}
 
@@ -74,9 +66,9 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	ch, unsubscribe := s.broker.subscribe(id)
 	defer unsubscribe()
 
-	dekCache := map[string]crypto.DEK{}
+	opener := s.Reader.EventOpener(tenantID)
 	write := func(e eventlog.Event) bool {
-		dto, derr := s.toEventDTO(r.Context(), tenantID, e, dekCache)
+		dto, derr := toEventDTO(r.Context(), opener, e)
 		if derr != nil {
 			writeSSEFrame(w, "error", map[string]string{"error": derr.Error()})
 			flusher.Flush()
@@ -87,7 +79,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		return e.Type != eventlog.EventTerminal
 	}
 
-	history, err := s.listEvents(r.Context(), tenantID, id)
+	history, err := s.Reader.Events(r.Context(), tenantID, id)
 	if err != nil {
 		writeSSEFrame(w, "error", map[string]string{"error": err.Error()})
 		flusher.Flush()
@@ -133,21 +125,11 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) listEvents(ctx context.Context, tenantID, sessionID uuid.UUID) ([]eventlog.Event, error) {
-	var events []eventlog.Event
-	err := s.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		var lerr error
-		events, lerr = store.ListEvents(ctx, tx, sessionID)
-		return lerr
-	})
-	return events, err
-}
-
 // toEventDTO decrypts one event's payload for display to the run's own
-// audience (the principal check in handleEvents has already established
-// this request IS that audience). dekCache avoids re-unwrapping the same
-// key (in practice, every event in one session shares it) once per event.
-func (s *Server) toEventDTO(ctx context.Context, tenantID uuid.UUID, e eventlog.Event, dekCache map[string]crypto.DEK) (eventDTO, error) {
+// audience (the principal check in handleEvents has already established this
+// request IS that audience). The opener is per-request, so a key unwrapped for
+// one event is reused for the rest of the same session.
+func toEventDTO(ctx context.Context, opener runs.EventOpener, e eventlog.Event) (eventDTO, error) {
 	dto := eventDTO{
 		EventID:   e.EventID.String(),
 		Seq:       e.Seq,
@@ -165,22 +147,9 @@ func (s *Server) toEventDTO(ctx context.Context, tenantID uuid.UUID, e eventlog.
 		return dto, nil // never shown, even to the run's own audience
 	}
 
-	dek, ok := dekCache[e.KeyID]
-	if !ok {
-		var uerr error
-		err := s.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-			dek, uerr = s.KeyStore.Unwrap(ctx, tx, e.KeyID)
-			return uerr
-		})
-		if err != nil {
-			return eventDTO{}, fmt.Errorf("unwrap key for event %s: %w", e.EventID, err)
-		}
-		dekCache[e.KeyID] = dek
-	}
-
-	plaintext, err := crypto.Open(dek, e.Payload, tenantID.String(), e.SessionID.String())
+	plaintext, err := opener.Open(ctx, e)
 	if err != nil {
-		return eventDTO{}, fmt.Errorf("decrypt event %s: %w", e.EventID, err)
+		return eventDTO{}, err
 	}
 	dto.Body = json.RawMessage(plaintext)
 	return dto, nil

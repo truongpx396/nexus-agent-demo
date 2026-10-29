@@ -106,6 +106,22 @@ var rules = []boundaryRule{
 		direct: true,
 	},
 	{
+		// The REST surface starts runs through runs.Launcher and reads them
+		// back through runs.Reader, so it has no reason to touch the database
+		// or the key store itself. (Telegram, Zalo, email and cron still do
+		// — session lookup, event decryption, the schedule table — and are
+		// not yet covered; see docs/build-phases.md Phase 19.)
+		name: "the REST surface must not itself import internal/store, internal/crypto or a database/cache driver",
+		pkg:  modulePrefix + "internal/surfaces/rest",
+		forbidden: []string{
+			modulePrefix + "internal/store",
+			modulePrefix + "internal/crypto",
+			"github.com/jackc/pgx",
+			"github.com/redis",
+		},
+		direct: true,
+	},
+	{
 		name: "controlplane must not import data-plane-only packages",
 		pkg:  modulePrefix + "internal/controlplane",
 		forbidden: []string{

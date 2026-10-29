@@ -2,8 +2,9 @@
 
 **Plan**: [../plan.md](../plan.md) | **Spec**: FR-026, FR-027, FR-071, FR-079, FR-102, FR-117–FR-124 | **Source**: `internal/surfaces/{rest,cli,telegram,zalo,email}`, `cmd/nexusd/serve.go`
 
-Surfaces are **thin translators**: they authenticate, create a session, hand it to `rest.RunStarter` (implemented only by
-`kernelRunStarter`), and forward what comes back. They hold no control flow and never import `kernel/`.
+Surfaces are **thin translators**: they authenticate, start a run through `runs.Launcher` (admit the session, mint its key, hand it to
+`runs.Starter`, implemented only by `kernelRunStarter`), read runs back through `runs.Reader`, and forward what comes back. They hold no
+control flow and never import `kernel/`; the REST surface imports no database code at all.
 
 Default listen address **`:8085`** (`NEXUS_HTTP_ADDR`; `cmd/nexusd/config.go`, `deploy/docker-compose.yml`, the CLI's and the web app's
 default base URL — all agree). It was `:8080` until the chat-UI commit (`227b8f4`). **Docs drift**: `CLAUDE.md` and `README.md` still say
