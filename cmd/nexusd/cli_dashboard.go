@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
+	obspg "github.com/truongpx396/nexus-agent-demo/internal/obs/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
@@ -42,7 +43,7 @@ func runDashboard(ctx context.Context, args []string) error {
 	}
 
 	for _, tenantID := range tenantIDs {
-		signals, err := obs.ComputeGoldenSignals(ctx, st, tenantID, *staleAfter, nil, nil)
+		signals, err := obs.ComputeGoldenSignals(ctx, obspg.New(st), tenantID, *staleAfter, nil, nil)
 		if err != nil {
 			return fmt.Errorf("compute golden signals for tenant %s: %w", tenantID, err)
 		}
