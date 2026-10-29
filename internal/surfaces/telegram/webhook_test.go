@@ -102,8 +102,8 @@ func (f *fakeLocker) Release(_ context.Context, sessionKey, token string) error 
 }
 
 func TestHandleWebhook_WrongSecretRefusedBeforeBodyIsEverParsed(t *testing.T) {
-	starter := &fakeStarter{}
-	s := &Server{Channels: fakeChannels{secret: "correct-secret", ok: true}, Starter: starter}
+	launcher := &fakeLauncher{}
+	s := &Server{Channels: fakeChannels{secret: "correct-secret", ok: true}, Launcher: launcher}
 	tenantID := uuid.New()
 
 	// A body that would fail JSON parsing if it were ever reached — proves
@@ -117,14 +117,14 @@ func TestHandleWebhook_WrongSecretRefusedBeforeBodyIsEverParsed(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rec.Code)
 	}
-	if starter.started {
+	if launcher.started {
 		t.Fatal("a run was started despite a wrong secret token")
 	}
 }
 
 func TestHandleWebhook_NoChannelConfiguredRefusesWithoutStartingARun(t *testing.T) {
-	starter := &fakeStarter{}
-	s := &Server{Channels: fakeChannels{ok: false}, Starter: starter}
+	launcher := &fakeLauncher{}
+	s := &Server{Channels: fakeChannels{ok: false}, Launcher: launcher}
 	tenantID := uuid.New()
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/webhooks/telegram/"+tenantID.String(), bytes.NewReader(nil))
@@ -134,7 +134,7 @@ func TestHandleWebhook_NoChannelConfiguredRefusesWithoutStartingARun(t *testing.
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 (no channel configured)", rec.Code)
 	}
-	if starter.started {
+	if launcher.started {
 		t.Fatal("a run was started despite no configured channel")
 	}
 }
@@ -149,12 +149,12 @@ func TestHandleWebhook_NoChannelConfiguredRefusesWithoutStartingARun(t *testing.
 // webhook_integration_test.go instead, the same unit/integration split
 // internal/surfaces/rest's own tests draw).
 func TestHandleWebhook_RateLimitedRefusesBeforeBodyIsParsed(t *testing.T) {
-	starter := &fakeStarter{}
+	launcher := &fakeLauncher{}
 	limiter := NewRateLimiter(1, time.Hour)
 	tenantID := uuid.New()
 	limiter.Allow(tenantID.String()) // consume the one token this bucket starts with
 
-	s := &Server{Channels: fakeChannels{secret: "s", ok: true}, Starter: starter, RateLimit: limiter}
+	s := &Server{Channels: fakeChannels{secret: "s", ok: true}, Launcher: launcher, RateLimit: limiter}
 	req := httptest.NewRequest(http.MethodPost, "/v1/webhooks/telegram/"+tenantID.String(), bytes.NewReader([]byte("would fail to parse if reached")))
 	req.Header.Set("X-Telegram-Bot-Api-Secret-Token", "s")
 	rec := httptest.NewRecorder()
@@ -163,7 +163,7 @@ func TestHandleWebhook_RateLimitedRefusesBeforeBodyIsParsed(t *testing.T) {
 	if rec.Code != http.StatusTooManyRequests {
 		t.Fatalf("status = %d, want 429 (bucket pre-exhausted)", rec.Code)
 	}
-	if starter.started {
+	if launcher.started {
 		t.Fatal("a run was started despite the rate limit")
 	}
 }
@@ -175,4 +175,21 @@ func TestDescriptor_ClaimsNoStreamingOrApprovalRendering(t *testing.T) {
 	if Descriptor.CanRenderApprovalContext {
 		t.Error("Descriptor.CanRenderApprovalContext = true, want false — a chat bot gets the one-line fallback, not structured rendering")
 	}
+}
+
+// fakeLauncher records what a surface asked runs.Launcher to start, without a
+// database — used to prove dispatch's own start-vs-ignore decisions.
+type fakeLauncher struct {
+	started bool
+	calls   int
+	req     runs.LaunchRequest
+}
+
+func (f *fakeLauncher) Launch(_ context.Context, req runs.LaunchRequest) (runs.Launched, error) {
+	f.started = true
+	f.calls++
+	f.req = req
+	ch := make(chan runs.Event)
+	close(ch)
+	return runs.Launched{SessionID: uuid.New(), Events: ch}, nil
 }

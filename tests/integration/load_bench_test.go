@@ -81,9 +81,8 @@ func TestLoadPOSTRunsThroughput(t *testing.T) {
 		}}
 	}
 
-	srv := rest.NewServer(newStarter(), st, keyStore, nil)
+	srv := rest.NewServer(newTestLauncher(st, keyStore, newStarter()), st, keyStore)
 	srv.Verifier = authn.NewDevVerifier(authn.PublicKey(signingKey))
-	srv.ControlPlane = newTestControlPlane(st)
 	httpSrv := httptest.NewServer(srv.Handler())
 	defer httpSrv.Close()
 	client := httpSrv.Client()

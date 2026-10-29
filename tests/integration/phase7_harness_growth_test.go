@@ -375,9 +375,8 @@ func TestRESTAndCLI_ProduceIdenticalEventSequencesAndTerminalReason(t *testing.T
 	issuer := authn.NewDevIssuer(signingKey)
 	token := mustIssueToken(t, issuer, tenantID, userID)
 
-	srv := rest.NewServer(starter, st, keyStore, nil)
+	srv := rest.NewServer(newTestLauncher(st, keyStore, starter), st, keyStore)
 	srv.Verifier = authn.NewDevVerifier(authn.PublicKey(signingKey))
-	srv.ControlPlane = newTestControlPlane(st)
 	httpSrv := httptest.NewServer(srv.Handler())
 	defer httpSrv.Close()
 

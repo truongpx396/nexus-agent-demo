@@ -182,9 +182,8 @@ func TestKernelTracerProducesRootGenerationToolTree(t *testing.T) {
 	verifier := authn.NewDevVerifier(authn.PublicKey(signingKey))
 	token := mustIssueToken(t, issuer, tenantID, userID)
 
-	srv := rest.NewServer(starter, st, keyStore, nil)
+	srv := rest.NewServer(newTestLauncher(st, keyStore, starter), st, keyStore)
 	srv.Verifier = verifier
-	srv.ControlPlane = newTestControlPlane(st)
 	httpSrv := httptest.NewServer(srv.Handler())
 	defer httpSrv.Close()
 
@@ -352,9 +351,8 @@ func TestKernelTracerContentOptIn(t *testing.T) {
 	verifier := authn.NewDevVerifier(authn.PublicKey(signingKey))
 	token := mustIssueToken(t, issuer, tenantID, userID)
 
-	srv := rest.NewServer(starter, st, keyStore, nil)
+	srv := rest.NewServer(newTestLauncher(st, keyStore, starter), st, keyStore)
 	srv.Verifier = verifier
-	srv.ControlPlane = newTestControlPlane(st)
 	httpSrv := httptest.NewServer(srv.Handler())
 	defer httpSrv.Close()
 

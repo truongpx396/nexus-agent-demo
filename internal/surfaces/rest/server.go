@@ -1,6 +1,6 @@
 // Package rest is the REST surface (README task 2.10): POST /v1/runs, GET
 // /v1/runs/{id}, GET /v1/runs/{id}/events. A thin translator only — it
-// creates a session, hands it to a runs.Starter, and forwards
+// launches a run through a runs.Launcher, and forwards
 // what comes back; it holds no agent control flow of its own (constitution
 // Principle I) and never imports the kernel package directly
 // (tests/contract/boundaries_test.go).
@@ -16,7 +16,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/controlplane"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
@@ -26,9 +25,13 @@ import (
 )
 
 // Server holds everything one REST process needs to admit and serve runs
-// over the runs.Starter it wraps.
+// over the runs.Launcher it wraps.
 type Server struct {
-	Starter  runs.Starter
+	// Launcher admits and starts a run (runs.Service in production): the one
+	// definition of session admission, key provisioning and run start that
+	// every surface shares. Mandatory: a nil Launcher fails handleCreateRun
+	// closed (500) rather than panic.
+	Launcher runs.Launcher
 	Store    *store.Store
 	KeyStore *crypto.KeyStore
 
@@ -37,23 +40,6 @@ type Server struct {
 	// on this struct: a nil Verifier fails every request closed (401/500),
 	// it never falls back to trusting a client-supplied header.
 	Verifier PrincipalVerifier
-
-	// ControlPlane admits a new run (README task 13.15) — the session row
-	// plus an optional session-scoped budget, through
-	// internal/controlplane.Port, the versioned control-plane boundary
-	// README §2 has always described. Mandatory, like Verifier: a nil
-	// ControlPlane fails handleCreateRun closed (500) rather than panic.
-	// internal/controlplane imports nothing this package doesn't already
-	// (it's a deliberately dependency-light contract package), so — like
-	// Grants — this is a direct import, no translation seam needed.
-	ControlPlane controlplane.Port
-
-	// CatalogManifestDigest is folded into every new session's
-	// harness_digest (internal/harness.Config.CatalogManifestDigest) — the
-	// resolvable tool universe is behavior-bearing config like any other
-	// (README task 3.2, pattern 14), so a session's digest must move if the
-	// resident catalog does.
-	CatalogManifestDigest []byte
 
 	// Oversight, if set, backs the approval endpoints (README task 5.6-5.8)
 	// — nil leaves them unmounted, which every pre-Phase-5 caller and test
@@ -156,8 +142,8 @@ type SkillSetPort interface {
 	Digest(ctx context.Context, tenantID uuid.UUID) ([]byte, error)
 }
 
-func NewServer(starter runs.Starter, st *store.Store, ks *crypto.KeyStore, catalogManifestDigest []byte) *Server {
-	return &Server{Starter: starter, Store: st, KeyStore: ks, CatalogManifestDigest: catalogManifestDigest, broker: newBroker()}
+func NewServer(launcher runs.Launcher, st *store.Store, ks *crypto.KeyStore) *Server {
+	return &Server{Launcher: launcher, Store: st, KeyStore: ks, broker: newBroker()}
 }
 
 // Handler returns the http.Handler cmd/nexusd mounts. Every route is

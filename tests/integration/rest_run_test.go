@@ -70,6 +70,13 @@ func (unusedControlPlaneBackend) AuthorizeContentAccess(context.Context, control
 	return controlplane.GrantV1{}, fmt.Errorf("test control plane: AuthorizeContentAccess not wired")
 }
 
+// newTestLauncher is the runs.Service every REST/CLI-parity test starts runs
+// through: real session admission and real key provisioning over the test's
+// own Postgres, with the test's own Starter standing in for the kernel.
+func newTestLauncher(st *store.Store, keys *crypto.KeyStore, starter runs.Starter) *runs.Service {
+	return &runs.Service{Admit: newTestControlPlane(st), Keys: runspg.Keys{Store: st, KeyStore: keys}, Starter: starter}
+}
+
 func newTestControlPlane(st *store.Store) *controlplane.LocalPort {
 	stub := unusedControlPlaneBackend{}
 	return controlplane.NewLocalPort(runspg.Sessions{Store: st}, stub, stub, stub, stub)
@@ -324,9 +331,8 @@ func TestRESTRunEndToEnd(t *testing.T) {
 	token := mustIssueToken(t, issuer, tenantID, userID)
 	wrongUserToken := mustIssueToken(t, issuer, tenantID, uuid.New())
 
-	srv := rest.NewServer(starter, st, keyStore, nil)
+	srv := rest.NewServer(newTestLauncher(st, keyStore, starter), st, keyStore)
 	srv.Verifier = verifier
-	srv.ControlPlane = newTestControlPlane(st)
 	httpSrv := httptest.NewServer(srv.Handler())
 	defer httpSrv.Close()
 
