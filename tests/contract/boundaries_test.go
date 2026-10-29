@@ -38,34 +38,33 @@ type boundaryRule struct {
 
 var rules = []boundaryRule{
 	{
-		name: "kernel must not import surfaces, controlplane, or an adapter of its own ports",
+		name: "kernel must not import surfaces, controlplane, an adapter of its own ports, or reach the database or cache",
 		pkg:  modulePrefix + "kernel",
 		forbidden: []string{
 			modulePrefix + "internal/surfaces",
 			modulePrefix + "internal/controlplane",
 			modulePrefix + "internal/eventlog/postgres",
 			modulePrefix + "internal/eventlog/inmem",
+			// The core of the hexagon reaches durable state only through its
+			// ports (kernel.EventLog, kernel.BudgetGate). Transitive: every
+			// package it imports for vocabulary (cost, obs, ...) is likewise
+			// free of storage, with its adapters in a subpackage.
+			modulePrefix + "internal/store",
+			"github.com/jackc/pgx",
+			"github.com/redis",
 		},
 	},
 	{
-		// The kernel is the core of the hexagon: it reaches durable state only
-		// through kernel.EventLog, never through the Postgres adapter's
-		// plumbing. Checked on the kernel's OWN imports because it still
-		// reaches internal/store and pgx transitively through internal/obs,
-		// which holds a Postgres-backed type (Grants, Dashboard, usage
-		// reports) next to the plain ones the kernel actually uses
-		// (obs.Tracer, obs.Attrs). internal/cost no longer does — its Gate is
-		// built on the Ledger and Counters ports and the adapters live in
-		// internal/cost/{postgres,redis} — so splitting obs the same way is
-		// what lets this rule go transitive.
-		name: "kernel must not itself import internal/store or a database/cache driver",
-		pkg:  modulePrefix + "kernel",
+		// Telemetry and the content-access service (Tracer, Attrs, Grants,
+		// Reports) are reached by the kernel and by REST. Their Postgres
+		// adapters are internal/obs/postgres.
+		name: "obs must not reach the database or cache",
+		pkg:  modulePrefix + "internal/obs",
 		forbidden: []string{
 			modulePrefix + "internal/store",
 			"github.com/jackc/pgx",
 			"github.com/redis",
 		},
-		direct: true,
 	},
 	{
 		// The budget domain (Money, Gate, the Ledger and Counters ports) is
