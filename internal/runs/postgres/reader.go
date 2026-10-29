@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/runs"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
@@ -19,7 +20,7 @@ import (
 // indistinguishable from one that does not exist.
 type Reader struct {
 	Store    *store.Store
-	KeyStore *crypto.KeyStore
+	KeyStore *cryptopg.KeyStore
 }
 
 var _ runs.Reader = Reader{}

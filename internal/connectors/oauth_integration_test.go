@@ -23,6 +23,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/config"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/migrations"
 )
@@ -155,7 +156,7 @@ func TestVault_BeginAuthRefusesUnadmittedProvider(t *testing.T) {
 		t.Fatalf("GenerateKEK: %v", err)
 	}
 	v := &Vault{
-		Store: s, Keys: crypto.NewKeyStore(kek), Redis: redisClient,
+		Store: s, Keys: cryptopg.NewKeyStore(kek), Redis: redisClient,
 		Providers: NewRegistry(Provider{Name: "acme", Endpoint: oauth2.Endpoint{AuthURL: "https://acme.example/authorize", TokenURL: "https://acme.example/token"}}), //nolint:gosec // fixture endpoints, no credential
 	}
 	if _, err := v.BeginAuth(context.Background(), tenantID, uuid.New(), "acme"); err == nil {
@@ -178,7 +179,7 @@ func TestVault_FullRoundTrip_BeginAuthCallbackThenToken(t *testing.T) {
 		t.Fatalf("GenerateKEK: %v", err)
 	}
 	v := &Vault{
-		Store: s, Keys: crypto.NewKeyStore(kek), Redis: redisClient,
+		Store: s, Keys: cryptopg.NewKeyStore(kek), Redis: redisClient,
 		Providers: NewRegistry(Provider{Name: "acme", Endpoint: oauth2.Endpoint{AuthURL: "https://acme.example/authorize", TokenURL: tokenSrv.URL}, ClientID: "client-1", ClientSecret: "secret-1"}),
 	}
 
@@ -261,7 +262,7 @@ func TestVault_TokenRefreshesWhenExpired(t *testing.T) {
 		t.Fatalf("GenerateKEK: %v", err)
 	}
 	v := &Vault{
-		Store: s, Keys: crypto.NewKeyStore(kek), Redis: redisClient,
+		Store: s, Keys: cryptopg.NewKeyStore(kek), Redis: redisClient,
 		Providers: NewRegistry(Provider{Name: "acme", Endpoint: oauth2.Endpoint{AuthURL: "https://acme.example/authorize", TokenURL: tokenSrv.URL}, ClientID: "client-1", ClientSecret: "secret-1"}),
 	}
 

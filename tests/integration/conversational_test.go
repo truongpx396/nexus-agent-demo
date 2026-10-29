@@ -29,6 +29,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/authn"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
@@ -328,7 +329,7 @@ func TestRunCtl_ResumeConversation_RefusesWhenNotAwaitingInput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate KEK: %v", err)
 	}
-	keys := crypto.NewKeyStore(kek)
+	keys := cryptopg.NewKeyStore(kek)
 	var dek crypto.DEK
 	err = st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var derr error
@@ -407,7 +408,7 @@ func TestRunCtl_ResumeConversation_Succeeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate KEK: %v", err)
 	}
-	keys := crypto.NewKeyStore(kek)
+	keys := cryptopg.NewKeyStore(kek)
 
 	var dek crypto.DEK
 	err = st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
@@ -522,7 +523,7 @@ func TestRunCtl_EndIdleConversation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate KEK: %v", err)
 	}
-	keys := crypto.NewKeyStore(kek)
+	keys := cryptopg.NewKeyStore(kek)
 	var dek crypto.DEK
 	err = st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var derr error
@@ -704,7 +705,7 @@ func TestRESTConversationalSession_MultiTurnSameSessionID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate KEK: %v", err)
 	}
-	keyStore := crypto.NewKeyStore(kek)
+	keyStore := cryptopg.NewKeyStore(kek)
 
 	fakeProvider := fake.New(
 		contentOnlyScript("Hi! How can I help?"),

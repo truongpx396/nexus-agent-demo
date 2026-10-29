@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
-	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
@@ -29,7 +29,7 @@ type Inputs struct {
 	DefaultTTL time.Duration
 }
 
-func NewInputs(st *store.Store, keys *crypto.KeyStore, chain *audit.Chain) *Inputs {
+func NewInputs(st *store.Store, keys *cryptopg.KeyStore, chain *audit.Chain) *Inputs {
 	return &Inputs{deps: deps{Store: st, Keys: keys, Chain: chain}}
 }
 

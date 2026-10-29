@@ -20,6 +20,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/controlplane"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/runs"
 	runspg "github.com/truongpx396/nexus-agent-demo/internal/runs/postgres"
@@ -136,7 +137,7 @@ func TestHandleWebhook_CreatesConversationalSessionWithDeterministicKey(t *testi
 		t.Fatalf("GenerateKEK: %v", err)
 	}
 	starter := &fakeStarter{}
-	srv := &Server{Reader: runspg.Reader{Store: s, KeyStore: crypto.NewKeyStore(kek)}, Dedup: surfpg.NewDedup(s), Launcher: newLauncher(s, crypto.NewKeyStore(kek), starter), Channels: fakeChannels{secret: "s", ok: true}}
+	srv := &Server{Reader: runspg.Reader{Store: s, KeyStore: cryptopg.NewKeyStore(kek)}, Dedup: surfpg.NewDedup(s), Launcher: newLauncher(s, cryptopg.NewKeyStore(kek), starter), Channels: fakeChannels{secret: "s", ok: true}}
 
 	rec := postZaloWebhook(t, srv, tenantID, "s", newZaloWebhookBody(t, "user-1", "please help"))
 	if rec.Code != http.StatusOK {
@@ -172,7 +173,7 @@ func TestHandleWebhook_SecondMessageFromSamePeerResumesSameSession(t *testing.T)
 	starter := &fakeStarter{}
 	resumer := &fakeResumer{}
 	srv := &Server{
-		Reader: runspg.Reader{Store: s, KeyStore: crypto.NewKeyStore(kek)}, Dedup: surfpg.NewDedup(s), Launcher: newLauncher(s, crypto.NewKeyStore(kek), starter), Resume: resumer,
+		Reader: runspg.Reader{Store: s, KeyStore: cryptopg.NewKeyStore(kek)}, Dedup: surfpg.NewDedup(s), Launcher: newLauncher(s, cryptopg.NewKeyStore(kek), starter), Resume: resumer,
 		Channels: fakeChannels{secret: "s", ok: true},
 	}
 
@@ -221,7 +222,7 @@ func TestHandleWebhook_SamePeerAfterNonAwaitingInputStartsFreshReusingKey(t *tes
 	starter := &fakeStarter{}
 	resumer := &fakeResumer{}
 	srv := &Server{
-		Reader: runspg.Reader{Store: s, KeyStore: crypto.NewKeyStore(kek)}, Dedup: surfpg.NewDedup(s), Launcher: newLauncher(s, crypto.NewKeyStore(kek), starter), Resume: resumer,
+		Reader: runspg.Reader{Store: s, KeyStore: cryptopg.NewKeyStore(kek)}, Dedup: surfpg.NewDedup(s), Launcher: newLauncher(s, cryptopg.NewKeyStore(kek), starter), Resume: resumer,
 		Channels: fakeChannels{secret: "s", ok: true},
 	}
 
@@ -270,7 +271,7 @@ func TestServer_NotificationPayload_DecryptsContentEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateKEK: %v", err)
 	}
-	keys := crypto.NewKeyStore(kek)
+	keys := cryptopg.NewKeyStore(kek)
 	var dek crypto.DEK
 	if err := s.InTenantTx(context.Background(), tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var derr error
@@ -320,7 +321,7 @@ func TestHandleWebhook_DuplicateMsgIDAcknowledgedWithoutASecondRun(t *testing.T)
 		t.Fatalf("GenerateKEK: %v", err)
 	}
 	starter := &fakeStarter{}
-	srv := &Server{Reader: runspg.Reader{Store: s, KeyStore: crypto.NewKeyStore(kek)}, Dedup: surfpg.NewDedup(s), Launcher: newLauncher(s, crypto.NewKeyStore(kek), starter), Channels: fakeChannels{secret: "s", ok: true}}
+	srv := &Server{Reader: runspg.Reader{Store: s, KeyStore: cryptopg.NewKeyStore(kek)}, Dedup: surfpg.NewDedup(s), Launcher: newLauncher(s, cryptopg.NewKeyStore(kek), starter), Channels: fakeChannels{secret: "s", ok: true}}
 
 	body := newZaloWebhookBodyWithMsgID(t, "msg-4242", "user-999", "please help")
 	rec := postZaloWebhook(t, srv, tenantID, "s", body)
@@ -373,7 +374,7 @@ func TestHandleWebhook_SessionLockAcquiredAndReleasedAroundDispatch(t *testing.T
 	}
 	starter := &fakeStarter{}
 	locker := &fakeLocker{acquireResults: []bool{true}, done: make(chan struct{})}
-	srv := &Server{Reader: runspg.Reader{Store: s, KeyStore: crypto.NewKeyStore(kek)}, Dedup: surfpg.NewDedup(s), Launcher: newLauncher(s, crypto.NewKeyStore(kek), starter), Channels: fakeChannels{secret: "s", ok: true}, Lock: locker}
+	srv := &Server{Reader: runspg.Reader{Store: s, KeyStore: cryptopg.NewKeyStore(kek)}, Dedup: surfpg.NewDedup(s), Launcher: newLauncher(s, cryptopg.NewKeyStore(kek), starter), Channels: fakeChannels{secret: "s", ok: true}, Lock: locker}
 
 	rec := postZaloWebhook(t, srv, tenantID, "s", newZaloWebhookBody(t, "user-999", "please help"))
 	if rec.Code != http.StatusOK {
@@ -418,7 +419,7 @@ func TestHandleWebhook_ContendedSessionLockDropsDeliveryWithoutStartingARun(t *t
 	// Every attempt reports contention — AcquireSessionLock's own bounded
 	// retry (internal/surfaces/lock.go) exhausts all of them and gives up.
 	locker := &fakeLocker{acquireResults: []bool{false, false, false, false, false}}
-	srv := &Server{Reader: runspg.Reader{Store: s, KeyStore: crypto.NewKeyStore(kek)}, Dedup: surfpg.NewDedup(s), Launcher: newLauncher(s, crypto.NewKeyStore(kek), starter), Channels: fakeChannels{secret: "s", ok: true}, Lock: locker}
+	srv := &Server{Reader: runspg.Reader{Store: s, KeyStore: cryptopg.NewKeyStore(kek)}, Dedup: surfpg.NewDedup(s), Launcher: newLauncher(s, cryptopg.NewKeyStore(kek), starter), Channels: fakeChannels{secret: "s", ok: true}, Lock: locker}
 
 	rec := postZaloWebhook(t, srv, tenantID, "s", newZaloWebhookBody(t, "user-999", "please help"))
 	if rec.Code != http.StatusOK {
@@ -432,7 +433,7 @@ func TestHandleWebhook_ContendedSessionLockDropsDeliveryWithoutStartingARun(t *t
 // newLauncher is the runs.Service these tests start runs through: real session
 // admission and key provisioning over the test's own Postgres, with the fake
 // Starter standing in for the kernel.
-func newLauncher(st *store.Store, ks *crypto.KeyStore, starter runs.Starter) *runs.Service {
+func newLauncher(st *store.Store, ks *cryptopg.KeyStore, starter runs.Starter) *runs.Service {
 	return &runs.Service{
 		Admit:   controlplane.NewLocalPort(runspg.Sessions{Store: st}, nil, nil, nil, nil),
 		Keys:    runspg.Keys{Store: st, KeyStore: ks},

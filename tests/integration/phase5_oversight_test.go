@@ -24,6 +24,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
@@ -67,7 +68,7 @@ func (s *fakeSigner) PublicKey(context.Context) (ed25519.PublicKey, string, erro
 // against one shared postgres+pgbouncer pair.
 type oversightRig struct {
 	st       *store.Store
-	keys     *crypto.KeyStore
+	keys     *cryptopg.KeyStore
 	chain    *audit.Chain
 	tenantID uuid.UUID
 }
@@ -88,7 +89,7 @@ func setupOversightRig(t *testing.T) *oversightRig {
 		t.Fatalf("generate KEK: %v", err)
 	}
 	return &oversightRig{
-		st: st, keys: crypto.NewKeyStore(kek),
+		st: st, keys: cryptopg.NewKeyStore(kek),
 		chain: audit.NewChain(newFakeSigner(t)), tenantID: tenantID,
 	}
 }
@@ -477,7 +478,7 @@ func TestErasure_StructuralReplayAndChainSurviveShredding(t *testing.T) {
 	var result crypto.ErasureResult
 	if err := rig.st.InTenantTx(ctx, rig.tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
-		result, err = crypto.EraseSession(ctx, tx, rig.chain, rig.tenantID, sessionID, "test erasure")
+		result, err = cryptopg.EraseSession(ctx, tx, rig.chain, rig.tenantID, sessionID, "test erasure")
 		return err
 	}); err != nil {
 		t.Fatalf("EraseSession: %v", err)

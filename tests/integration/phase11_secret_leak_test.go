@@ -31,6 +31,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/connectors"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/hooks"
 	"github.com/truongpx396/nexus-agent-demo/internal/permissions"
 	"github.com/truongpx396/nexus-agent-demo/internal/permissions/safety"
@@ -134,7 +135,7 @@ func TestSecretLeak_LiveOAuthTokenNeverAppearsInOutputOrLogs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateKEK: %v", err)
 	}
-	keyStore := crypto.NewKeyStore(kek)
+	keyStore := cryptopg.NewKeyStore(kek)
 	if err := s.InTenantTx(context.Background(), tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		dek, err := keyStore.NewDEK(ctx, tx, tenantID)
 		if err != nil {

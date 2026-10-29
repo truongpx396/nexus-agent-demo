@@ -33,6 +33,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
@@ -131,7 +132,7 @@ func setupPhase6Env(t *testing.T) *phase6Env {
 type phase6Rig struct {
 	env      *phase6Env
 	st       *store.Store
-	keys     *crypto.KeyStore
+	keys     *cryptopg.KeyStore
 	chain    *audit.Chain
 	tenantID uuid.UUID
 }
@@ -151,7 +152,7 @@ func newPhase6Rig(t *testing.T) *phase6Rig {
 		t.Fatalf("generate KEK: %v", err)
 	}
 	return &phase6Rig{
-		env: env, st: st, keys: crypto.NewKeyStore(kek),
+		env: env, st: st, keys: cryptopg.NewKeyStore(kek),
 		chain: audit.NewChain(newFakeSigner(t)), tenantID: tenantID,
 	}
 }

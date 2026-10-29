@@ -12,7 +12,7 @@ import (
 
 // --- Postgres access (migrations/0005_cost.sql) ---
 //
-// These take a caller-supplied tx, exactly like internal/crypto.KeyStore's
+// These take a caller-supplied tx, exactly like internal/cryptopg.KeyStore's
 // methods (that package's own doc comment: "every method must run inside a
 // tenant-scoped transaction") — price_book carries tenant_id and RLS like
 // every other table (README §4's blanket rule), even though task 4.3's

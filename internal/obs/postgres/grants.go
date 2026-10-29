@@ -10,6 +10,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
@@ -21,7 +22,7 @@ import (
 // record), and the decryption of a session's history.
 type GrantStore struct {
 	st    *store.Store
-	keys  *crypto.KeyStore
+	keys  *cryptopg.KeyStore
 	chain *audit.Chain
 }
 
@@ -29,7 +30,7 @@ var _ obs.GrantStore = (*GrantStore)(nil)
 
 // NewGrantStore returns a GrantStore. chain may be nil, in which case audit
 // events are appended without a signed receipt (a minimal wiring for tests).
-func NewGrantStore(st *store.Store, keys *crypto.KeyStore, chain *audit.Chain) *GrantStore {
+func NewGrantStore(st *store.Store, keys *cryptopg.KeyStore, chain *audit.Chain) *GrantStore {
 	return &GrantStore{st: st, keys: keys, chain: chain}
 }
 

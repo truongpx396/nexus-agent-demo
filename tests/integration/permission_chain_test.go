@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/harness"
@@ -57,7 +58,7 @@ func newTestSession(t *testing.T, ctx context.Context, st *store.Store, autonomy
 	if err != nil {
 		t.Fatalf("generate KEK: %v", err)
 	}
-	keyStore := crypto.NewKeyStore(kek)
+	keyStore := cryptopg.NewKeyStore(kek)
 
 	digest := harness.Digest(harness.Config{SystemPromptVersion: "phase3-test", PromptMode: "phase3-test"})
 	var dek crypto.DEK

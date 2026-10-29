@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/runs"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/cron"
@@ -19,13 +20,13 @@ import (
 // query, so the scheduler lists tenants separately and asks per tenant.
 type Schedules struct {
 	st   *store.Store
-	keys *crypto.KeyStore
+	keys *cryptopg.KeyStore
 }
 
 var _ cron.ScheduleStore = (*Schedules)(nil)
 
 // New returns Schedules over st; keys mints the key of each session it creates.
-func New(st *store.Store, keys *crypto.KeyStore) *Schedules { return &Schedules{st: st, keys: keys} }
+func New(st *store.Store, keys *cryptopg.KeyStore) *Schedules { return &Schedules{st: st, keys: keys} }
 
 func (s *Schedules) Due(ctx context.Context, tenantID uuid.UUID) ([]cron.Schedule, error) {
 	var due []cron.Schedule

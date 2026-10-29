@@ -23,6 +23,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/authn"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
@@ -56,7 +57,7 @@ func TestLoadPOSTRunsThroughput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate KEK: %v", err)
 	}
-	keyStore := crypto.NewKeyStore(kek)
+	keyStore := cryptopg.NewKeyStore(kek)
 
 	signingKey, err := authn.GeneratePrivateKey()
 	if err != nil {

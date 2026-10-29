@@ -25,6 +25,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/config"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
@@ -81,7 +82,7 @@ func (r *Registry) oauth2Config(name string) (oauth2.Config, bool) {
 // BeginAuth and HandleCallback.
 type Vault struct {
 	Store     *store.Store
-	Keys      *crypto.KeyStore
+	Keys      *cryptopg.KeyStore
 	Providers *Registry
 	Redis     *redis.Client
 	StateTTL  time.Duration // default 5 minutes

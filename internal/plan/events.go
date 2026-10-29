@@ -10,6 +10,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
@@ -21,7 +22,7 @@ import (
 // drives events onto a session with no live RunState.Seal to reuse.
 type deps struct {
 	Store *store.Store
-	Keys  *crypto.KeyStore
+	Keys  *cryptopg.KeyStore
 	Chain *audit.Chain
 }
 

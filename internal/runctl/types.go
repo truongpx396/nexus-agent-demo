@@ -14,7 +14,7 @@ package runctl
 
 import (
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
-	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/queue"
@@ -30,7 +30,7 @@ import (
 // regardless of which one this operation targets.
 type Control struct {
 	Store     *store.Store
-	Keys      *crypto.KeyStore
+	Keys      *cryptopg.KeyStore
 	Chain     *audit.Chain
 	Approvals *oversight.Approvals
 	Inputs    *oversight.Inputs
@@ -66,7 +66,7 @@ type Control struct {
 // shape: two packages with no other reason to depend on each other).
 type deps struct {
 	Store *store.Store
-	Keys  *crypto.KeyStore
+	Keys  *cryptopg.KeyStore
 	Chain *audit.Chain
 }
 

@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/permissions"
@@ -124,7 +125,7 @@ func TestRuleOfTwo_TaintStateSurvivesASimulatedProcessRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate KEK: %v", err)
 	}
-	keys := crypto.NewKeyStore(kek)
+	keys := cryptopg.NewKeyStore(kek)
 	var dek crypto.DEK
 	err = st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var derr error

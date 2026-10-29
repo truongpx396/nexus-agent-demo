@@ -10,6 +10,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
@@ -22,7 +23,7 @@ import (
 // and Inputs both embed this rather than duplicating the same three fields.
 type deps struct {
 	Store *store.Store
-	Keys  *crypto.KeyStore
+	Keys  *cryptopg.KeyStore
 	Chain *audit.Chain
 }
 
