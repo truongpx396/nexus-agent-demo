@@ -8,8 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
-
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 )
 
 const (
@@ -51,20 +50,20 @@ func ParseBusChannel(channel string) (sessionID uuid.UUID, isDelta bool, ok bool
 }
 
 // EventBusMessage is one durable event's wire shape over the bus —
-// store.Event plus the one piece of Go state a channel-of-(Event,error)
+// eventlog.Event plus the one piece of Go state a channel-of-(Event,error)
 // pair also carries that a plain struct can't (published's own Err field),
 // flattened to a string since an error value itself doesn't marshal.
 // Exported so cmd/nexusd's startEventBus can decode it without this
 // package needing to expose its own demux loop.
 type EventBusMessage struct {
-	Event *store.Event `json:"event,omitempty"`
-	Err   string       `json:"err,omitempty"`
+	Event *eventlog.Event `json:"event,omitempty"`
+	Err   string          `json:"err,omitempty"`
 }
 
 // DeltaDTO is one live, best-effort preview chunk — kernel.Kernel.OnChunk's
 // ChunkEvent, translated for the wire. It is never durable and never
-// replayed from Postgres history the way an ordinary store.Event is
-// (handleEvents' history replay only ever reads store.Event rows) — a
+// replayed from Postgres history the way an ordinary eventlog.Event is
+// (handleEvents' history replay only ever reads eventlog.Event rows) — a
 // subscriber that connects a moment too late simply never sees the ones it
 // missed. That's fine: the durable EventContent/EventToolUse this preview is
 // standing in for still lands right behind it, over the same channel, and
@@ -86,7 +85,7 @@ type DeltaDTO struct {
 // which is exactly what lets handleEvents skip its Seq-based
 // already-replayed check for one of these and forward it unconditionally.
 type published struct {
-	Event store.Event
+	Event eventlog.Event
 	Err   error
 	Delta *DeltaDTO
 }
@@ -166,7 +165,7 @@ func (b *broker) publish(sessionID uuid.UUID, p published) {
 // instead of calling the local broker directly — startEventBus's own
 // subscriber loop is what actually calls RelayDelta, so a same-process
 // caller and a cross-process worker go through the exact same path. Unlike
-// a durable store.Event's own Payload (already sealed ciphertext), d.Text
+// a durable eventlog.Event's own Payload (already sealed ciphertext), d.Text
 // is live, unencrypted preview content (DeltaDTO's own doc comment: "never
 // durable, never replayed") — publishing it here means Redis, and the
 // network path to it, carries plaintext for the first time (today it only
@@ -199,7 +198,7 @@ func (s *Server) PublishDelta(sessionID uuid.UUID, d DeltaDTO) {
 // happens first (kernel/loop.go); everything this method does is a
 // delivery/side-effect optimization on top of that, never a second source
 // of truth.
-func (s *Server) PublishEvent(tenantID, sessionID uuid.UUID, e store.Event, evErr error) {
+func (s *Server) PublishEvent(tenantID, sessionID uuid.UUID, e eventlog.Event, evErr error) {
 	if s.Bus == nil {
 		s.RelayEvent(sessionID, e, evErr)
 	} else if raw, err := json.Marshal(EventBusMessage{Event: &e, Err: errString(evErr)}); err != nil {
@@ -211,10 +210,10 @@ func (s *Server) PublishEvent(tenantID, sessionID uuid.UUID, e store.Event, evEr
 	if evErr != nil {
 		return
 	}
-	if s.Outbox != nil && s.OutboxSender != nil && e.Type == store.EventApprovalRequested {
+	if s.Outbox != nil && s.OutboxSender != nil && e.Type == eventlog.EventApprovalRequested {
 		s.deliverApprovalNotification(sessionID, e)
 	}
-	if s.Exporter != nil && e.Type == store.EventTerminal {
+	if s.Exporter != nil && e.Type == eventlog.EventTerminal {
 		s.emitTerminalSpan(tenantID, sessionID)
 	}
 }
@@ -239,9 +238,9 @@ func errString(err error) string {
 // on terminal-event-observed, not on channel-closed, is what keeps an SSE
 // client waiting correctly across however long the queued turn loop
 // actually takes, on whichever process runs it.
-func (s *Server) RelayEvent(sessionID uuid.UUID, e store.Event, evErr error) {
+func (s *Server) RelayEvent(sessionID uuid.UUID, e eventlog.Event, evErr error) {
 	s.broker.publish(sessionID, published{Event: e, Err: evErr})
-	if evErr == nil && e.Type == store.EventTerminal {
+	if evErr == nil && e.Type == eventlog.EventTerminal {
 		s.broker.closeSession(sessionID)
 	}
 }

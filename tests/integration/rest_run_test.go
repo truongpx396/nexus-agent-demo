@@ -37,6 +37,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/controlplane"
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
@@ -259,8 +260,8 @@ func insertTenant(ctx context.Context, s *store.Store, tenantID uuid.UUID) error
 	})
 }
 
-func listEventsDirect(ctx context.Context, s *store.Store, tenantID, sessionID uuid.UUID) ([]store.Event, error) {
-	var events []store.Event
+func listEventsDirect(ctx context.Context, s *store.Store, tenantID, sessionID uuid.UUID) ([]eventlog.Event, error) {
+	var events []eventlog.Event
 	err := s.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var lerr error
 		events, lerr = store.ListEvents(ctx, tx, sessionID)
@@ -466,9 +467,9 @@ func TestRESTRunEndToEnd(t *testing.T) {
 	resultCount := map[uuid.UUID]int{}
 	for _, e := range events {
 		switch e.Type { //nolint:exhaustive // only tool_use/tool_result matter to the paired-result assertion below
-		case store.EventToolUse:
+		case eventlog.EventToolUse:
 			toolUseEventIDs[e.EventID] = true
-		case store.EventToolResult:
+		case eventlog.EventToolResult:
 			if e.PairRef != nil {
 				resultCount[*e.PairRef]++
 			}
@@ -498,8 +499,8 @@ func TestRESTRunEndToEnd(t *testing.T) {
 	if err := json.NewDecoder(getResp.Body).Decode(&got); err != nil {
 		t.Fatalf("decode get response: %v", err)
 	}
-	if got.Status != store.SessionStatusCompleted {
-		t.Fatalf("session status = %q, want %q", got.Status, store.SessionStatusCompleted)
+	if got.Status != eventlog.SessionStatusCompleted {
+		t.Fatalf("session status = %q, want %q", got.Status, eventlog.SessionStatusCompleted)
 	}
 	if got.TerminalReason == nil || *got.TerminalReason != "completed" {
 		t.Fatalf("session terminal_reason = %v, want \"completed\"", got.TerminalReason)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 )
 
 // Append inserts one event, computing its seq under a transaction-scoped
@@ -19,9 +20,9 @@ import (
 // e.Seq and e.CreatedAt are ignored on input; the returned Event carries the
 // values Postgres actually assigned, which is what kernel/loop.go yields to
 // its caller and what internal/surfaces/rest forwards over SSE.
-func Append(ctx context.Context, tx pgx.Tx, e Event) (Event, error) {
+func Append(ctx context.Context, tx pgx.Tx, e eventlog.Event) (eventlog.Event, error) {
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`, e.SessionID.String()); err != nil {
-		return Event{}, fmt.Errorf("acquire session append lock: %w", err)
+		return eventlog.Event{}, fmt.Errorf("acquire session append lock: %w", err)
 	}
 
 	err := tx.QueryRow(ctx, `
@@ -38,7 +39,7 @@ func Append(ctx context.Context, tx pgx.Tx, e Event) (Event, error) {
 		e.ModelID, e.TraceID, e.SpanID,
 	).Scan(&e.Seq, &e.CreatedAt)
 	if err != nil {
-		return Event{}, fmt.Errorf("append event: %w", err)
+		return eventlog.Event{}, fmt.Errorf("append event: %w", err)
 	}
 	return e, nil
 }

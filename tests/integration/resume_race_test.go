@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/queue"
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
@@ -78,13 +79,13 @@ func TestRunCtl_ResumeConversation_ConcurrentCallersResumeExactlyOnce(t *testing
 		if err != nil {
 			return err
 		}
-		if _, err := store.Append(ctx, tx, store.Event{
-			EventID: uuid.New(), SessionID: sessionID, TenantID: tenantID, SchemaVersion: store.CurrentSchemaVersion,
-			Type: store.EventAwaitingInput, Payload: sealed, PayloadDigest: crypto.Digest(payload), KeyID: dek.KeyID, Actor: store.ActorSystem,
+		if _, err := store.Append(ctx, tx, eventlog.Event{
+			EventID: uuid.New(), SessionID: sessionID, TenantID: tenantID, SchemaVersion: eventlog.CurrentSchemaVersion,
+			Type: eventlog.EventAwaitingInput, Payload: sealed, PayloadDigest: crypto.Digest(payload), KeyID: dek.KeyID, Actor: eventlog.ActorSystem,
 		}); err != nil {
 			return err
 		}
-		return store.UpdateSessionStatus(ctx, tx, sessionID, store.SessionStatusAwaitingInput, nil)
+		return store.UpdateSessionStatus(ctx, tx, sessionID, eventlog.SessionStatusAwaitingInput, nil)
 	})
 	if err != nil {
 		t.Fatalf("set up awaiting_input session: %v", err)
@@ -136,7 +137,7 @@ func TestRunCtl_ResumeConversation_ConcurrentCallersResumeExactlyOnce(t *testing
 	}
 	var userMessages int
 	for _, e := range events {
-		if e.Type == store.EventUserMessage {
+		if e.Type == eventlog.EventUserMessage {
 			userMessages++
 		}
 	}

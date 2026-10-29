@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 )
 
 // Session is the subset of the sessions table (migration 0002) Phase 2
@@ -297,7 +298,7 @@ func ListSessionsForUser(ctx context.Context, tx pgx.Tx, userID uuid.UUID, limit
 func ListStaleAwaitingInputSessionIDs(ctx context.Context, tx pgx.Tx, olderThan time.Time) ([]uuid.UUID, error) {
 	rows, err := tx.Query(ctx,
 		`SELECT session_id FROM sessions WHERE status = $1 AND updated_at < $2`,
-		SessionStatusAwaitingInput, olderThan,
+		eventlog.SessionStatusAwaitingInput, olderThan,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list stale awaiting-input sessions: %w", err)
@@ -317,7 +318,7 @@ func ListStaleAwaitingInputSessionIDs(ctx context.Context, tx pgx.Tx, olderThan 
 // ListEvents returns every event for sessionID in seq order — the full
 // history Hygiene and promptctx.Build work from. RLS-scoped like every read
 // in this package.
-func ListEvents(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) ([]Event, error) {
+func ListEvents(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) ([]eventlog.Event, error) {
 	rows, err := tx.Query(ctx, `
 		SELECT event_id, session_id, tenant_id, seq, schema_version, type,
 		       payload, payload_digest, key_id, actor, tool_id, pair_ref,
@@ -329,9 +330,9 @@ func ListEvents(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) ([]Event, e
 	}
 	defer rows.Close()
 
-	var events []Event
+	var events []eventlog.Event
 	for rows.Next() {
-		var e Event
+		var e eventlog.Event
 		if err := rows.Scan(
 			&e.EventID, &e.SessionID, &e.TenantID, &e.Seq, &e.SchemaVersion, &e.Type,
 			&e.Payload, &e.PayloadDigest, &e.KeyID, &e.Actor, &e.ToolID, &e.PairRef,

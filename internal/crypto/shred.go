@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
@@ -90,7 +91,7 @@ type DerivedArtifact struct {
 type ErasureResult struct {
 	ShreddedKeyIDs   []string
 	DeletedArtifacts []DerivedArtifact
-	ErasureEvents    []store.Event
+	ErasureEvents    []eventlog.Event
 }
 
 type erasurePayload struct {
@@ -225,29 +226,29 @@ func deleteDerivedArtifacts(ctx context.Context, tx pgx.Tx, sessionIDs []uuid.UU
 	return out, rows.Err()
 }
 
-func appendErasureEvent(ctx context.Context, tx pgx.Tx, chain *audit.Chain, tenantID, sessionID uuid.UUID, shreddedKeyIDs []string, reason string) (store.Event, error) {
+func appendErasureEvent(ctx context.Context, tx pgx.Tx, chain *audit.Chain, tenantID, sessionID uuid.UUID, shreddedKeyIDs []string, reason string) (eventlog.Event, error) {
 	plaintext, err := json.Marshal(erasurePayload{Reason: reason, ShreddedKeyIDs: shreddedKeyIDs, ErasedAt: time.Now().UTC().Format(time.RFC3339)})
 	if err != nil {
-		return store.Event{}, fmt.Errorf("crypto: marshal erasure payload: %w", err)
+		return eventlog.Event{}, fmt.Errorf("crypto: marshal erasure payload: %w", err)
 	}
-	e := store.Event{
+	e := eventlog.Event{
 		EventID:       uuid.New(),
 		SessionID:     sessionID,
 		TenantID:      tenantID,
-		SchemaVersion: store.CurrentSchemaVersion,
-		Type:          store.EventErasure,
+		SchemaVersion: eventlog.CurrentSchemaVersion,
+		Type:          eventlog.EventErasure,
 		Payload:       plaintext, // plaintext, on purpose — see ErasureKeyID's doc comment
 		PayloadDigest: Digest(plaintext),
 		KeyID:         ErasureKeyID,
-		Actor:         store.ActorSystem,
+		Actor:         eventlog.ActorSystem,
 	}
 	out, err := store.Append(ctx, tx, e)
 	if err != nil {
-		return store.Event{}, fmt.Errorf("crypto: append erasure event for session %s: %w", sessionID, err)
+		return eventlog.Event{}, fmt.Errorf("crypto: append erasure event for session %s: %w", sessionID, err)
 	}
 	if chain != nil {
 		if _, err := chain.Append(ctx, tx, tenantID, sessionID, out.Seq, out.EventID, string(out.Type), out.PayloadDigest); err != nil {
-			return store.Event{}, fmt.Errorf("crypto: chain erasure event for session %s: %w", sessionID, err)
+			return eventlog.Event{}, fmt.Errorf("crypto: chain erasure event for session %s: %w", sessionID, err)
 		}
 	}
 	return out, nil

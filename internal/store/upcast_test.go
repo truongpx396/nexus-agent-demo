@@ -3,17 +3,19 @@ package store
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 )
 
 func TestUpcastContentV1ToV2(t *testing.T) {
 	v1 := json.RawMessage(`{"text":"hi"}`)
 
-	got, version, err := Upcast(EventContent, 1, v1)
+	got, version, err := Upcast(eventlog.EventContent, 1, v1)
 	if err != nil {
 		t.Fatalf("Upcast: %v", err)
 	}
-	if version != CurrentSchemaVersion {
-		t.Fatalf("version = %d, want %d (the chain must reach the current version)", version, CurrentSchemaVersion)
+	if version != eventlog.CurrentSchemaVersion {
+		t.Fatalf("version = %d, want %d (the chain must reach the current version)", version, eventlog.CurrentSchemaVersion)
 	}
 
 	var v2 contentV2
@@ -28,7 +30,7 @@ func TestUpcastContentV1ToV2(t *testing.T) {
 func TestUpcastNoRegisteredUpcasterIsAPassthrough(t *testing.T) {
 	raw := json.RawMessage(`{"anything":"goes"}`)
 
-	got, version, err := Upcast(EventToolUse, 1, raw)
+	got, version, err := Upcast(eventlog.EventToolUse, 1, raw)
 	if err != nil {
 		t.Fatalf("Upcast: %v", err)
 	}

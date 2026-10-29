@@ -11,6 +11,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
@@ -65,7 +66,7 @@ func (g *Grants) RequestGrant(ctx context.Context, tenantID, sessionID, granteeI
 		).Scan(&gr.CreatedAt); err != nil {
 			return fmt.Errorf("obs: insert content access grant: %w", err)
 		}
-		return g.appendEvent(ctx, tx, tenantID, sessionID, store.EventContentAccessGranted, grantEventPayload{GrantID: gr.GrantID, GranteeID: granteeID, Reason: reason})
+		return g.appendEvent(ctx, tx, tenantID, sessionID, eventlog.EventContentAccessGranted, grantEventPayload{GrantID: gr.GrantID, GranteeID: granteeID, Reason: reason})
 	})
 	return gr, err
 }
@@ -104,7 +105,7 @@ func (g *Grants) Authorize(ctx context.Context, tenantID, sessionID, granteeID u
 		rows.Close()
 
 		if !found {
-			return g.appendEvent(ctx, tx, tenantID, sessionID, store.EventContentAccessRefused, refusedPayload{GranteeID: granteeID, Reason: "no valid grant"})
+			return g.appendEvent(ctx, tx, tenantID, sessionID, eventlog.EventContentAccessRefused, refusedPayload{GranteeID: granteeID, Reason: "no valid grant"})
 		}
 		return nil
 	})
@@ -123,7 +124,7 @@ func (g *Grants) Authorize(ctx context.Context, tenantID, sessionID, granteeID u
 type EventDTO struct {
 	EventID   uuid.UUID
 	Seq       int64
-	Type      store.EventType
+	Type      eventlog.EventType
 	Body      json.RawMessage
 	CreatedAt time.Time
 }
@@ -138,7 +139,7 @@ func (g *Grants) Read(ctx context.Context, tenantID, sessionID, granteeID uuid.U
 		return nil, err
 	}
 
-	var history []store.Event
+	var history []eventlog.Event
 	err := g.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
 		history, err = store.ListEvents(ctx, tx, sessionID)
@@ -152,7 +153,7 @@ func (g *Grants) Read(ctx context.Context, tenantID, sessionID, granteeID uuid.U
 	out := make([]EventDTO, 0, len(history))
 	for _, e := range history {
 		dto := EventDTO{EventID: e.EventID, Seq: e.Seq, Type: e.Type, CreatedAt: e.CreatedAt}
-		if e.Type == store.EventThought {
+		if e.Type == eventlog.EventThought {
 			out = append(out, dto) // never shown, even under a grant
 			continue
 		}
@@ -181,7 +182,7 @@ func (g *Grants) Read(ctx context.Context, tenantID, sessionID, granteeID uuid.U
 	}
 
 	err = g.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		return g.appendEvent(ctx, tx, tenantID, sessionID, store.EventContentAccessed, accessedPayload{GranteeID: granteeID, EventCount: len(history)})
+		return g.appendEvent(ctx, tx, tenantID, sessionID, eventlog.EventContentAccessed, accessedPayload{GranteeID: granteeID, EventCount: len(history)})
 	})
 	if err != nil {
 		return nil, fmt.Errorf("obs: record content access receipt: %w", err)
@@ -213,7 +214,7 @@ type accessedPayload struct {
 // lines, not shared logic worth a common package for (the same call this
 // codebase already makes for internal/hooks's and internal/tools/
 // builtin's duplicated SSRF guards).
-func (g *Grants) appendEvent(ctx context.Context, tx pgx.Tx, tenantID, sessionID uuid.UUID, typ store.EventType, payload any) error {
+func (g *Grants) appendEvent(ctx context.Context, tx pgx.Tx, tenantID, sessionID uuid.UUID, typ eventlog.EventType, payload any) error {
 	plaintext, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("obs: marshal %s payload: %w", typ, err)
@@ -230,9 +231,9 @@ func (g *Grants) appendEvent(ctx context.Context, tx pgx.Tx, tenantID, sessionID
 	if err != nil {
 		return fmt.Errorf("obs: seal %s payload: %w", typ, err)
 	}
-	e := store.Event{
-		EventID: uuid.New(), SessionID: sessionID, TenantID: tenantID, SchemaVersion: store.CurrentSchemaVersion,
-		Type: typ, Payload: sealed, PayloadDigest: crypto.Digest(plaintext), KeyID: dek.KeyID, Actor: store.ActorSystem,
+	e := eventlog.Event{
+		EventID: uuid.New(), SessionID: sessionID, TenantID: tenantID, SchemaVersion: eventlog.CurrentSchemaVersion,
+		Type: typ, Payload: sealed, PayloadDigest: crypto.Digest(plaintext), KeyID: dek.KeyID, Actor: eventlog.ActorSystem,
 	}
 	out, err := store.Append(ctx, tx, e)
 	if err != nil {

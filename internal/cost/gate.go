@@ -56,7 +56,7 @@ type ReserveRequest struct {
 
 // Reservation is Reserve's result and Reconcile's input. Both the
 // successful and the refused case return a populated Reservation — a
-// caller always has enough to append a store.EventBudgetDecision regardless
+// caller always has enough to append a eventlog.EventBudgetDecision regardless
 // of outcome (README task 4.6: "every gate resolution").
 type Reservation struct {
 	ID        uuid.UUID

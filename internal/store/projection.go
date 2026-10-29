@@ -1,6 +1,10 @@
 package store
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
+)
 
 // Projection is the read path Snapshot (snapshot.go) caches and
 // ReplayProjection derives from scratch — task 6.4's own acceptance test
@@ -22,25 +26,25 @@ type Projection struct {
 // run ended at all; ReplayFullProjection layers a decrypt of that one event
 // on top when the exact reason is needed. history must be in seq order
 // (store.ListEvents' own contract).
-func ReplayProjection(history []Event) Projection {
-	status := SessionStatusQueued
+func ReplayProjection(history []eventlog.Event) Projection {
+	status := eventlog.SessionStatusQueued
 	for _, e := range history {
 		switch e.Type { //nolint:exhaustive // deliberately narrow: only the event types that ever move a session between queued/running/suspended/ended are structurally relevant here; every other type (thought, budget_decision, tool_loaded, ...) leaves status unchanged
-		case EventUserMessage, EventToolUse, EventToolResult, EventContent, EventThought:
-			if status != SessionStatusSuspended {
-				status = SessionStatusRunning
+		case eventlog.EventUserMessage, eventlog.EventToolUse, eventlog.EventToolResult, eventlog.EventContent, eventlog.EventThought:
+			if status != eventlog.SessionStatusSuspended {
+				status = eventlog.SessionStatusRunning
 			}
-		case EventApprovalRequested, EventInputRequested:
-			status = SessionStatusSuspended
-		case EventAwaitingInput:
-			status = SessionStatusAwaitingInput
-		case EventApprovalGranted, EventApprovalGrantedModified, EventApprovalDenied,
-			EventApprovalInvalidated, EventInputAnswered, EventInputExpired, EventInputInvalidated:
-			status = SessionStatusRunning
-		case EventTerminal:
+		case eventlog.EventApprovalRequested, eventlog.EventInputRequested:
+			status = eventlog.SessionStatusSuspended
+		case eventlog.EventAwaitingInput:
+			status = eventlog.SessionStatusAwaitingInput
+		case eventlog.EventApprovalGranted, eventlog.EventApprovalGrantedModified, eventlog.EventApprovalDenied,
+			eventlog.EventApprovalInvalidated, eventlog.EventInputAnswered, eventlog.EventInputExpired, eventlog.EventInputInvalidated:
+			status = eventlog.SessionStatusRunning
+		case eventlog.EventTerminal:
 			// Which of completed/failed it was needs the sealed payload
 			// (ReplayFullProjection); structurally we only know it's over.
-			status = SessionStatusCompleted
+			status = eventlog.SessionStatusCompleted
 		}
 	}
 	return Projection{Status: status}
@@ -52,7 +56,7 @@ func ReplayProjection(history []Event) Projection {
 // already imports internal/store; see crypto/shred.go's own
 // appendErasureEvent) so ReplayFullProjection stays free of any crypto
 // dependency of its own.
-type TerminalDecryptFunc func(e Event) (plaintext []byte, err error)
+type TerminalDecryptFunc func(e eventlog.Event) (plaintext []byte, err error)
 
 // terminalPayload mirrors kernel/terminal.go's unexported
 // terminalEventPayload field-for-field — duplicated for the same reason
@@ -69,13 +73,13 @@ type terminalPayload struct {
 // exactly the layering kernel.Rehydrate already uses (structural replay,
 // selective decrypt), never a full-history decrypt just to answer "how did
 // this end."
-func ReplayFullProjection(history []Event, decrypt TerminalDecryptFunc) (Projection, error) {
+func ReplayFullProjection(history []eventlog.Event, decrypt TerminalDecryptFunc) (Projection, error) {
 	p := ReplayProjection(history)
-	if p.Status != SessionStatusCompleted {
+	if p.Status != eventlog.SessionStatusCompleted {
 		return p, nil
 	}
 	for i := len(history) - 1; i >= 0; i-- {
-		if history[i].Type != EventTerminal {
+		if history[i].Type != eventlog.EventTerminal {
 			continue
 		}
 		plaintext, err := decrypt(history[i])
@@ -87,7 +91,7 @@ func ReplayFullProjection(history []Event, decrypt TerminalDecryptFunc) (Project
 			return Projection{}, err
 		}
 		if tp.Reason != "completed" {
-			p.Status = SessionStatusFailed
+			p.Status = eventlog.SessionStatusFailed
 		}
 		reason := tp.Reason
 		p.TerminalReason = &reason

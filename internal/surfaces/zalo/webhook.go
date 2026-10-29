@@ -24,6 +24,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/harness"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
@@ -244,7 +245,7 @@ func (s *Server) dispatch(ctx context.Context, tenantID, userID uuid.UUID, sessi
 			release()
 			return uuid.Nil, fmt.Errorf("look up session for %s: %w", sessionKey, err)
 		}
-		if found && sess.Status == store.SessionStatusAwaitingInput {
+		if found && sess.Status == eventlog.SessionStatusAwaitingInput {
 			return s.resumeRun(ctx, tenantID, sess.SessionID, recipientID, input, release)
 		}
 	}
@@ -346,9 +347,9 @@ func (s *Server) drainAndNotify(tenantID, sessionID uuid.UUID, recipientID strin
 // notificationPayload mirrors internal/surfaces/telegram's own (its doc
 // comment) — decrypts EventContent the same way
 // internal/surfaces/rest/run_events.go's toEventDTO does.
-func (s *Server) notificationPayload(ctx context.Context, tenantID, sessionID uuid.UUID, ev store.Event) (payload []byte, ok bool) {
+func (s *Server) notificationPayload(ctx context.Context, tenantID, sessionID uuid.UUID, ev eventlog.Event) (payload []byte, ok bool) {
 	switch ev.Type { //nolint:exhaustive // only these two event types are ever worth notifying a chat user about
-	case store.EventApprovalRequested:
+	case eventlog.EventApprovalRequested:
 		toolID := ""
 		if ev.ToolID != nil {
 			toolID = *ev.ToolID
@@ -359,7 +360,7 @@ func (s *Server) notificationPayload(ctx context.Context, tenantID, sessionID uu
 		}
 		return b, true
 
-	case store.EventContent:
+	case eventlog.EventContent:
 		var dek crypto.DEK
 		err := s.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 			var derr error

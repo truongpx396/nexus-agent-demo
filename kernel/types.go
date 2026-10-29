@@ -14,8 +14,8 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
 // ToolUseRequest is the kernel's view of one tool_use assembled from a
@@ -208,7 +208,7 @@ type SealFunc func(plaintext []byte) (sealed, digest []byte, keyID string, err e
 // internal/audit isn't on that list. cmd/nexusd wires the real
 // internal/audit.Chain.Append in; a nil ReceiptFunc (every pre-Phase-5 test)
 // simply means no receipt is written, not an error.
-type ReceiptFunc func(ctx context.Context, tx pgx.Tx, e store.Event) error
+type ReceiptFunc func(ctx context.Context, tx pgx.Tx, e eventlog.Event) error
 
 // RunConfig is everything one Run needs beyond the growing event history.
 // ModelID is the internal/provider/router.go decision, persisted onto the
@@ -257,7 +257,7 @@ type RunConfig struct {
 	// Conversational opts this run into pause-not-terminate semantics: a
 	// turn that classifies as plain content/empty (no tool call) suspends
 	// the session awaiting more input (suspendForUserInput,
-	// EventAwaitingInput, store.SessionStatusAwaitingInput) instead of
+	// EventAwaitingInput, eventlog.SessionStatusAwaitingInput) instead of
 	// terminating it. False (the default, and every pre-this-change
 	// caller's zero value) reproduces today's behavior exactly — a plain
 	// reply always ends the run. This is deliberately per-run, not a

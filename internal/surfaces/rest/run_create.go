@@ -12,10 +12,10 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/controlplane"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/harness"
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
 type createRunRequest struct {
@@ -250,9 +250,9 @@ func (s *Server) emitTerminalSpan(tenantID, sessionID uuid.UUID) {
 // through the outbox's at-least-once discipline rather than only the
 // broker's best-effort SSE fan-out. The notification payload is
 // deliberately minimal (session id + tool id, both already-plaintext
-// structural fields on store.Event) — never the event's own sealed
+// structural fields on eventlog.Event) — never the event's own sealed
 // payload, which this package has no decrypt path for anyway.
-func (s *Server) deliverApprovalNotification(sessionID uuid.UUID, ev store.Event) {
+func (s *Server) deliverApprovalNotification(sessionID uuid.UUID, ev eventlog.Event) {
 	toolID := ""
 	if ev.ToolID != nil {
 		toolID = *ev.ToolID

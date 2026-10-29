@@ -6,8 +6,7 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
-
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 )
 
 // ForkView is what this surface exposes for one fork — translated from
@@ -33,7 +32,7 @@ type RunCtlPort interface {
 	Steer(ctx context.Context, tenantID, sessionID uuid.UUID, input string) error
 	TightenAutonomy(ctx context.Context, tenantID, sessionID uuid.UUID, target string) error
 	Fork(ctx context.Context, tenantID, sessionID uuid.UUID, atSeq int64, modelOverride string) (ForkView, error)
-	// ResumeConversation continues a session store.SessionStatusAwaitingInput
+	// ResumeConversation continues a session eventlog.SessionStatusAwaitingInput
 	// paused in (internal/runctl.Control.ResumeConversation's own doc
 	// comment) with the human's next message — durably appended and queued
 	// by the time this returns, the same "append now, return, a worker
@@ -108,7 +107,7 @@ func (s *Server) handleSteerRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "steer: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if sess.Status == store.SessionStatusAwaitingInput {
+	if sess.Status == eventlog.SessionStatusAwaitingInput {
 		if err := s.RunCtl.ResumeConversation(r.Context(), tenantID, id, req.Input); err != nil {
 			http.Error(w, "steer: "+err.Error(), http.StatusInternalServerError)
 			return

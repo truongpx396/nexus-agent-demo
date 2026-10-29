@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
@@ -45,11 +46,11 @@ func (c *Control) Cancel(ctx context.Context, tenantID, sessionID uuid.UUID, rea
 		if err != nil {
 			return err
 		}
-		if sess.Status == store.SessionStatusCompleted || sess.Status == store.SessionStatusFailed {
+		if sess.Status == eventlog.SessionStatusCompleted || sess.Status == eventlog.SessionStatusFailed {
 			return nil // already terminal — cancel is a no-op, not an error
 		}
 
-		if sess.Status == store.SessionStatusSuspended {
+		if sess.Status == eventlog.SessionStatusSuspended {
 			if _, err := c.Approvals.Invalidate(ctx, tenantID, sessionID, oversight.InvalidationCancel); err != nil {
 				return fmt.Errorf("cancel: invalidate pending approval: %w", err)
 			}
@@ -62,11 +63,11 @@ func (c *Control) Cancel(ctx context.Context, tenantID, sessionID uuid.UUID, rea
 
 		t := kernel.TerminalAborted(reason)
 		payload := terminalPayload{Reason: string(t.Reason), Detail: t.Detail}
-		if _, err := d.appendEvent(ctx, tx, tenantID, sessionID, store.EventTerminal, nil, nil, payload); err != nil {
+		if _, err := d.appendEvent(ctx, tx, tenantID, sessionID, eventlog.EventTerminal, nil, nil, payload); err != nil {
 			return fmt.Errorf("cancel: append terminal event: %w", err)
 		}
 		terminalReason := string(t.Reason)
-		if err := store.UpdateSessionStatus(ctx, tx, sessionID, store.SessionStatusFailed, &terminalReason); err != nil {
+		if err := store.UpdateSessionStatus(ctx, tx, sessionID, eventlog.SessionStatusFailed, &terminalReason); err != nil {
 			return fmt.Errorf("cancel: update session status: %w", err)
 		}
 		return nil

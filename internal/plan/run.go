@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
@@ -68,11 +69,11 @@ func (e *Executor) afterStep(ctx context.Context, tenantID, sessionID uuid.UUID,
 	return e.run(ctx, tenantID, sessionID, p, st, next)
 }
 
-func (e *Executor) enterStep(ctx context.Context, tenantID, sessionID uuid.UUID, step Step) (store.Event, error) {
-	var ev store.Event
+func (e *Executor) enterStep(ctx context.Context, tenantID, sessionID uuid.UUID, step Step) (eventlog.Event, error) {
+	var ev eventlog.Event
 	err := e.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
-		ev, err = e.appendEvent(ctx, tx, tenantID, sessionID, store.EventPlanStepEntered, nil, nil, stepEnteredPayload{StepID: step.ID})
+		ev, err = e.appendEvent(ctx, tx, tenantID, sessionID, eventlog.EventPlanStepEntered, nil, nil, stepEnteredPayload{StepID: step.ID})
 		return err
 	})
 	return ev, err
@@ -87,7 +88,7 @@ func (e *Executor) enterStep(ctx context.Context, tenantID, sessionID uuid.UUID,
 // ends: appends plan_completed and marks the session completed.
 func (e *Executor) exitStepAndTransition(ctx context.Context, tenantID, sessionID uuid.UUID, st *state, step Step, bindings Context) (string, error) {
 	if err := e.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		_, err := e.appendEvent(ctx, tx, tenantID, sessionID, store.EventPlanStepExited, nil, nil, stepExitedPayload{StepID: step.ID, Bindings: bindings})
+		_, err := e.appendEvent(ctx, tx, tenantID, sessionID, eventlog.EventPlanStepExited, nil, nil, stepExitedPayload{StepID: step.ID, Bindings: bindings})
 		return err
 	}); err != nil {
 		return "", err
@@ -102,7 +103,7 @@ func (e *Executor) exitStepAndTransition(ctx context.Context, tenantID, sessionI
 	}
 
 	if err := e.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		_, err := e.appendEvent(ctx, tx, tenantID, sessionID, store.EventPlanTransition, nil, nil, transitionPayload{From: step.ID, To: next, Predicate: pred})
+		_, err := e.appendEvent(ctx, tx, tenantID, sessionID, eventlog.EventPlanTransition, nil, nil, transitionPayload{From: step.ID, To: next, Predicate: pred})
 		return err
 	}); err != nil {
 		return "", err
@@ -110,11 +111,11 @@ func (e *Executor) exitStepAndTransition(ctx context.Context, tenantID, sessionI
 
 	if next == "" {
 		if err := e.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-			if _, err := e.appendEvent(ctx, tx, tenantID, sessionID, store.EventPlanCompleted, nil, nil, planCompletedPayload{}); err != nil {
+			if _, err := e.appendEvent(ctx, tx, tenantID, sessionID, eventlog.EventPlanCompleted, nil, nil, planCompletedPayload{}); err != nil {
 				return err
 			}
 			reason := "plan_completed"
-			return store.UpdateSessionStatus(ctx, tx, sessionID, store.SessionStatusCompleted, &reason)
+			return store.UpdateSessionStatus(ctx, tx, sessionID, eventlog.SessionStatusCompleted, &reason)
 		}); err != nil {
 			return "", err
 		}

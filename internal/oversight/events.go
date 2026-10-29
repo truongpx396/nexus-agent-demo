@@ -10,6 +10,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
@@ -50,44 +51,44 @@ func activeKeyID(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) (string, e
 // exported from kernel) because oversight operates OUT OF BAND, after a
 // live kernel.Run/Resume call has already returned; it has no RunState.Seal
 // closure to reuse.
-func (d deps) appendEvent(ctx context.Context, tx pgx.Tx, tenantID, sessionID uuid.UUID, typ store.EventType, toolID *string, pairRef *uuid.UUID, payload any) (store.Event, error) {
+func (d deps) appendEvent(ctx context.Context, tx pgx.Tx, tenantID, sessionID uuid.UUID, typ eventlog.EventType, toolID *string, pairRef *uuid.UUID, payload any) (eventlog.Event, error) {
 	plaintext, err := json.Marshal(payload)
 	if err != nil {
-		return store.Event{}, fmt.Errorf("oversight: marshal %s payload: %w", typ, err)
+		return eventlog.Event{}, fmt.Errorf("oversight: marshal %s payload: %w", typ, err)
 	}
 	keyID, err := activeKeyID(ctx, tx, sessionID)
 	if err != nil {
-		return store.Event{}, err
+		return eventlog.Event{}, err
 	}
 	dek, err := d.Keys.Unwrap(ctx, tx, keyID)
 	if err != nil {
-		return store.Event{}, fmt.Errorf("oversight: unwrap key for session %s: %w", sessionID, err)
+		return eventlog.Event{}, fmt.Errorf("oversight: unwrap key for session %s: %w", sessionID, err)
 	}
 	sealed, err := crypto.Seal(dek, plaintext, tenantID.String(), sessionID.String())
 	if err != nil {
-		return store.Event{}, fmt.Errorf("oversight: seal %s payload: %w", typ, err)
+		return eventlog.Event{}, fmt.Errorf("oversight: seal %s payload: %w", typ, err)
 	}
 
-	e := store.Event{
+	e := eventlog.Event{
 		EventID:       uuid.New(),
 		SessionID:     sessionID,
 		TenantID:      tenantID,
-		SchemaVersion: store.CurrentSchemaVersion,
+		SchemaVersion: eventlog.CurrentSchemaVersion,
 		Type:          typ,
 		Payload:       sealed,
 		PayloadDigest: crypto.Digest(plaintext),
 		KeyID:         dek.KeyID,
-		Actor:         store.ActorSystem,
+		Actor:         eventlog.ActorSystem,
 		ToolID:        toolID,
 		PairRef:       pairRef,
 	}
 	out, err := store.Append(ctx, tx, e)
 	if err != nil {
-		return store.Event{}, fmt.Errorf("oversight: append %s: %w", typ, err)
+		return eventlog.Event{}, fmt.Errorf("oversight: append %s: %w", typ, err)
 	}
 	if d.Chain != nil {
 		if _, err := d.Chain.Append(ctx, tx, tenantID, sessionID, out.Seq, out.EventID, string(out.Type), out.PayloadDigest); err != nil {
-			return store.Event{}, fmt.Errorf("oversight: chain %s: %w", typ, err)
+			return eventlog.Event{}, fmt.Errorf("oversight: chain %s: %w", typ, err)
 		}
 	}
 	return out, nil

@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/harness"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
@@ -64,7 +65,7 @@ type ForkResult struct {
 // session's own first turn.
 func (c *Control) Fork(ctx context.Context, tenantID, parentSessionID uuid.UUID, atSeq int64, overrides ForkOverrides) (ForkResult, error) {
 	var parentSess store.Session
-	var history []store.Event
+	var history []eventlog.Event
 	if err := c.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
 		parentSess, err = store.GetSession(ctx, tx, parentSessionID)
@@ -77,7 +78,7 @@ func (c *Control) Fork(ctx context.Context, tenantID, parentSessionID uuid.UUID,
 		return ForkResult{}, fmt.Errorf("runctl: fork: %w", err)
 	}
 
-	var trimmed []store.Event
+	var trimmed []eventlog.Event
 	for _, e := range history {
 		if e.Seq > atSeq {
 			break

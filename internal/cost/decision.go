@@ -37,7 +37,7 @@ const (
 
 // Decision is one gate resolution: the kind, a human-readable reason, and
 // which budget (if any) produced it — the shape Reserve's caller (kernel)
-// both appends as a store.EventBudgetDecision and this package durably
+// both appends as a eventlog.EventBudgetDecision and this package durably
 // records in budget_decisions.
 type Decision struct {
 	Kind     DecisionKind
@@ -48,7 +48,7 @@ type Decision struct {
 
 // RecordDecision inserts one durable audit row into budget_decisions.
 // gate.go calls this from within Reserve, in the Gate's own transaction —
-// the corresponding store.EventBudgetDecision is a separate append the
+// the corresponding eventlog.EventBudgetDecision is a separate append the
 // caller (kernel) makes into the event log itself; internal/cost never
 // writes to the events table directly (store.Append is the log's one
 // sanctioned writer, docs/constitution.md Principle II).

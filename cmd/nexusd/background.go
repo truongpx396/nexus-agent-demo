@@ -105,7 +105,7 @@ func sweepTeamBackstopAllTenants(ctx context.Context, teamsSvc *teams.Service) {
 
 // startIdleConversationSweepLoop runs the idle-conversation backstop: every
 // idleConversationSweepInterval, sweep every tenant for a conversational
-// session sitting in store.SessionStatusAwaitingInput past
+// session sitting in eventlog.SessionStatusAwaitingInput past
 // idleConversationWindow and end it via runctl.Control.EndIdleConversation
 // — the same list-every-tenant-then-loop shape startAnchorLoop/
 // startTeamBackstopLoop already use for a periodic cross-tenant pass.

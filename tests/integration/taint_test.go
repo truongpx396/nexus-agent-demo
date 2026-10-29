@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/permissions"
 	"github.com/truongpx396/nexus-agent-demo/internal/permissions/safety"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
@@ -191,7 +192,7 @@ func TestRuleOfTwo_TaintStateSurvivesASimulatedProcessRestart(t *testing.T) {
 	}
 	var taintTransitions int
 	for _, e := range full {
-		if e.Type == store.EventTaintTransition {
+		if e.Type == eventlog.EventTaintTransition {
 			taintTransitions++
 		}
 	}
@@ -227,7 +228,7 @@ func TestRuleOfTwo_TaintStateSurvivesASimulatedProcessRestart(t *testing.T) {
 		if everr != nil {
 			t.Fatalf("Resume() yielded error: %v", everr)
 		}
-		if ev.Type == store.EventApprovalRequested {
+		if ev.Type == eventlog.EventApprovalRequested {
 			awaitingApproval = true
 		}
 	}
@@ -239,7 +240,7 @@ func TestRuleOfTwo_TaintStateSurvivesASimulatedProcessRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get session: %v", err)
 	}
-	if sess.Status != store.SessionStatusSuspended {
-		t.Fatalf("session status = %q, want %q (suspended awaiting the third-leg approval)", sess.Status, store.SessionStatusSuspended)
+	if sess.Status != eventlog.SessionStatusSuspended {
+		t.Fatalf("session status = %q, want %q (suspended awaiting the third-leg approval)", sess.Status, eventlog.SessionStatusSuspended)
 	}
 }

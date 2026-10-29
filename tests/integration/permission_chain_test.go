@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/harness"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
@@ -117,7 +118,7 @@ func TestKernel_PermissionDeniedTerminatesRun(t *testing.T) {
 	runState := &kernel.RunState{TenantID: tenantID, SessionID: sessionID, Seal: seal}
 	cfg := kernel.RunConfig{System: "test", ModelID: "test-model", MaxTurns: 5, Input: "delete the build dir", AutonomyLevel: "read_only"}
 
-	var events []store.Event
+	var events []eventlog.Event
 	for ev, err := range k.Run(ctx, runState, cfg) {
 		if err != nil {
 			t.Fatalf("Run() yielded error: %v", err)
@@ -125,7 +126,7 @@ func TestKernel_PermissionDeniedTerminatesRun(t *testing.T) {
 		events = append(events, ev)
 	}
 
-	if len(events) == 0 || events[len(events)-1].Type != store.EventTerminal {
+	if len(events) == 0 || events[len(events)-1].Type != eventlog.EventTerminal {
 		t.Fatalf("last event type = %v, want terminal", events[len(events)-1].Type)
 	}
 
@@ -133,8 +134,8 @@ func TestKernel_PermissionDeniedTerminatesRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get session: %v", err)
 	}
-	if sess.Status != store.SessionStatusFailed {
-		t.Fatalf("session status = %q, want %q", sess.Status, store.SessionStatusFailed)
+	if sess.Status != eventlog.SessionStatusFailed {
+		t.Fatalf("session status = %q, want %q", sess.Status, eventlog.SessionStatusFailed)
 	}
 	if sess.TerminalReason == nil || *sess.TerminalReason != string(kernel.ReasonPermissionDenied) {
 		t.Fatalf("terminal_reason = %v, want %q", sess.TerminalReason, kernel.ReasonPermissionDenied)
@@ -158,7 +159,7 @@ func TestKernel_AwaitingApprovalSuspendsRun(t *testing.T) {
 	runState := &kernel.RunState{TenantID: tenantID, SessionID: sessionID, Seal: seal}
 	cfg := kernel.RunConfig{System: "test", ModelID: "test-model", MaxTurns: 5, Input: "delete the build dir", AutonomyLevel: "supervised"}
 
-	var events []store.Event
+	var events []eventlog.Event
 	for ev, err := range k.Run(ctx, runState, cfg) {
 		if err != nil {
 			t.Fatalf("Run() yielded error: %v", err)
@@ -166,11 +167,11 @@ func TestKernel_AwaitingApprovalSuspendsRun(t *testing.T) {
 		events = append(events, ev)
 	}
 
-	if len(events) == 0 || events[len(events)-1].Type != store.EventApprovalRequested {
+	if len(events) == 0 || events[len(events)-1].Type != eventlog.EventApprovalRequested {
 		t.Fatalf("last event type = %v, want approval_requested (no terminal event on a suspend)", events[len(events)-1].Type)
 	}
 	for _, ev := range events {
-		if ev.Type == store.EventTerminal {
+		if ev.Type == eventlog.EventTerminal {
 			t.Fatal("a suspended run must never append a terminal event")
 		}
 	}
@@ -179,8 +180,8 @@ func TestKernel_AwaitingApprovalSuspendsRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get session: %v", err)
 	}
-	if sess.Status != store.SessionStatusSuspended {
-		t.Fatalf("session status = %q, want %q", sess.Status, store.SessionStatusSuspended)
+	if sess.Status != eventlog.SessionStatusSuspended {
+		t.Fatalf("session status = %q, want %q", sess.Status, eventlog.SessionStatusSuspended)
 	}
 	if sess.TerminalReason != nil {
 		t.Fatalf("terminal_reason = %v, want nil (a suspend is not a terminal state)", *sess.TerminalReason)

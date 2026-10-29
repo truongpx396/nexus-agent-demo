@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
@@ -45,7 +46,7 @@ func (d *Delegations) OnChildTerminal(ctx context.Context, tenantID, childSessio
 	if err != nil || !found {
 		return err
 	}
-	if child.Status != store.SessionStatusCompleted && child.Status != store.SessionStatusFailed {
+	if child.Status != eventlog.SessionStatusCompleted && child.Status != eventlog.SessionStatusFailed {
 		return nil // not terminal yet — a later call site will find it
 	}
 
@@ -83,7 +84,7 @@ func (d *Delegations) finalize(ctx context.Context, tenantID uuid.UUID, pending 
 
 	outcome = kernel.DelegationReturned
 	status := StatusReturned
-	if child.Status == store.SessionStatusFailed {
+	if child.Status == eventlog.SessionStatusFailed {
 		result = nil
 		if child.TerminalReason != nil {
 			reason = "child session failed: " + *child.TerminalReason
@@ -111,13 +112,13 @@ func (d *Delegations) finalize(ctx context.Context, tenantID uuid.UUID, pending 
 			return err
 		}
 		toolID := pending.AgentID // best available label; delegate.go's own tool ref is what actually matters for the pair
-		_, err := d.appendEvent(ctx, tx, tenantID, pending.ParentSessionID, store.EventTaintTransition, nil, nil, taintTransitionPayload{
+		_, err := d.appendEvent(ctx, tx, tenantID, pending.ParentSessionID, eventlog.EventTaintTransition, nil, nil, taintTransitionPayload{
 			ChildSessionID: child.SessionID, Engaged: childEngaged,
 		})
 		if err != nil {
 			return err
 		}
-		_, err = d.appendEvent(ctx, tx, tenantID, pending.ParentSessionID, store.EventDelegationReturned, &toolID, &pending.ParentToolUseEventID, delegationReturnedPayload{
+		_, err = d.appendEvent(ctx, tx, tenantID, pending.ParentSessionID, eventlog.EventDelegationReturned, &toolID, &pending.ParentToolUseEventID, delegationReturnedPayload{
 			DelegationID: pending.DelegationID, ChildSessionID: child.SessionID, Outcome: string(outcome), Reason: reason,
 		})
 		return err
@@ -152,7 +153,7 @@ func (d *Delegations) resumeParent(ctx context.Context, tenantID uuid.UUID, pend
 	if err != nil {
 		return err
 	}
-	if sess.Status != store.SessionStatusSuspended {
+	if sess.Status != eventlog.SessionStatusSuspended {
 		return fmt.Errorf("delegate: parent session %s is %s, not suspended; refusing to resume a delegation it isn't waiting on", pending.ParentSessionID, sess.Status)
 	}
 	cfg := kernel.RunConfig{System: d.cfg.System, Catalog: d.cfg.Catalog, MaxTurns: d.cfg.MaxTurns, AutonomyLevel: sess.AutonomyLevel, ModelID: sess.RouteModelID}
@@ -202,7 +203,7 @@ func (d *Delegations) extractResult(ctx context.Context, tenantID uuid.UUID, chi
 // selective-decrypt idiom store.ReplayFullProjection already uses for a
 // terminal event's exact reason, applied here to a content event instead.
 func (d *Delegations) lastContentText(ctx context.Context, tenantID, sessionID uuid.UUID) (string, error) {
-	var history []store.Event
+	var history []eventlog.Event
 	err := d.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
 		history, err = store.ListEvents(ctx, tx, sessionID)
@@ -212,9 +213,9 @@ func (d *Delegations) lastContentText(ctx context.Context, tenantID, sessionID u
 		return "", err
 	}
 
-	var last *store.Event
+	var last *eventlog.Event
 	for i := len(history) - 1; i >= 0; i-- {
-		if history[i].Type == store.EventContent {
+		if history[i].Type == eventlog.EventContent {
 			last = &history[i]
 			break
 		}
@@ -250,7 +251,7 @@ func (d *Delegations) lastContentText(ctx context.Context, tenantID, sessionID u
 // RunState.Seal to reuse).
 func (d *Delegations) loadRunState(ctx context.Context, tenantID, sessionID uuid.UUID) (*kernel.RunState, store.Session, error) {
 	var sess store.Session
-	var history []store.Event
+	var history []eventlog.Event
 	err := d.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
 		sess, err = store.GetSession(ctx, tx, sessionID)
@@ -265,7 +266,7 @@ func (d *Delegations) loadRunState(ctx context.Context, tenantID, sessionID uuid
 	}
 
 	dekCache := map[string]crypto.DEK{}
-	decrypt := func(ctx context.Context, e store.Event) ([]byte, error) {
+	decrypt := func(ctx context.Context, e eventlog.Event) ([]byte, error) {
 		if e.KeyID == crypto.ErasureKeyID {
 			return e.Payload, nil
 		}

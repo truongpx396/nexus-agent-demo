@@ -33,6 +33,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
 	"github.com/truongpx396/nexus-agent-demo/internal/permissions"
 	"github.com/truongpx396/nexus-agent-demo/internal/permissions/safety"
@@ -219,9 +220,9 @@ func (r *phase6Rig) seedOneEvent(t *testing.T, sessionID uuid.UUID, sealFn kerne
 		t.Fatalf("seal seed event: %v", err)
 	}
 	err = r.st.InTenantTx(context.Background(), r.tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		_, err := store.Append(ctx, tx, store.Event{
-			EventID: uuid.New(), SessionID: sessionID, TenantID: r.tenantID, SchemaVersion: store.CurrentSchemaVersion,
-			Type: store.EventUserMessage, Payload: sealed, PayloadDigest: digest, KeyID: keyID, Actor: store.ActorUser,
+		_, err := store.Append(ctx, tx, eventlog.Event{
+			EventID: uuid.New(), SessionID: sessionID, TenantID: r.tenantID, SchemaVersion: eventlog.CurrentSchemaVersion,
+			Type: eventlog.EventUserMessage, Payload: sealed, PayloadDigest: digest, KeyID: keyID, Actor: eventlog.ActorUser,
 		})
 		return err
 	})
@@ -546,7 +547,7 @@ func TestClaims_EndToEnd_NeverReExecutesAnAmbiguousEffect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list events: %v", err)
 	}
-	if !hasEventType(events, store.EventEffectClaimed) || !hasEventType(events, store.EventEffectClaimResolved) {
+	if !hasEventType(events, eventlog.EventEffectClaimed) || !hasEventType(events, eventlog.EventEffectClaimResolved) {
 		t.Fatal("expected both effect_claimed and effect_claim_resolved events durably appended")
 	}
 }
@@ -576,7 +577,7 @@ func TestSnapshot_DeletingAllSnapshotsChangesNothingButHydrationTime(t *testing.
 	}
 
 	final := rig.getSession(t, sessionID)
-	if final.Status != store.SessionStatusCompleted {
+	if final.Status != eventlog.SessionStatusCompleted {
 		t.Fatalf("final status = %q, want completed", final.Status)
 	}
 
@@ -653,7 +654,7 @@ func TestStuckDetection_SecondCorroboratingTripTerminates(t *testing.T) {
 	sealFn, _ := rig.seal(t, sessionID)
 	st0 := &kernel.RunState{TenantID: rig.tenantID, SessionID: sessionID, Seal: sealFn}
 
-	var events []store.Event
+	var events []eventlog.Event
 	for ev, err := range k.Run(ctx, st0, kernel.RunConfig{System: "test", Catalog: catalog, ModelID: "fake", MaxTurns: 10, Input: "loop forever"}) {
 		if err != nil {
 			t.Fatalf("Run: %v", err)
@@ -661,11 +662,11 @@ func TestStuckDetection_SecondCorroboratingTripTerminates(t *testing.T) {
 		events = append(events, ev)
 	}
 
-	if !hasEventType(events, store.EventStuckSuspected) {
+	if !hasEventType(events, eventlog.EventStuckSuspected) {
 		t.Fatal("expected at least one stuck_suspected event")
 	}
 	final := rig.getSession(t, sessionID)
-	if final.Status != store.SessionStatusFailed || final.TerminalReason == nil || *final.TerminalReason != "stuck_terminated" {
+	if final.Status != eventlog.SessionStatusFailed || final.TerminalReason == nil || *final.TerminalReason != "stuck_terminated" {
 		t.Fatalf("final status/reason = %v/%v, want failed/stuck_terminated", final.Status, final.TerminalReason)
 	}
 }
@@ -730,7 +731,7 @@ func TestRunctl_Cancel_ReleasesPendingApprovalAndAborts(t *testing.T) {
 		}
 		_ = ev
 	}
-	if rig.getSession(t, sessionID).Status != store.SessionStatusSuspended {
+	if rig.getSession(t, sessionID).Status != eventlog.SessionStatusSuspended {
 		t.Fatal("expected the session to be suspended on the pending approval")
 	}
 
@@ -740,7 +741,7 @@ func TestRunctl_Cancel_ReleasesPendingApprovalAndAborts(t *testing.T) {
 	}
 
 	final := rig.getSession(t, sessionID)
-	if final.Status != store.SessionStatusFailed || final.TerminalReason == nil || *final.TerminalReason != "aborted" {
+	if final.Status != eventlog.SessionStatusFailed || final.TerminalReason == nil || *final.TerminalReason != "aborted" {
 		t.Fatalf("final status/reason = %v/%v, want failed/aborted", final.Status, final.TerminalReason)
 	}
 	pending, err := approvals.ListPending(ctx, rig.tenantID)
@@ -787,7 +788,7 @@ func TestRunctl_TightenAutonomy_RefusesWidening(t *testing.T) {
 	}
 	count := 0
 	for _, e := range events {
-		if e.Type == store.EventAutonomyTightened {
+		if e.Type == eventlog.EventAutonomyTightened {
 			count++
 		}
 	}
@@ -818,12 +819,12 @@ func TestRunctl_Resume_RecoversAToolUseAKilledWorkerLeftOrphaned(t *testing.T) {
 	// happened, not from replaying a specific in-process crash.
 	err := rig.st.InTenantTx(ctx, rig.tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		for _, ev := range []struct {
-			typ     store.EventType
-			actor   store.Actor
+			typ     eventlog.EventType
+			actor   eventlog.Actor
 			payload string
 		}{
-			{store.EventUserMessage, store.ActorUser, `{"body":"read a file"}`},
-			{store.EventToolUse, store.ActorModel, `{"tool_name":"platform/file_read@v1","input":{"path":"missing.txt"}}`},
+			{eventlog.EventUserMessage, eventlog.ActorUser, `{"body":"read a file"}`},
+			{eventlog.EventToolUse, eventlog.ActorModel, `{"tool_name":"platform/file_read@v1","input":{"path":"missing.txt"}}`},
 		} {
 			sealed, digest, keyID, serr := sealFn([]byte(ev.payload))
 			if serr != nil {
@@ -831,17 +832,17 @@ func TestRunctl_Resume_RecoversAToolUseAKilledWorkerLeftOrphaned(t *testing.T) {
 			}
 			toolID := "platform/file_read@v1"
 			var toolIDPtr *string
-			if ev.typ == store.EventToolUse {
+			if ev.typ == eventlog.EventToolUse {
 				toolIDPtr = &toolID
 			}
-			if _, aerr := store.Append(ctx, tx, store.Event{
-				EventID: uuid.New(), SessionID: sessionID, TenantID: rig.tenantID, SchemaVersion: store.CurrentSchemaVersion,
+			if _, aerr := store.Append(ctx, tx, eventlog.Event{
+				EventID: uuid.New(), SessionID: sessionID, TenantID: rig.tenantID, SchemaVersion: eventlog.CurrentSchemaVersion,
 				Type: ev.typ, Payload: sealed, PayloadDigest: digest, KeyID: keyID, Actor: ev.actor, ToolID: toolIDPtr,
 			}); aerr != nil {
 				return aerr
 			}
 		}
-		return store.UpdateSessionStatus(ctx, tx, sessionID, store.SessionStatusRunning, nil)
+		return store.UpdateSessionStatus(ctx, tx, sessionID, eventlog.SessionStatusRunning, nil)
 	})
 	if err != nil {
 		t.Fatalf("simulate crash state: %v", err)
@@ -854,7 +855,7 @@ func TestRunctl_Resume_RecoversAToolUseAKilledWorkerLeftOrphaned(t *testing.T) {
 	control := rig.control(k, oversight.NewApprovals(rig.st, rig.keys, rig.chain), nil)
 	control.Catalog = catalog
 
-	var resumeEvents []store.Event
+	var resumeEvents []eventlog.Event
 	for ev, rerr := range control.Resume(ctx, rig.tenantID, sessionID) {
 		if rerr != nil {
 			t.Fatalf("Resume: %v", rerr)
@@ -867,7 +868,7 @@ func TestRunctl_Resume_RecoversAToolUseAKilledWorkerLeftOrphaned(t *testing.T) {
 	// non-synthetic one).
 	var sawSynthetic bool
 	for _, e := range resumeEvents {
-		if e.Type == store.EventToolResult {
+		if e.Type == eventlog.EventToolResult {
 			sawSynthetic = true
 		}
 	}
@@ -875,7 +876,7 @@ func TestRunctl_Resume_RecoversAToolUseAKilledWorkerLeftOrphaned(t *testing.T) {
 		t.Fatal("expected Resume's first turn to synthesize a result for the orphaned tool_use")
 	}
 	final := rig.getSession(t, sessionID)
-	if final.Status != store.SessionStatusCompleted {
+	if final.Status != eventlog.SessionStatusCompleted {
 		t.Fatalf("final status = %q, want completed (the run continues cleanly past the recovered call)", final.Status)
 	}
 }
@@ -888,7 +889,7 @@ func TestRunctl_Resume_RefusesWhileAClaimIsUnresolved(t *testing.T) {
 	sealFn, _ := rig.seal(t, sessionID)
 	rig.seedOneEvent(t, sessionID, sealFn)
 	if err := rig.st.InTenantTx(ctx, rig.tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		return store.UpdateSessionStatus(ctx, tx, sessionID, store.SessionStatusRunning, nil)
+		return store.UpdateSessionStatus(ctx, tx, sessionID, eventlog.SessionStatusRunning, nil)
 	}); err != nil {
 		t.Fatalf("set running: %v", err)
 	}
@@ -944,7 +945,7 @@ func TestRunctl_Replay_IsPureAndAgreesWithHydration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Replay: %v", err)
 	}
-	if result.Projection.Status != store.SessionStatusCompleted {
+	if result.Projection.Status != eventlog.SessionStatusCompleted {
 		t.Fatalf("Replay projection status = %q, want completed", result.Projection.Status)
 	}
 	if len(result.Synthetic) != 0 {

@@ -27,6 +27,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
@@ -289,7 +290,7 @@ func TestCostGate_ConcurrentSessionsRespectOneTenantCeiling(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("get session %s: %v", sessionID, err)
 		}
-		if status == store.SessionStatusCompleted {
+		if status == eventlog.SessionStatusCompleted {
 			completedCount++
 		} else if reason != nil && *reason == "cost_exhausted" {
 			costExhaustedCount++

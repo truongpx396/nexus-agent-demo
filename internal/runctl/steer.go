@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
@@ -33,18 +34,18 @@ type userMessagePayload struct {
 // goroutine's own next iteration, or a fresh internal/runctl.Resume call)
 // is what actually sees it, because it is already part of the session's
 // own transcript by the time either looks.
-func (c *Control) Steer(ctx context.Context, tenantID, sessionID uuid.UUID, input string) (store.Event, error) {
+func (c *Control) Steer(ctx context.Context, tenantID, sessionID uuid.UUID, input string) (eventlog.Event, error) {
 	d := c.deps()
-	var ev store.Event
+	var ev eventlog.Event
 	err := c.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		sess, err := store.GetSession(ctx, tx, sessionID)
 		if err != nil {
 			return err
 		}
-		if sess.Status == store.SessionStatusCompleted || sess.Status == store.SessionStatusFailed {
+		if sess.Status == eventlog.SessionStatusCompleted || sess.Status == eventlog.SessionStatusFailed {
 			return fmt.Errorf("runctl: session %s is already terminal (%s); cannot steer", sessionID, sess.Status)
 		}
-		if sess.Status == store.SessionStatusAwaitingInput {
+		if sess.Status == eventlog.SessionStatusAwaitingInput {
 			// Steer durably records the message for whatever resumer
 			// reaches the next turn boundary (this func's own doc comment)
 			// — but a conversational session paused in awaiting_input has
@@ -53,16 +54,16 @@ func (c *Control) Steer(ctx context.Context, tenantID, sessionID uuid.UUID, inpu
 			// stranding the message.
 			return fmt.Errorf("runctl: session %s is awaiting the next conversation turn; call ResumeConversation with the new message rather than Steer", sessionID)
 		}
-		if sess.Status == store.SessionStatusSuspended {
+		if sess.Status == eventlog.SessionStatusSuspended {
 			if _, err := c.Approvals.Invalidate(ctx, tenantID, sessionID, oversight.InvalidationSteer); err != nil {
 				return fmt.Errorf("runctl: steer: invalidate pending approval: %w", err)
 			}
 		}
-		ev, err = d.appendEvent(ctx, tx, tenantID, sessionID, store.EventUserMessage, nil, nil, userMessagePayload{Body: input})
+		ev, err = d.appendEvent(ctx, tx, tenantID, sessionID, eventlog.EventUserMessage, nil, nil, userMessagePayload{Body: input})
 		return err
 	})
 	if err != nil {
-		return store.Event{}, err
+		return eventlog.Event{}, err
 	}
 	return ev, nil
 }

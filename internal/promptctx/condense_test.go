@@ -70,7 +70,7 @@ func TestExtractivePass_EmptyAndSingleton(t *testing.T) {
 func TestCondensePrompt_InstructsAgainstClaimingAnEffectOutcome(t *testing.T) {
 	// This is an instruction TO the condenser model, so it necessarily
 	// names "completed"/"failed" — what matters is that it forbids
-	// claiming either, matching internal/store.Condensation's own
+	// claiming either, matching internal/eventlog.Condensation's own
 	// invariant (condensation_test.go) that a condensation can never
 	// answer whether an external effect completed.
 	transcript := []provider.Message{provider.TextMessage("tool", "the file was written")}

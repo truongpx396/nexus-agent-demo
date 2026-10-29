@@ -12,6 +12,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools"
 )
@@ -144,7 +145,7 @@ func (a *Approvals) Grant(ctx context.Context, tenantID, approvalID uuid.UUID, d
 		}
 		ap.Status = ApprovalGranted
 		toolID := ap.ToolID
-		_, err = a.appendEvent(ctx, tx, tenantID, ap.SessionID, store.EventApprovalGranted, &toolID, nil, approvalDecisionPayload{ApprovalID: approvalID, ToolID: ap.ToolID, DecidedBy: decidedBy})
+		_, err = a.appendEvent(ctx, tx, tenantID, ap.SessionID, eventlog.EventApprovalGranted, &toolID, nil, approvalDecisionPayload{ApprovalID: approvalID, ToolID: ap.ToolID, DecidedBy: decidedBy})
 		return err
 	})
 	return ap, err
@@ -174,7 +175,7 @@ func (a *Approvals) GrantModified(ctx context.Context, tenantID, approvalID uuid
 		}
 		ap.Status, ap.GrantedInput, ap.CanonicalDigest = ApprovalGrantedModified, modifiedInput, newDigest
 		toolID := ap.ToolID
-		_, err = a.appendEvent(ctx, tx, tenantID, ap.SessionID, store.EventApprovalGrantedModified, &toolID, nil, approvalDecisionPayload{ApprovalID: approvalID, ToolID: ap.ToolID, DecidedBy: decidedBy, Input: modifiedInput})
+		_, err = a.appendEvent(ctx, tx, tenantID, ap.SessionID, eventlog.EventApprovalGrantedModified, &toolID, nil, approvalDecisionPayload{ApprovalID: approvalID, ToolID: ap.ToolID, DecidedBy: decidedBy, Input: modifiedInput})
 		return err
 	})
 	return ap, err
@@ -195,7 +196,7 @@ func (a *Approvals) Deny(ctx context.Context, tenantID, approvalID uuid.UUID, de
 		}
 		ap.Status, ap.Reason = ApprovalDenied, reason
 		toolID := ap.ToolID
-		_, err = a.appendEvent(ctx, tx, tenantID, ap.SessionID, store.EventApprovalDenied, &toolID, nil, approvalDecisionPayload{ApprovalID: approvalID, ToolID: ap.ToolID, DecidedBy: decidedBy, Reason: reason})
+		_, err = a.appendEvent(ctx, tx, tenantID, ap.SessionID, eventlog.EventApprovalDenied, &toolID, nil, approvalDecisionPayload{ApprovalID: approvalID, ToolID: ap.ToolID, DecidedBy: decidedBy, Reason: reason})
 		return err
 	})
 	return ap, err

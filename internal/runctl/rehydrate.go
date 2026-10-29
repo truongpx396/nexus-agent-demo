@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
@@ -22,7 +23,7 @@ import (
 // internal/runctl/append.go's activeKeyID/appendEvent already are.
 func (c *Control) loadRunState(ctx context.Context, tenantID, sessionID uuid.UUID) (*kernel.RunState, store.Session, error) {
 	var sess store.Session
-	var history []store.Event
+	var history []eventlog.Event
 	err := c.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
 		sess, err = store.GetSession(ctx, tx, sessionID)
@@ -83,7 +84,7 @@ func (c *Control) loadRunState(ctx context.Context, tenantID, sessionID uuid.UUI
 // verifying the upcast path against real plaintext payload shapes).
 func (c *Control) decryptFuncFor(tenantID, sessionID uuid.UUID) kernel.DecryptFunc {
 	dekCache := map[string]crypto.DEK{}
-	return func(ctx context.Context, e store.Event) ([]byte, error) {
+	return func(ctx context.Context, e eventlog.Event) ([]byte, error) {
 		if e.KeyID == crypto.ErasureKeyID {
 			return e.Payload, nil
 		}
@@ -103,7 +104,7 @@ func (c *Control) decryptFuncFor(tenantID, sessionID uuid.UUID) kernel.DecryptFu
 	}
 }
 
-func currentActiveKeyID(history []store.Event) (string, error) {
+func currentActiveKeyID(history []eventlog.Event) (string, error) {
 	for i := len(history) - 1; i >= 0; i-- {
 		if history[i].KeyID != crypto.ErasureKeyID {
 			return history[i].KeyID, nil

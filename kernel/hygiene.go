@@ -4,8 +4,7 @@ import (
 	"sort"
 
 	"github.com/google/uuid"
-
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 )
 
 // SyntheticResult is what Hygiene reports for one orphaned tool_use. Hygiene
@@ -38,18 +37,18 @@ type SyntheticResult struct {
 // already reported. Automatic re-trigger on process restart is Phase 6's
 // queue + checkpoint (README tasks 6.1–6.3); Hygiene is the mechanism they
 // call, not the trigger.
-func Hygiene(history []store.Event) (kept []store.Event, synthesize []SyntheticResult) {
-	toolUses := make(map[uuid.UUID]store.Event, len(history))
+func Hygiene(history []eventlog.Event) (kept []eventlog.Event, synthesize []SyntheticResult) {
+	toolUses := make(map[uuid.UUID]eventlog.Event, len(history))
 	for _, e := range history {
-		if e.Type == store.EventToolUse {
+		if e.Type == eventlog.EventToolUse {
 			toolUses[e.EventID] = e
 		}
 	}
 
 	seenResultFor := make(map[uuid.UUID]bool, len(toolUses))
-	kept = make([]store.Event, 0, len(history))
+	kept = make([]eventlog.Event, 0, len(history))
 	for _, e := range history {
-		if e.Type != store.EventToolResult {
+		if e.Type != eventlog.EventToolResult {
 			kept = append(kept, e)
 			continue
 		}

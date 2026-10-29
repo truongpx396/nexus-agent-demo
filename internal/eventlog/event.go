@@ -1,8 +1,11 @@
-// Package store owns the append-only event log: the single source of truth
-// (docs/constitution.md, Principle II). Every other mutable column anywhere
-// in this system is a projection rebuildable by replaying this log — never
-// an independent source of truth.
-package store
+// Package eventlog is the append-only event log's domain model: the Event
+// envelope, its type taxonomy, who may author one, and the session lifecycle
+// statuses the log projects (docs/constitution.md, Principle II). It is the
+// innermost layer of the hexagon and imports nothing but the standard
+// library and uuid — in particular no database driver — so kernel/ can name
+// an event without depending on how, or where, events are persisted.
+// internal/store is the Postgres adapter for these types.
+package eventlog
 
 import (
 	"time"

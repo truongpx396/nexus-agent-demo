@@ -11,7 +11,7 @@ rationale is a commit message rather than a design note, the commit is cited so 
 
 ### R-01 — The kernel loop is a range-over-func generator
 
-- **Decision**: `Kernel.Run` returns `iter.Seq2[store.Event, error]`; control flow lives only there (`kernel/loop.go`).
+- **Decision**: `Kernel.Run` returns `iter.Seq2[eventlog.Event, error]`; control flow lives only there (`kernel/loop.go`).
 - **Rationale**: The original's "single async generator" survives translation exactly: the caller pulls events, back-pressure
   and cancellation are the caller's `break`/`ctx`, and a surface cannot interleave its own control flow. Typed terminal
   states fall out of the generator's single exit (FR-015–FR-017).

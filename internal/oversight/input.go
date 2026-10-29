@@ -11,6 +11,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
@@ -67,7 +68,7 @@ func (i *Inputs) RequestInput(ctx context.Context, p RequestInputParams) (InputR
 		if err := insertInputRequest(ctx, tx, &ir); err != nil {
 			return err
 		}
-		_, err := i.appendEvent(ctx, tx, p.TenantID, p.SessionID, store.EventInputRequested, nil, nil, inputRequestedPayload{InputRequestID: ir.InputRequestID, Question: p.Question, Schema: p.Schema})
+		_, err := i.appendEvent(ctx, tx, p.TenantID, p.SessionID, eventlog.EventInputRequested, nil, nil, inputRequestedPayload{InputRequestID: ir.InputRequestID, Question: p.Question, Schema: p.Schema})
 		return err
 	})
 	return ir, err
@@ -87,7 +88,7 @@ func (i *Inputs) Answer(ctx context.Context, tenantID, inputRequestID uuid.UUID,
 			return err
 		}
 		ir.Status, ir.Answer = InputAnswered, answer
-		_, err = i.appendEvent(ctx, tx, tenantID, ir.SessionID, store.EventInputAnswered, nil, nil, inputAnsweredPayload{InputRequestID: inputRequestID, Answer: answer})
+		_, err = i.appendEvent(ctx, tx, tenantID, ir.SessionID, eventlog.EventInputAnswered, nil, nil, inputAnsweredPayload{InputRequestID: inputRequestID, Answer: answer})
 		return err
 	})
 	return ir, err
@@ -122,14 +123,14 @@ func (i *Inputs) expireLocked(ctx context.Context, tx pgx.Tx, ir *InputRequest) 
 			return err
 		}
 		ir.Status, ir.Answer, ir.UsedDefault = InputAnswered, ir.DefaultAssumption, true
-		_, err := i.appendEvent(ctx, tx, ir.TenantID, ir.SessionID, store.EventInputAnswered, nil, nil, inputAnsweredPayload{InputRequestID: ir.InputRequestID, Answer: ir.DefaultAssumption, UsedDefault: true})
+		_, err := i.appendEvent(ctx, tx, ir.TenantID, ir.SessionID, eventlog.EventInputAnswered, nil, nil, inputAnsweredPayload{InputRequestID: ir.InputRequestID, Answer: ir.DefaultAssumption, UsedDefault: true})
 		return err
 	}
 	if err := updateInputStatus(ctx, tx, ir.InputRequestID, InputExpired, ""); err != nil {
 		return err
 	}
 	ir.Status = InputExpired
-	_, err := i.appendEvent(ctx, tx, ir.TenantID, ir.SessionID, store.EventInputExpired, nil, nil, inputRequestIDPayload{InputRequestID: ir.InputRequestID})
+	_, err := i.appendEvent(ctx, tx, ir.TenantID, ir.SessionID, eventlog.EventInputExpired, nil, nil, inputRequestIDPayload{InputRequestID: ir.InputRequestID})
 	return err
 }
 

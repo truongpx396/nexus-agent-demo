@@ -136,7 +136,8 @@ nexus-agent-demo/
 │   ├── cost/                   # money, meters, price book, reserve/reconcile, budget decisions
 │   ├── audit/                  # chain builder, signer client, verifier, anchor
 │   ├── crypto/                 # KEK/DEK envelope, seal/open, shred, derived-artifact reconcile
-│   ├── store/                  # events, projections, checkpoints, snapshots, claims, RLS scoping
+│   ├── eventlog/               # event-log domain model: Event, type taxonomy, session statuses — no persistence
+│   ├── store/                  # Postgres adapter: events, projections, checkpoints, snapshots, claims, RLS scoping
 │   ├── queue/                  # Queue port + Redis Streams adapter + session-key lock
 │   ├── reliability/            # classifier, backoff, breaker, stuck detector
 │   ├── runctl/                 # steer, cancel, resume, replay, fork, tightenAutonomy

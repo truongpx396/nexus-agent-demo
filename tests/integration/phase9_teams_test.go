@@ -23,6 +23,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
@@ -110,10 +111,10 @@ func mustBootstrapSessionKey(t *testing.T, r *oversightRig, sessionID uuid.UUID)
 		t.Fatalf("seal bootstrap event: %v", err)
 	}
 	err = r.st.InTenantTx(context.Background(), r.tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		_, err := store.Append(ctx, tx, store.Event{
+		_, err := store.Append(ctx, tx, eventlog.Event{
 			EventID: uuid.New(), SessionID: sessionID, TenantID: r.tenantID,
-			SchemaVersion: store.CurrentSchemaVersion, Type: store.EventContent,
-			Payload: sealed, PayloadDigest: digest, KeyID: keyID, Actor: store.ActorSystem,
+			SchemaVersion: eventlog.CurrentSchemaVersion, Type: eventlog.EventContent,
+			Payload: sealed, PayloadDigest: digest, KeyID: keyID, Actor: eventlog.ActorSystem,
 		})
 		return err
 	})
@@ -260,13 +261,13 @@ func TestReadBoard_FoldsTaintFromCleanCard_NeverFromFlagged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list reader events: %v", err)
 	}
-	if !hasEventType(events, store.EventTaintTransition) {
+	if !hasEventType(events, eventlog.EventTaintTransition) {
 		t.Fatalf("reader's own log never shows a taint_transition — the clean card's read never folded")
 	}
 
 	var transitions int
 	for _, e := range events {
-		if e.Type == store.EventTaintTransition {
+		if e.Type == eventlog.EventTaintTransition {
 			transitions++
 		}
 	}
@@ -328,10 +329,10 @@ func TestCreateTeam_SpawnsMembersAndCompletesWhenBoardEmptyAndMembersTerminal(t 
 	if err != nil {
 		t.Fatalf("list coordinator events: %v", err)
 	}
-	if !hasEventType(coordinatorEvents, store.EventTeamCreated) {
+	if !hasEventType(coordinatorEvents, eventlog.EventTeamCreated) {
 		t.Fatalf("coordinator's own log never shows team_created")
 	}
-	if !hasEventType(coordinatorEvents, store.EventTeamEnded) {
+	if !hasEventType(coordinatorEvents, eventlog.EventTeamEnded) {
 		t.Fatalf("coordinator's own log never shows team_ended")
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
@@ -74,7 +75,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	defer unsubscribe()
 
 	dekCache := map[string]crypto.DEK{}
-	write := func(e store.Event) bool {
+	write := func(e eventlog.Event) bool {
 		dto, derr := s.toEventDTO(r.Context(), tenantID, e, dekCache)
 		if derr != nil {
 			writeSSEFrame(w, "error", map[string]string{"error": derr.Error()})
@@ -83,7 +84,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		writeSSEFrame(w, string(e.Type), dto)
 		flusher.Flush()
-		return e.Type != store.EventTerminal
+		return e.Type != eventlog.EventTerminal
 	}
 
 	history, err := s.listEvents(r.Context(), tenantID, id)
@@ -132,8 +133,8 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) listEvents(ctx context.Context, tenantID, sessionID uuid.UUID) ([]store.Event, error) {
-	var events []store.Event
+func (s *Server) listEvents(ctx context.Context, tenantID, sessionID uuid.UUID) ([]eventlog.Event, error) {
+	var events []eventlog.Event
 	err := s.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var lerr error
 		events, lerr = store.ListEvents(ctx, tx, sessionID)
@@ -146,7 +147,7 @@ func (s *Server) listEvents(ctx context.Context, tenantID, sessionID uuid.UUID) 
 // audience (the principal check in handleEvents has already established
 // this request IS that audience). dekCache avoids re-unwrapping the same
 // key (in practice, every event in one session shares it) once per event.
-func (s *Server) toEventDTO(ctx context.Context, tenantID uuid.UUID, e store.Event, dekCache map[string]crypto.DEK) (eventDTO, error) {
+func (s *Server) toEventDTO(ctx context.Context, tenantID uuid.UUID, e eventlog.Event, dekCache map[string]crypto.DEK) (eventDTO, error) {
 	dto := eventDTO{
 		EventID:   e.EventID.String(),
 		Seq:       e.Seq,
@@ -160,7 +161,7 @@ func (s *Server) toEventDTO(ctx context.Context, tenantID uuid.UUID, e store.Eve
 		ref := e.PairRef.String()
 		dto.PairRef = &ref
 	}
-	if e.Type == store.EventThought {
+	if e.Type == eventlog.EventThought {
 		return dto, nil // never shown, even to the run's own audience
 	}
 

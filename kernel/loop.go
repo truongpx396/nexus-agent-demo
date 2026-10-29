@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 	"github.com/truongpx396/nexus-agent-demo/internal/promptctx"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
@@ -178,7 +179,7 @@ type RunState struct {
 	TenantID   uuid.UUID
 	SessionID  uuid.UUID
 	Seal       SealFunc
-	History    []store.Event
+	History    []eventlog.Event
 	Transcript []provider.Message
 
 	// ToolUseIDs maps a tool_use event's internal EventID to the
@@ -205,8 +206,8 @@ type RunState struct {
 // appended event is durably committed (store.Append, inside InTenantTx)
 // before it is yielded, so a caller forwarding these events (e.g. over SSE)
 // never shows a client something that isn't already in the log.
-func (k *Kernel) Run(ctx context.Context, st *RunState, cfg RunConfig) iter.Seq2[store.Event, error] {
-	return func(yield func(store.Event, error) bool) {
+func (k *Kernel) Run(ctx context.Context, st *RunState, cfg RunConfig) iter.Seq2[eventlog.Event, error] {
+	return func(yield func(eventlog.Event, error) bool) {
 		ctx, rootSpan := k.startSpan(ctx, "kernel.run", obs.ObservationAgent, obs.Attrs{
 			"session.id": st.SessionID.String(), "tenant.id": st.TenantID.String(),
 		})
@@ -236,8 +237,8 @@ func (k *Kernel) Run(ctx context.Context, st *RunState, cfg RunConfig) iter.Seq2
 // kernel.Kernel.Continue — the same "rehydrate arbitrary existing history,
 // then continue" path a crash-recovered session already uses, rather than
 // teaching Run a second "history already partially exists" mode.
-func (k *Kernel) Seed(ctx context.Context, st *RunState, cfg RunConfig) iter.Seq2[store.Event, error] {
-	return func(yield func(store.Event, error) bool) {
+func (k *Kernel) Seed(ctx context.Context, st *RunState, cfg RunConfig) iter.Seq2[eventlog.Event, error] {
+	return func(yield func(eventlog.Event, error) bool) {
 		ctx, rootSpan := k.startSpan(ctx, "kernel.seed", obs.ObservationAgent, obs.Attrs{
 			"session.id": st.SessionID.String(), "tenant.id": st.TenantID.String(),
 		})
@@ -249,16 +250,16 @@ func (k *Kernel) Seed(ctx context.Context, st *RunState, cfg RunConfig) iter.Seq
 // seed is Run/Seed's shared preamble. Returns false the moment yield does
 // (caller stop) or an error is yielded — Run's own signal to skip runTurns
 // rather than enter it after an already-failed/stopped seed.
-func (k *Kernel) seed(ctx context.Context, st *RunState, cfg RunConfig, yield func(store.Event, error) bool) bool {
-	if err := k.updateStatus(ctx, st, store.SessionStatusRunning, nil); err != nil {
-		yield(store.Event{}, err)
+func (k *Kernel) seed(ctx context.Context, st *RunState, cfg RunConfig, yield func(eventlog.Event, error) bool) bool {
+	if err := k.updateStatus(ctx, st, eventlog.SessionStatusRunning, nil); err != nil {
+		yield(eventlog.Event{}, err)
 		return false
 	}
 
 	for _, toolID := range cfg.LoadedTools {
-		ev, err := k.appendEvent(ctx, st, store.EventToolLoaded, store.ActorSystem, &toolID, nil, nil, toolLoadedPayload{ToolID: toolID})
+		ev, err := k.appendEvent(ctx, st, eventlog.EventToolLoaded, eventlog.ActorSystem, &toolID, nil, nil, toolLoadedPayload{ToolID: toolID})
 		if err != nil {
-			yield(store.Event{}, err)
+			yield(eventlog.Event{}, err)
 			return false
 		}
 		// Deliberately NOT added to st.Transcript: the model already
@@ -272,9 +273,9 @@ func (k *Kernel) seed(ctx context.Context, st *RunState, cfg RunConfig, yield fu
 	}
 
 	if len(cfg.MemorySources) > 0 {
-		ev, err := k.appendEvent(ctx, st, store.EventMemoryLoaded, store.ActorSystem, nil, nil, nil, memoryLoadedPayload{Sources: cfg.MemorySources})
+		ev, err := k.appendEvent(ctx, st, eventlog.EventMemoryLoaded, eventlog.ActorSystem, nil, nil, nil, memoryLoadedPayload{Sources: cfg.MemorySources})
 		if err != nil {
-			yield(store.Event{}, err)
+			yield(eventlog.Event{}, err)
 			return false
 		}
 		// Deliberately NOT added to st.Transcript, same reasoning as
@@ -289,9 +290,9 @@ func (k *Kernel) seed(ctx context.Context, st *RunState, cfg RunConfig, yield fu
 	}
 
 	if cfg.Input != "" {
-		ev, err := k.appendEvent(ctx, st, store.EventUserMessage, store.ActorUser, nil, nil, nil, userMessagePayload{Body: cfg.Input})
+		ev, err := k.appendEvent(ctx, st, eventlog.EventUserMessage, eventlog.ActorUser, nil, nil, nil, userMessagePayload{Body: cfg.Input})
 		if err != nil {
-			yield(store.Event{}, err)
+			yield(eventlog.Event{}, err)
 			return false
 		}
 		st.Transcript = append(st.Transcript, provider.TextMessage("user", cfg.Input))
@@ -315,15 +316,15 @@ func (k *Kernel) seed(ctx context.Context, st *RunState, cfg RunConfig, yield fu
 // internal/runctl + the real Checkpoint artifact (README task 6.3) still
 // own that; this is the same kind of honest interim WorkspaceRoot already
 // is for the sandbox.
-func (k *Kernel) Resume(ctx context.Context, st *RunState, cfg RunConfig, res PendingResolution) iter.Seq2[store.Event, error] {
-	return func(yield func(store.Event, error) bool) {
+func (k *Kernel) Resume(ctx context.Context, st *RunState, cfg RunConfig, res PendingResolution) iter.Seq2[eventlog.Event, error] {
+	return func(yield func(eventlog.Event, error) bool) {
 		ctx, rootSpan := k.startSpan(ctx, "kernel.resume", obs.ObservationAgent, obs.Attrs{
 			"session.id": st.SessionID.String(), "tenant.id": st.TenantID.String(),
 		})
 		defer func() { rootSpan.End(terminalSpanAttrs(st)) }()
 
-		if err := k.updateStatus(ctx, st, store.SessionStatusRunning, nil); err != nil {
-			yield(store.Event{}, err)
+		if err := k.updateStatus(ctx, st, eventlog.SessionStatusRunning, nil); err != nil {
+			yield(eventlog.Event{}, err)
 			return
 		}
 
@@ -337,7 +338,7 @@ func (k *Kernel) Resume(ctx context.Context, st *RunState, cfg RunConfig, res Pe
 		case ApprovalDecisionGranted, ApprovalDecisionGrantedModified:
 			executor, ok := k.Tools.(ApprovedExecutor)
 			if !ok {
-				yield(store.Event{}, fmt.Errorf("kernel: Resume called but the configured ToolExecutor does not implement ApprovedExecutor"))
+				yield(eventlog.Event{}, fmt.Errorf("kernel: Resume called but the configured ToolExecutor does not implement ApprovedExecutor"))
 				return
 			}
 			execCtx := ExecContext{TenantID: st.TenantID, SessionID: st.SessionID, AutonomyLevel: cfg.AutonomyLevel}
@@ -351,7 +352,7 @@ func (k *Kernel) Resume(ctx context.Context, st *RunState, cfg RunConfig, res Pe
 		toolID := res.ToolID
 		ev, err := k.appendToolResult(ctx, st, res.ToolUseEventID, &toolID, result)
 		if err != nil {
-			yield(store.Event{}, err)
+			yield(eventlog.Event{}, err)
 			return
 		}
 		st.Transcript = append(st.Transcript, provider.ToolResultMessage(st.ToolUseIDs[res.ToolUseEventID], resultText(result), result.IsError))
@@ -372,7 +373,7 @@ func (k *Kernel) Resume(ctx context.Context, st *RunState, cfg RunConfig, res Pe
 			return
 		}
 		if result.AwaitingApproval {
-			yield(store.Event{}, fmt.Errorf("kernel: Resume's ApprovedExecutor unexpectedly resolved AwaitingApproval for %s", res.ToolID))
+			yield(eventlog.Event{}, fmt.Errorf("kernel: Resume's ApprovedExecutor unexpectedly resolved AwaitingApproval for %s", res.ToolID))
 			return
 		}
 
@@ -390,15 +391,15 @@ func (k *Kernel) Resume(ctx context.Context, st *RunState, cfg RunConfig, res Pe
 // ExecuteApproved, which re-runs an approval-gated Tool.Call on purpose):
 // the child already ran; this only delivers its outcome as the paired
 // tool_result.
-func (k *Kernel) ResumeDelegation(ctx context.Context, st *RunState, cfg RunConfig, res DelegationResolution) iter.Seq2[store.Event, error] {
-	return func(yield func(store.Event, error) bool) {
+func (k *Kernel) ResumeDelegation(ctx context.Context, st *RunState, cfg RunConfig, res DelegationResolution) iter.Seq2[eventlog.Event, error] {
+	return func(yield func(eventlog.Event, error) bool) {
 		ctx, rootSpan := k.startSpan(ctx, "kernel.resume_delegation", obs.ObservationAgent, obs.Attrs{
 			"session.id": st.SessionID.String(), "tenant.id": st.TenantID.String(),
 		})
 		defer func() { rootSpan.End(terminalSpanAttrs(st)) }()
 
-		if err := k.updateStatus(ctx, st, store.SessionStatusRunning, nil); err != nil {
-			yield(store.Event{}, err)
+		if err := k.updateStatus(ctx, st, eventlog.SessionStatusRunning, nil); err != nil {
+			yield(eventlog.Event{}, err)
 			return
 		}
 
@@ -415,7 +416,7 @@ func (k *Kernel) ResumeDelegation(ctx context.Context, st *RunState, cfg RunConf
 		toolID := res.ToolID
 		ev, err := k.appendToolResult(ctx, st, res.ToolUseEventID, &toolID, result)
 		if err != nil {
-			yield(store.Event{}, err)
+			yield(eventlog.Event{}, err)
 			return
 		}
 		st.Transcript = append(st.Transcript, provider.ToolResultMessage(st.ToolUseIDs[res.ToolUseEventID], resultText(result), result.IsError))
@@ -441,15 +442,15 @@ func (k *Kernel) ResumeDelegation(ctx context.Context, st *RunState, cfg RunConf
 // a synthesized "interrupted_before_execution" result before the next model
 // call, never a silent re-execution — Hygiene's own doc comment already
 // names Phase 6's queue+checkpoint as the trigger this method is.
-func (k *Kernel) Continue(ctx context.Context, st *RunState, cfg RunConfig) iter.Seq2[store.Event, error] {
-	return func(yield func(store.Event, error) bool) {
+func (k *Kernel) Continue(ctx context.Context, st *RunState, cfg RunConfig) iter.Seq2[eventlog.Event, error] {
+	return func(yield func(eventlog.Event, error) bool) {
 		ctx, rootSpan := k.startSpan(ctx, "kernel.continue", obs.ObservationAgent, obs.Attrs{
 			"session.id": st.SessionID.String(), "tenant.id": st.TenantID.String(),
 		})
 		defer func() { rootSpan.End(terminalSpanAttrs(st)) }()
 
-		if err := k.updateStatus(ctx, st, store.SessionStatusRunning, nil); err != nil {
-			yield(store.Event{}, err)
+		if err := k.updateStatus(ctx, st, eventlog.SessionStatusRunning, nil); err != nil {
+			yield(eventlog.Event{}, err)
 			return
 		}
 		k.runTurns(ctx, st, cfg, yield, 1)
@@ -468,21 +469,21 @@ func (k *Kernel) Continue(ctx context.Context, st *RunState, cfg RunConfig) iter
 // must already be rehydrated (History/Transcript populated via
 // kernel.Rehydrate), the same contract Resume/Continue already have;
 // ResumeConversation itself does no replay or decrypt of its own.
-func (k *Kernel) ResumeConversation(ctx context.Context, st *RunState, cfg RunConfig, input string) iter.Seq2[store.Event, error] {
-	return func(yield func(store.Event, error) bool) {
+func (k *Kernel) ResumeConversation(ctx context.Context, st *RunState, cfg RunConfig, input string) iter.Seq2[eventlog.Event, error] {
+	return func(yield func(eventlog.Event, error) bool) {
 		ctx, rootSpan := k.startSpan(ctx, "kernel.resume_conversation", obs.ObservationAgent, obs.Attrs{
 			"session.id": st.SessionID.String(), "tenant.id": st.TenantID.String(),
 		})
 		defer func() { rootSpan.End(terminalSpanAttrs(st)) }()
 
-		if err := k.updateStatus(ctx, st, store.SessionStatusRunning, nil); err != nil {
-			yield(store.Event{}, err)
+		if err := k.updateStatus(ctx, st, eventlog.SessionStatusRunning, nil); err != nil {
+			yield(eventlog.Event{}, err)
 			return
 		}
 
-		ev, err := k.appendEvent(ctx, st, store.EventUserMessage, store.ActorUser, nil, nil, nil, userMessagePayload{Body: input})
+		ev, err := k.appendEvent(ctx, st, eventlog.EventUserMessage, eventlog.ActorUser, nil, nil, nil, userMessagePayload{Body: input})
 		if err != nil {
-			yield(store.Event{}, err)
+			yield(eventlog.Event{}, err)
 			return
 		}
 		st.Transcript = append(st.Transcript, provider.TextMessage("user", input))

@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
@@ -41,7 +42,7 @@ type contextPrunedPayload struct {
 // condensationPayload is what EventCondensation carries — Degraded records
 // whether the no-model extractive fallback ran (task 7.2/7.11's
 // degrade-capable requirement) instead of the metered condenser model.
-// Mirrors internal/store.Condensation's own three fields plus this one;
+// Mirrors internal/eventlog.Condensation's own three fields plus this one;
 // condensation_test.go's forbidden-substring scan (is_error, completed,
 // succeeded, effect_class, tool_result, outcome) doesn't match "degraded",
 // so this stays consistent with that invariant.
@@ -121,20 +122,20 @@ type budgetDecisionPayload struct {
 	Reserved string `json:"reserved,omitempty"`
 }
 
-func (k *Kernel) appendEvent(ctx context.Context, st *RunState, typ store.EventType, actor store.Actor, toolID *string, pairRef *uuid.UUID, modelID *string, payload any) (store.Event, error) {
+func (k *Kernel) appendEvent(ctx context.Context, st *RunState, typ eventlog.EventType, actor eventlog.Actor, toolID *string, pairRef *uuid.UUID, modelID *string, payload any) (eventlog.Event, error) {
 	plaintext, err := json.Marshal(payload)
 	if err != nil {
-		return store.Event{}, fmt.Errorf("marshal %s payload: %w", typ, err)
+		return eventlog.Event{}, fmt.Errorf("marshal %s payload: %w", typ, err)
 	}
 	sealed, digest, keyID, err := st.Seal(plaintext)
 	if err != nil {
-		return store.Event{}, fmt.Errorf("seal %s payload: %w", typ, err)
+		return eventlog.Event{}, fmt.Errorf("seal %s payload: %w", typ, err)
 	}
-	e := store.Event{
+	e := eventlog.Event{
 		EventID:       uuid.New(),
 		SessionID:     st.SessionID,
 		TenantID:      st.TenantID,
-		SchemaVersion: store.CurrentSchemaVersion,
+		SchemaVersion: eventlog.CurrentSchemaVersion,
 		Type:          typ,
 		Payload:       sealed,
 		PayloadDigest: digest,
@@ -144,7 +145,7 @@ func (k *Kernel) appendEvent(ctx context.Context, st *RunState, typ store.EventT
 		PairRef:       pairRef,
 		ModelID:       modelID,
 	}
-	var out store.Event
+	var out eventlog.Event
 	err = k.Store.InTenantTx(ctx, st.TenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var aerr error
 		out, aerr = store.Append(ctx, tx, e)
@@ -157,46 +158,46 @@ func (k *Kernel) appendEvent(ctx context.Context, st *RunState, typ store.EventT
 		return nil
 	})
 	if err != nil {
-		return store.Event{}, fmt.Errorf("append %s: %w", typ, err)
+		return eventlog.Event{}, fmt.Errorf("append %s: %w", typ, err)
 	}
 	st.History = append(st.History, out)
 	return out, nil
 }
 
-func (k *Kernel) appendContent(ctx context.Context, st *RunState, modelID, text string) (store.Event, error) {
-	return k.appendEvent(ctx, st, store.EventContent, store.ActorModel, nil, nil, &modelID, contentPayload{Body: text})
+func (k *Kernel) appendContent(ctx context.Context, st *RunState, modelID, text string) (eventlog.Event, error) {
+	return k.appendEvent(ctx, st, eventlog.EventContent, eventlog.ActorModel, nil, nil, &modelID, contentPayload{Body: text})
 }
 
-func (k *Kernel) appendThought(ctx context.Context, st *RunState, modelID string, opaque []byte) (store.Event, error) {
-	return k.appendEvent(ctx, st, store.EventThought, store.ActorModel, nil, nil, &modelID, thoughtPayload{Opaque: opaque})
+func (k *Kernel) appendThought(ctx context.Context, st *RunState, modelID string, opaque []byte) (eventlog.Event, error) {
+	return k.appendEvent(ctx, st, eventlog.EventThought, eventlog.ActorModel, nil, nil, &modelID, thoughtPayload{Opaque: opaque})
 }
 
-func (k *Kernel) appendToolUseEvent(ctx context.Context, st *RunState, modelID string, tu ToolUseRequest) (store.Event, error) {
+func (k *Kernel) appendToolUseEvent(ctx context.Context, st *RunState, modelID string, tu ToolUseRequest) (eventlog.Event, error) {
 	toolID := tu.ToolName
-	return k.appendEvent(ctx, st, store.EventToolUse, store.ActorModel, &toolID, nil, &modelID, toolUsePayload{ToolName: tu.ToolName, Input: tu.Input, ToolUseID: tu.ToolUseID})
+	return k.appendEvent(ctx, st, eventlog.EventToolUse, eventlog.ActorModel, &toolID, nil, &modelID, toolUsePayload{ToolName: tu.ToolName, Input: tu.Input, ToolUseID: tu.ToolUseID})
 }
 
-func (k *Kernel) appendToolResult(ctx context.Context, st *RunState, pairRef uuid.UUID, toolID *string, result ToolResult) (store.Event, error) {
-	actor := store.ActorTool
+func (k *Kernel) appendToolResult(ctx context.Context, st *RunState, pairRef uuid.UUID, toolID *string, result ToolResult) (eventlog.Event, error) {
+	actor := eventlog.ActorTool
 	if result.Synthetic || result.PermissionDenied || result.AwaitingApproval {
-		actor = store.ActorSystem // the platform produced this outcome, not the tool itself
+		actor = eventlog.ActorSystem // the platform produced this outcome, not the tool itself
 	}
 	ref := pairRef
 	// toolResultPayload's fields are declared in the same names/types/order
 	// as ToolResult specifically so this conversion stays valid — extend
 	// both structs together.
-	return k.appendEvent(ctx, st, store.EventToolResult, actor, toolID, &ref, nil, toolResultPayload(result))
+	return k.appendEvent(ctx, st, eventlog.EventToolResult, actor, toolID, &ref, nil, toolResultPayload(result))
 }
 
-func (k *Kernel) appendApprovalRequested(ctx context.Context, st *RunState, toolID *string, reason, askKind string) (store.Event, error) {
+func (k *Kernel) appendApprovalRequested(ctx context.Context, st *RunState, toolID *string, reason, askKind string) (eventlog.Event, error) {
 	tid := ""
 	if toolID != nil {
 		tid = *toolID
 	}
-	return k.appendEvent(ctx, st, store.EventApprovalRequested, store.ActorSystem, toolID, nil, nil, approvalRequestedPayload{ToolID: tid, Reason: reason, AskKind: askKind})
+	return k.appendEvent(ctx, st, eventlog.EventApprovalRequested, eventlog.ActorSystem, toolID, nil, nil, approvalRequestedPayload{ToolID: tid, Reason: reason, AskKind: askKind})
 }
 
-// appendBudgetDecision appends the store.EventBudgetDecision every Reserve
+// appendBudgetDecision appends the eventlog.EventBudgetDecision every Reserve
 // resolution produces (README task 4.6 — every resolution, including
 // DecisionSkip), regardless of whether the reservation was ultimately
 // granted or refused. This is a separate durable write from
@@ -204,7 +205,7 @@ func (k *Kernel) appendApprovalRequested(ctx context.Context, st *RunState, tool
 // internal/cost/gate.go's doc comment on Gate for why the two aren't one
 // shared transaction): internal/cost never appends to the event log
 // itself — store.Append is the log's one sanctioned writer.
-func (k *Kernel) appendBudgetDecision(ctx context.Context, st *RunState, res cost.Reservation) (store.Event, error) {
+func (k *Kernel) appendBudgetDecision(ctx context.Context, st *RunState, res cost.Reservation) (eventlog.Event, error) {
 	payload := budgetDecisionPayload{
 		Decision: string(res.Decision.Kind),
 		Reason:   res.Decision.Reason,
@@ -213,11 +214,11 @@ func (k *Kernel) appendBudgetDecision(ctx context.Context, st *RunState, res cos
 	if res.Decision.BudgetID != nil {
 		payload.BudgetID = res.Decision.BudgetID.String()
 	}
-	return k.appendEvent(ctx, st, store.EventBudgetDecision, store.ActorSystem, nil, nil, nil, payload)
+	return k.appendEvent(ctx, st, eventlog.EventBudgetDecision, eventlog.ActorSystem, nil, nil, nil, payload)
 }
 
-func (k *Kernel) appendTerminal(ctx context.Context, st *RunState, payload terminalEventPayload) (store.Event, error) {
-	return k.appendEvent(ctx, st, store.EventTerminal, store.ActorSystem, nil, nil, nil, payload)
+func (k *Kernel) appendTerminal(ctx context.Context, st *RunState, payload terminalEventPayload) (eventlog.Event, error) {
+	return k.appendEvent(ctx, st, eventlog.EventTerminal, eventlog.ActorSystem, nil, nil, nil, payload)
 }
 
 func (k *Kernel) updateStatus(ctx context.Context, st *RunState, status string, terminalReason *string) error {
