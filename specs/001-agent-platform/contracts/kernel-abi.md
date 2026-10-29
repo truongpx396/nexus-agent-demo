@@ -139,7 +139,7 @@ func ReplayFullProjection(history []Event, decrypt TerminalDecryptFunc) (Project
 
 `SealFunc` (seal one payload → `sealed, plaintextDigest, keyID`) is declared **in `kernel/`**, not imported, so the loop needs no
 crypto. The audit receipt that extends the chain inside the append transaction is the Postgres adapter's `Hooks.Receipt`
-(`internal/eventlog/postgres`), wired in `cmd/nexusd`, so the loop can run over `internal/eventlog/inmem` with no database.
+(`internal/eventlog/postgres`), wired in `cmd/nexusd`, so the loop's own guarantees are unit-tested over `internal/eventlog/inmem` (`kernel/loop_test.go`) with no database.
 
 ## 5. Oversight (FR-055–FR-059)
 
