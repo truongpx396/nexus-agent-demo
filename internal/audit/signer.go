@@ -9,7 +9,7 @@ import (
 	"net"
 )
 
-// Signer is what internal/audit.Chain needs to turn a chain/anchor hash
+// Signer is what internal/audit/postgres.Chain needs to turn a chain/anchor hash
 // into a signature: sign-only, never a way to read the key itself (task
 // 5.1). SignerClient below is the real, unix-socket-backed implementation;
 // tests use a local fake instead of standing up cmd/signerd.
