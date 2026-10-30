@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
@@ -70,9 +69,7 @@ func (g *Gate) Reconcile(ctx context.Context, res Reservation, usage provider.Us
 	}
 
 	if len(records) > 0 {
-		if err := g.store.InTenantTx(ctx, res.TenantID, func(ctx context.Context, tx pgx.Tx) error {
-			return RecordUsage(ctx, tx, res.TenantID, res.SessionID, records)
-		}); err != nil {
+		if err := g.ledger.RecordUsage(ctx, res.TenantID, res.SessionID, records); err != nil {
 			return fmt.Errorf("cost: reconcile: %w", err)
 		}
 	}
@@ -137,9 +134,7 @@ func (g *Gate) ReconcileEmbedding(ctx context.Context, res Reservation, tokensUs
 	}
 
 	if len(records) > 0 {
-		if err := g.store.InTenantTx(ctx, res.TenantID, func(ctx context.Context, tx pgx.Tx) error {
-			return RecordUsage(ctx, tx, res.TenantID, res.SessionID, records)
-		}); err != nil {
+		if err := g.ledger.RecordUsage(ctx, res.TenantID, res.SessionID, records); err != nil {
 			return fmt.Errorf("cost: reconcile embedding: %w", err)
 		}
 	}
@@ -177,7 +172,7 @@ func (g *Gate) finishReconcile(ctx context.Context, res Reservation, actual Mone
 		g.mu.Unlock()
 	}
 	if res.tenantBudget != nil {
-		if err := g.redis.Release(ctx, res.tenantBudget.ID, res.tenantEpoch, delta.Micros); err != nil {
+		if err := g.counters.Release(ctx, res.tenantBudget.ID, res.tenantEpoch, delta.Micros); err != nil {
 			log.Error().Err(err).Any("tenant_id", res.TenantID).Any("session_id", res.SessionID).Msg("cost: failed to release tenant reservation delta")
 		}
 	}
@@ -207,7 +202,5 @@ func (g *Gate) Record(ctx context.Context, tenantID, sessionID uuid.UUID, meter 
 	if err != nil {
 		return fmt.Errorf("cost: record: %w", err)
 	}
-	return g.store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		return RecordUsage(ctx, tx, tenantID, sessionID, []CostRecord{{Meter: meter, Quantity: qty, Unit: m.Unit, ModelID: modelID, Cost: c}})
-	})
+	return g.ledger.RecordUsage(ctx, tenantID, sessionID, []CostRecord{{Meter: meter, Quantity: qty, Unit: m.Unit, ModelID: modelID, Cost: c}})
 }

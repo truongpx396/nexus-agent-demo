@@ -8,6 +8,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/controlplane"
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
+	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
@@ -49,7 +50,7 @@ func (s Sessions) CreateSession(ctx context.Context, req controlplane.AdmitRunV1
 			return err
 		}
 		if budgetCeiling != nil {
-			if _, err := cost.CreateBudget(ctx, tx, req.TenantID, cost.BudgetScopeSession, &req.SessionID, *budgetCeiling); err != nil {
+			if _, err := costpg.CreateBudget(ctx, tx, req.TenantID, cost.BudgetScopeSession, &req.SessionID, *budgetCeiling); err != nil {
 				return err
 			}
 		}

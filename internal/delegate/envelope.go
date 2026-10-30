@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
+	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 )
 
@@ -167,7 +168,7 @@ func (g *EnvelopeBudgetGate) priceUsage(ctx context.Context, modelID string, usa
 	var pb *cost.PriceBook
 	err := g.Store.InTenantTx(ctx, g.TenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var lerr error
-		pb, lerr = cost.LoadPriceBook(ctx, tx)
+		pb, lerr = costpg.LoadPriceBook(ctx, tx)
 		return lerr
 	})
 	if err != nil {
