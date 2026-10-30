@@ -9,6 +9,8 @@
 package integration
 
 import (
+	runctlpg "github.com/truongpx396/nexus-agent-demo/internal/runctl/postgres"
+
 	"context"
 	"encoding/json"
 	"testing"
@@ -214,7 +216,7 @@ func TestRuleOfTwo_TaintStateSurvivesASimulatedProcessRestart(t *testing.T) {
 		Budget:   kernel.NoopBudgetGate{},
 		Log:      postgres.New(st, postgres.Hooks{}),
 	}
-	ctl := &runctl.Control{Store: st, Keys: keys, Kernel: kB, System: "test", MaxTurns: 5}
+	ctl := &runctl.Control{Store: runctlpg.New(st, keys, nil), Kernel: kB, System: "test", MaxTurns: 5}
 
 	// ResumeConversation itself now only durably appends the message
 	// (internal/runctl/converse.go's own doc comment) — actually

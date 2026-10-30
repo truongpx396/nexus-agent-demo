@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	runctlpg "github.com/truongpx396/nexus-agent-demo/internal/runctl/postgres"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
@@ -87,7 +89,7 @@ func newToolPipeline(st *store.Store, keyStore *cryptopg.KeyStore, chain *auditp
 		builtin.ActivateSkill{
 			Catalog:  skillCatalog,
 			Registry: reg,
-			Events:   runctl.NewSkillEventRecorder(st, keyStore, chain),
+			Events:   runctl.NewSkillEventRecorder(runctlpg.New(st, keyStore, chain)),
 			Admitted: func(tenantID uuid.UUID) []string {
 				cfg, err := config.LoadForTenant(context.Background(), st, tenantID)
 				if err != nil {
@@ -173,7 +175,7 @@ func newToolPipeline(st *store.Store, keyStore *cryptopg.KeyStore, chain *auditp
 		// directly, not a *runctl.Control, precisely so this can happen
 		// before a Control (which needs the *kernel.Kernel this very
 		// pipeline feeds into) exists.
-		Claims: runctl.NewClaimTracker(st, keyStore, chain),
+		Claims: runctl.NewClaimTracker(runctlpg.New(st, keyStore, chain)),
 		// Dynamic (README task 11.1): a ref the static Manifest above
 		// doesn't know about — every per-tenant MCP tool, by construction
 		// — falls through to mcpResolver instead of failing immediately.

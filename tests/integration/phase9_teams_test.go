@@ -13,6 +13,8 @@
 package integration
 
 import (
+	runctlpg "github.com/truongpx396/nexus-agent-demo/internal/runctl/postgres"
+
 	"context"
 	"strings"
 	"sync"
@@ -47,7 +49,7 @@ func buildTeamsRig(t *testing.T, r *oversightRig, prov provider.Provider) (*team
 		Log:      postgres.New(r.st, postgres.Hooks{Receipt: r.receiptFunc()}),
 	}
 	approvals := oversight.NewApprovals(oversightpg.New(r.st, r.keys, r.chain))
-	ctl := &runctl.Control{Store: r.st, Keys: r.keys, Chain: r.chain, Approvals: approvals, Kernel: k, System: "test", MaxTurns: 10}
+	ctl := &runctl.Control{Store: runctlpg.New(r.st, r.keys, r.chain), Approvals: approvals, Kernel: k, System: "test", MaxTurns: 10}
 
 	svc := teams.NewService(r.st, r.keys, r.chain)
 	svc.Wire(teams.Config{Kernel: k, Canceler: ctl, System: "test", MaxTurns: 10})

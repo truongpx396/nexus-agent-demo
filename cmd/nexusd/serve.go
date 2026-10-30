@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"time"
 
+	runctlpg "github.com/truongpx396/nexus-agent-demo/internal/runctl/postgres"
+
 	queueredis "github.com/truongpx396/nexus-agent-demo/internal/queue/redis"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -247,7 +249,7 @@ func serve(ctx context.Context) error {
 	grants := obs.NewGrants(obspg.NewGrantStore(st, keyStore, chain))
 
 	ctl := &runctl.Control{
-		Store: st, Keys: keyStore, Chain: chain, Approvals: approvals, Inputs: inputs, Kernel: k,
+		Store: runctlpg.New(st, keyStore, chain), Approvals: approvals, Inputs: inputs, Kernel: k,
 		System: starter.system, Catalog: catalog, MaxTurns: starter.maxTurns, CatalogManifestDigest: catalogManifestDigest,
 		Queue: queuePort,
 	}
@@ -326,10 +328,10 @@ func serve(ctx context.Context) error {
 	stopTeamBackstop := startTeamBackstopLoop(ctx, teamsSvc)
 	defer stopTeamBackstop()
 
-	stopIdleConversationSweep := startIdleConversationSweepLoop(ctx, ctl)
+	stopIdleConversationSweep := startIdleConversationSweepLoop(ctx, st, ctl)
 	defer stopIdleConversationSweep()
 
-	stopWorkers := startQueueWorkers(ctx, redisClient, queuePort, srv, ctl, delegations, teamsSvc)
+	stopWorkers := startQueueWorkers(ctx, st, redisClient, queuePort, srv, ctl, delegations, teamsSvc)
 	defer stopWorkers()
 
 	stopEventBus := startEventBus(ctx, redisClient, srv)

@@ -16,6 +16,8 @@
 package integration
 
 import (
+	runctlpg "github.com/truongpx396/nexus-agent-demo/internal/runctl/postgres"
+
 	"context"
 	"fmt"
 	"sync"
@@ -238,7 +240,7 @@ func (r *phase6Rig) seedOneEvent(t *testing.T, sessionID uuid.UUID, sealFn kerne
 
 func (r *phase6Rig) control(k *kernel.Kernel, approvals *oversight.Approvals, inputs *oversight.Inputs) *runctl.Control {
 	return &runctl.Control{
-		Store: r.st, Keys: r.keys, Chain: r.chain, Approvals: approvals, Inputs: inputs, Kernel: k,
+		Store: runctlpg.New(r.st, r.keys, r.chain), Approvals: approvals, Inputs: inputs, Kernel: k,
 		System: "test", MaxTurns: 20,
 	}
 }
@@ -489,7 +491,7 @@ func TestClaims_EndToEnd_NeverReExecutesAnAmbiguousEffect(t *testing.T) {
 	sealFn, _ := rig.seal(t, sessionID)
 	rig.seedOneEvent(t, sessionID, sealFn)
 
-	tracker := runctl.NewClaimTracker(rig.st, rig.keys, rig.chain)
+	tracker := runctl.NewClaimTracker(runctlpg.New(rig.st, rig.keys, rig.chain))
 	digest := []byte("a-fixed-canonical-digest-for-this-test")
 
 	id1, outcome1, err := tracker.Open(ctx, rig.tenantID, sessionID, "platform/send_email@v1", digest)
@@ -516,7 +518,7 @@ func TestClaims_EndToEnd_NeverReExecutesAnAmbiguousEffect(t *testing.T) {
 	// hatch, distinct from Complete (which internal/tools/pipeline.go calls
 	// automatically right after a real Tool.Call).
 	control := rig.control(nil, nil, nil)
-	if _, err := control.ResolveClaim(ctx, rig.tenantID, sessionID, id1, store.ClaimAbandoned, "confirmed: the email was never sent"); err != nil {
+	if _, err := control.ResolveClaim(ctx, rig.tenantID, sessionID, id1, runctl.ClaimAbandoned, "confirmed: the email was never sent"); err != nil {
 		t.Fatalf("ResolveClaim: %v", err)
 	}
 
@@ -900,7 +902,7 @@ func TestRunctl_Resume_RefusesWhileAClaimIsUnresolved(t *testing.T) {
 		t.Fatalf("set running: %v", err)
 	}
 
-	tracker := runctl.NewClaimTracker(rig.st, rig.keys, rig.chain)
+	tracker := runctl.NewClaimTracker(runctlpg.New(rig.st, rig.keys, rig.chain))
 	if _, outcome, err := tracker.Open(ctx, rig.tenantID, sessionID, "platform/send_email@v1", []byte("digest")); err != nil || outcome != tools.ClaimFresh {
 		t.Fatalf("Open: outcome=%v err=%v", outcome, err)
 	}

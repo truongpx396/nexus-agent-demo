@@ -5,10 +5,8 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
 
@@ -36,9 +34,9 @@ type ReplayResult struct {
 // already use elsewhere in this codebase).
 func (c *Control) Replay(ctx context.Context, tenantID, sessionID uuid.UUID) (ReplayResult, error) {
 	var history []eventlog.Event
-	if err := c.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+	if err := c.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
 		var err error
-		history, err = store.ListEvents(ctx, tx, sessionID)
+		history, err = tx.ListEvents(ctx, sessionID)
 		return err
 	}); err != nil {
 		return ReplayResult{}, fmt.Errorf("runctl: replay: %w", err)

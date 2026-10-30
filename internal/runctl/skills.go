@@ -5,12 +5,8 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
-	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
-	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
 // skillActivatedPayload/skillCapabilityIgnoredPayload are what
@@ -32,25 +28,23 @@ type skillCapabilityIgnoredPayload struct {
 // against durable storage, mirroring ClaimTracker's own role one struct
 // over: internal/tools/builtin.ActivateSkill declares the interface it
 // needs, this package supplies the real implementation (store append +
-// audit-chain append via deps.appendEvent), and cmd/nexusd wires it in.
+// audit-chain append via Tx.Append), and cmd/nexusd wires it in.
 // Neither internal/tools nor kernel ever import this package or learn
 // skills exist.
 type SkillEventRecorder struct {
-	deps
+	Store Store
 }
 
-// NewSkillEventRecorder takes its collaborators directly, exactly like
+// NewSkillEventRecorder takes its Store directly, exactly like
 // NewClaimTracker — cmd/nexusd wires this into
 // internal/tools/builtin.ActivateSkill before a *runctl.Control can exist
 // (the same ordering constraint NewClaimTracker's own doc comment names).
-func NewSkillEventRecorder(st *store.Store, keys *cryptopg.KeyStore, chain *auditpg.Chain) *SkillEventRecorder {
-	return &SkillEventRecorder{deps: deps{Store: st, Keys: keys, Chain: chain}}
-}
+func NewSkillEventRecorder(st Store) *SkillEventRecorder { return &SkillEventRecorder{Store: st} }
 
 // Activated implements builtin.SkillEvents.Activated.
 func (r *SkillEventRecorder) Activated(ctx context.Context, tenantID, sessionID uuid.UUID, skillID string, heldToolIDs []string) error {
-	err := r.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		_, err := r.appendEvent(ctx, tx, tenantID, sessionID, eventlog.EventSkillActivated, &skillID, nil,
+	err := r.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
+		_, err := tx.Append(ctx, tenantID, sessionID, eventlog.EventSkillActivated, &skillID, nil,
 			skillActivatedPayload{SkillID: skillID, HeldToolIDs: heldToolIDs})
 		return err
 	})
@@ -62,8 +56,8 @@ func (r *SkillEventRecorder) Activated(ctx context.Context, tenantID, sessionID 
 
 // CapabilityIgnored implements builtin.SkillEvents.CapabilityIgnored.
 func (r *SkillEventRecorder) CapabilityIgnored(ctx context.Context, tenantID, sessionID uuid.UUID, skillID, toolID string) error {
-	err := r.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		_, err := r.appendEvent(ctx, tx, tenantID, sessionID, eventlog.EventSkillCapabilityIgnored, &toolID, nil,
+	err := r.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
+		_, err := tx.Append(ctx, tenantID, sessionID, eventlog.EventSkillCapabilityIgnored, &toolID, nil,
 			skillCapabilityIgnoredPayload{SkillID: skillID, ToolID: toolID})
 		return err
 	})

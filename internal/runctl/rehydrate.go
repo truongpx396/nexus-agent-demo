@@ -5,32 +5,28 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
 
 // loadRunState rebuilds a kernel.RunState from sessionID's own durable
 // history — History, Transcript (via kernel.Rehydrate), and a Seal closure
 // bound to the session's current active DEK. Near-identical to
-// internal/oversight.Resumer's own unexported loadRunState (that package's
-// doc comment explains why: this package operates out of band from any
-// live kernel.Run call, with no RunState.Seal closure already in hand to
-// reuse) — duplicated rather than shared for the same reason
-// internal/runctl/append.go's activeKeyID/appendEvent already are.
+// internal/oversight.Resumer's own loadRunState (that package's doc comment
+// explains why: this package operates out of band from any live kernel.Run
+// call, with no RunState.Seal closure already in hand to reuse).
 func (c *Control) loadRunState(ctx context.Context, tenantID, sessionID uuid.UUID) (*kernel.RunState, eventlog.Session, error) {
 	var sess eventlog.Session
 	var history []eventlog.Event
-	err := c.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+	err := c.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
 		var err error
-		sess, err = store.GetSession(ctx, tx, sessionID)
+		sess, err = tx.GetSession(ctx, sessionID)
 		if err != nil {
 			return err
 		}
-		history, err = store.ListEvents(ctx, tx, sessionID)
+		history, err = tx.ListEvents(ctx, sessionID)
 		return err
 	})
 	if err != nil {
@@ -59,9 +55,9 @@ func (c *Control) loadRunState(ctx context.Context, tenantID, sessionID uuid.UUI
 		return nil, eventlog.Session{}, err
 	}
 	var dek crypto.DEK
-	if err := c.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+	if err := c.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
 		var uerr error
-		dek, uerr = c.Keys.Unwrap(ctx, tx, keyID)
+		dek, uerr = tx.Unwrap(ctx, keyID)
 		return uerr
 	}); err != nil {
 		return nil, eventlog.Session{}, err
@@ -92,9 +88,9 @@ func (c *Control) decryptFuncFor(tenantID, sessionID uuid.UUID) kernel.DecryptFu
 			return crypto.Open(dek, e.Payload, tenantID.String(), sessionID.String())
 		}
 		var dek crypto.DEK
-		if err := c.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+		if err := c.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
 			var uerr error
-			dek, uerr = c.Keys.Unwrap(ctx, tx, e.KeyID)
+			dek, uerr = tx.Unwrap(ctx, e.KeyID)
 			return uerr
 		}); err != nil {
 			return nil, err

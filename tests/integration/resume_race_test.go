@@ -3,6 +3,8 @@
 package integration
 
 import (
+	runctlpg "github.com/truongpx396/nexus-agent-demo/internal/runctl/postgres"
+
 	"context"
 	"sync"
 	"sync/atomic"
@@ -93,7 +95,7 @@ func TestRunCtl_ResumeConversation_ConcurrentCallersResumeExactlyOnce(t *testing
 	}
 
 	q := &countingQueue{}
-	ctl := &runctl.Control{Store: st, Keys: keys, Queue: q}
+	ctl := &runctl.Control{Store: runctlpg.New(st, keys, nil), Queue: q}
 
 	const callers = 8
 	// Open every connection up front: the pool otherwise dials them lazily,
