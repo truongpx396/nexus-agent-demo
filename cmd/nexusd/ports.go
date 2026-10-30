@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/audit"
+	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/config"
 	"github.com/truongpx396/nexus-agent-demo/internal/delegate"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
@@ -27,10 +27,10 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
 
-// chainReceiptFunc adapts internal/audit.Chain.Append to the Postgres event
+// chainReceiptFunc adapts internal/auditpg.Chain.Append to the Postgres event
 // log's receipt hook, so every appended event extends the audit chain in the
 // same transaction. kernel itself never sees internal/audit.
-func chainReceiptFunc(chain *audit.Chain) postgres.ReceiptFunc {
+func chainReceiptFunc(chain *auditpg.Chain) postgres.ReceiptFunc {
 	return func(ctx context.Context, tx pgx.Tx, e eventlog.Event) error {
 		_, err := chain.Append(ctx, tx, e.TenantID, e.SessionID, e.Seq, e.EventID, string(e.Type), e.PayloadDigest)
 		return err

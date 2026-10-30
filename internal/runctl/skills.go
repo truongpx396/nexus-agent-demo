@@ -7,7 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/audit"
+	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
 	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
@@ -43,7 +43,7 @@ type SkillEventRecorder struct {
 // NewClaimTracker — cmd/nexusd wires this into
 // internal/tools/builtin.ActivateSkill before a *runctl.Control can exist
 // (the same ordering constraint NewClaimTracker's own doc comment names).
-func NewSkillEventRecorder(st *store.Store, keys *cryptopg.KeyStore, chain *audit.Chain) *SkillEventRecorder {
+func NewSkillEventRecorder(st *store.Store, keys *cryptopg.KeyStore, chain *auditpg.Chain) *SkillEventRecorder {
 	return &SkillEventRecorder{deps: deps{Store: st, Keys: keys, Chain: chain}}
 }
 

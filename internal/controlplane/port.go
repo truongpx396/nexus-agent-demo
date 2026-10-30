@@ -55,7 +55,7 @@ type Port interface {
 	// itself returned from ReserveBudget — LocalPort's own doc comment
 	// explains why that can't be a stateless lookup.
 	ReportCost(ctx context.Context, req ReportCostV1) error
-	// EmitAuditReceipt is internal/audit.Chain.Append, wrapped: one
+	// EmitAuditReceipt is internal/auditpg.Chain.Append, wrapped: one
 	// hash-chained receipt for one durably appended event.
 	EmitAuditReceipt(ctx context.Context, req EmitAuditReceiptV1) error
 	// RequestApproval is internal/oversight.Approvals.Create, wrapped: the
@@ -143,7 +143,7 @@ type ReportCostV1 struct {
 	Reported bool
 }
 
-// EmitAuditReceiptV1 mirrors internal/audit.Chain.Append's own parameters.
+// EmitAuditReceiptV1 mirrors internal/auditpg.Chain.Append's own parameters.
 type EmitAuditReceiptV1 struct {
 	TenantID      uuid.UUID
 	SessionID     uuid.UUID
