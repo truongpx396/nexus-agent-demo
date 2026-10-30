@@ -10,10 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools"
 )
 
@@ -23,72 +20,6 @@ import (
 // server's auth_kind is 'oauth_connector'.
 type TokenSource interface {
 	AccessToken(ctx context.Context, tenantID, userID uuid.UUID, provider string) (string, error)
-}
-
-// serverRow mirrors one migrations/0019_mcp_servers.sql row.
-type serverRow struct {
-	ServerID          uuid.UUID
-	Name              string
-	BaseURL           string
-	AuthKind          string
-	SealedStaticToken []byte
-	KeyID             string
-	OAuthProvider     string
-	Status            string
-}
-
-// listAdmittedServers returns every server tenantID has admitted — the set
-// port.go's Catalog/Digest enumerate to build the tenant's per-run MCP
-// contribution to the model-visible catalog.
-func listAdmittedServers(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) ([]serverRow, error) {
-	rows, err := tx.Query(ctx,
-		`SELECT server_id, name, base_url, auth_kind, sealed_static_token, key_id, oauth_provider, status
-		 FROM mcp_servers WHERE tenant_id = $1 AND status = 'admitted' ORDER BY name`,
-		tenantID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []serverRow
-	for rows.Next() {
-		var r serverRow
-		var keyID, oauthProvider *string
-		if err := rows.Scan(&r.ServerID, &r.Name, &r.BaseURL, &r.AuthKind, &r.SealedStaticToken, &keyID, &oauthProvider, &r.Status); err != nil {
-			return nil, err
-		}
-		if keyID != nil {
-			r.KeyID = *keyID
-		}
-		if oauthProvider != nil {
-			r.OAuthProvider = *oauthProvider
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
-}
-
-func loadServerRow(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, name string) (serverRow, bool, error) {
-	var r serverRow
-	var keyID, oauthProvider *string
-	err := tx.QueryRow(ctx,
-		`SELECT server_id, name, base_url, auth_kind, sealed_static_token, key_id, oauth_provider, status
-		 FROM mcp_servers WHERE tenant_id = $1 AND name = $2`,
-		tenantID, name,
-	).Scan(&r.ServerID, &r.Name, &r.BaseURL, &r.AuthKind, &r.SealedStaticToken, &keyID, &oauthProvider, &r.Status)
-	if err != nil {
-		if err == pgx.ErrNoRows {
-			return serverRow{}, false, nil
-		}
-		return serverRow{}, false, err
-	}
-	if keyID != nil {
-		r.KeyID = *keyID
-	}
-	if oauthProvider != nil {
-		r.OAuthProvider = *oauthProvider
-	}
-	return r, true, nil
 }
 
 type cachedListing struct {
@@ -107,10 +38,9 @@ type cachedListing struct {
 // distinguishable "exists but refused" signal (resolveTool's own doc
 // comment in internal/tools/pipeline.go).
 type Resolver struct {
-	Store  *store.Store
-	Keys   *crypto.KeyStore
-	Tokens TokenSource
-	Client *http.Client
+	Servers ServerDirectory
+	Tokens  TokenSource
+	Client  *http.Client
 
 	// AllowedHosts is the SAME egress allowlist README task 5.13 already
 	// established for internal/tools/builtin.WebFetch, extended per task
@@ -158,7 +88,7 @@ func (r *Resolver) cacheTTL() time.Duration {
 	return r.CacheTTL
 }
 
-func (r *Resolver) listTools(ctx context.Context, server serverRow, client *Client) ([]Tool, error) {
+func (r *Resolver) listTools(ctx context.Context, server Server, client *Client) ([]Tool, error) {
 	r.mu.Lock()
 	if r.cache == nil {
 		r.cache = map[uuid.UUID]cachedListing{}
@@ -199,22 +129,10 @@ func (r *Resolver) listTools(ctx context.Context, server serverRow, client *Clie
 // no session row to look one up from — session creation hasn't happened
 // yet at catalog-build time) can resolve the identical credential without
 // duplicating the switch.
-func (r *Resolver) resolveAuth(ctx context.Context, tx pgx.Tx, tenantID, userID uuid.UUID, server serverRow) (string, error) {
+func (r *Resolver) resolveAuth(ctx context.Context, tenantID, userID uuid.UUID, server Server) (string, error) {
 	switch server.AuthKind {
 	case "bearer_static":
-		if server.KeyID == "" {
-			return "", fmt.Errorf("server %q declares bearer_static auth with no key_id", server.Name)
-		}
-		dek, err := r.Keys.Unwrap(ctx, tx, server.KeyID)
-		if err != nil {
-			return "", fmt.Errorf("unwrap static token key: %w", err)
-		}
-		aad := tenantID.String() + "|mcp|" + server.Name
-		raw, err := crypto.Open(dek, server.SealedStaticToken, tenantID.String(), aad)
-		if err != nil {
-			return "", fmt.Errorf("open static token: %w", err)
-		}
-		return string(raw), nil
+		return r.Servers.StaticToken(ctx, tenantID, server.Name)
 	case "oauth_connector":
 		if r.Tokens == nil {
 			return "", fmt.Errorf("server %q requires oauth_connector auth but no TokenSource is configured", server.Name)
@@ -238,36 +156,24 @@ func (r *Resolver) Resolve(ctx context.Context, tenantID, sessionID uuid.UUID, r
 		return nil, false, nil // not an MCP-qualified ref at all
 	}
 
-	var server serverRow
-	var bearer string
-	err := r.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		var found bool
-		var err error
-		server, found, err = loadServerRow(ctx, tx, tenantID, name)
-		if err != nil {
-			return fmt.Errorf("load mcp_servers row: %w", err)
-		}
-		if !found || server.Status != "admitted" {
-			server = serverRow{} // signal "not resolvable" below without a distinguishable reason
-			return nil
-		}
+	server, found, err := r.Servers.Find(ctx, tenantID, name)
+	if err != nil {
+		return nil, false, fmt.Errorf("load mcp_servers row: %w", err)
+	}
+	if !found || server.Status != "admitted" {
+		return nil, false, nil // unadmitted, disabled, or unknown server — fail closed, indistinguishable from non-existence
+	}
 
-		var userID uuid.UUID
-		if server.AuthKind == "oauth_connector" {
-			sess, err := store.GetSession(ctx, tx, sessionID)
-			if err != nil {
-				return fmt.Errorf("resolve calling session: %w", err)
-			}
-			userID = sess.UserID
+	var userID uuid.UUID
+	if server.AuthKind == "oauth_connector" {
+		userID, err = r.Servers.SessionUser(ctx, tenantID, sessionID)
+		if err != nil {
+			return nil, false, err
 		}
-		bearer, err = r.resolveAuth(ctx, tx, tenantID, userID, server)
-		return err
-	})
+	}
+	bearer, err := r.resolveAuth(ctx, tenantID, userID, server)
 	if err != nil {
 		return nil, false, err
-	}
-	if server.ServerID == uuid.Nil {
-		return nil, false, nil // unadmitted, disabled, or unknown server — fail closed, indistinguishable from non-existence
 	}
 
 	client := &Client{BaseURL: server.BaseURL, BearerToken: bearer, HTTPClient: r.Client}

@@ -1,6 +1,6 @@
 //go:build integration
 
-package mcp
+package mcp_test
 
 import (
 	"context"
@@ -19,6 +19,8 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
+	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/mcp"
+	mcppg "github.com/truongpx396/nexus-agent-demo/internal/surfaces/mcp/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools"
 	"github.com/truongpx396/nexus-agent-demo/migrations"
 )
@@ -83,7 +85,7 @@ func setupMCPEnv(t *testing.T) *pgxpool.Pool {
 // fakeMCPServer serves a minimal JSON-RPC 2.0 tools/list + tools/call pair
 // over HTTP — enough of the Streamable HTTP transport for Client/Resolver
 // to exercise against, without a real MCP SDK dependency.
-func fakeMCPServer(t *testing.T, wantBearer string, tool Tool, callHandler func(name string, args json.RawMessage) CallResult) *httptest.Server {
+func fakeMCPServer(t *testing.T, wantBearer string, tool mcp.Tool, callHandler func(name string, args json.RawMessage) mcp.CallResult) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if wantBearer != "" && r.Header.Get("authorization") != "Bearer "+wantBearer {
@@ -104,7 +106,7 @@ func fakeMCPServer(t *testing.T, wantBearer string, tool Tool, callHandler func(
 		case "initialize":
 			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": map[string]any{}})
 		case "tools/list":
-			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": map[string]any{"tools": []Tool{tool}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": map[string]any{"tools": []mcp.Tool{tool}}})
 		case "tools/call":
 			var p struct {
 				Name      string          `json:"name"`
@@ -149,7 +151,7 @@ func TestResolver_UnadmittedServerRefusesResolution(t *testing.T) {
 	insertTenant(t, s, tenantID)
 	// No mcp_servers row at all — the tenant never admitted anything.
 
-	r := &Resolver{Store: s, AllowedHosts: []string{"*"}}
+	r := &mcp.Resolver{Servers: mcppg.New(s, nil), AllowedHosts: []string{"*"}}
 	ref := tools.ToolRef{Namespace: "mcp/nonexistent-server", Name: "some_tool", Version: "v12345678"}
 	tool, ok, err := r.Resolve(context.Background(), tenantID, uuid.New(), ref)
 	if err != nil {
@@ -166,11 +168,11 @@ func TestResolver_HappyPath_ResolvesAndCallsThroughAdapter(t *testing.T) {
 	tenantID := uuid.New()
 	insertTenant(t, s, tenantID)
 
-	remoteTool := Tool{Name: "create_issue", Description: "opens an issue", InputSchema: json.RawMessage(`{"type":"object"}`)}
+	remoteTool := mcp.Tool{Name: "create_issue", Description: "opens an issue", InputSchema: json.RawMessage(`{"type":"object"}`)}
 	var calledWith json.RawMessage
-	srv := fakeMCPServer(t, "", remoteTool, func(name string, args json.RawMessage) CallResult {
+	srv := fakeMCPServer(t, "", remoteTool, func(name string, args json.RawMessage) mcp.CallResult {
 		calledWith = args
-		return CallResult{Content: []struct {
+		return mcp.CallResult{Content: []struct {
 			Type string `json:"type"`
 			Text string `json:"text"`
 		}{{Type: "text", Text: "issue #42 created"}}}
@@ -179,7 +181,7 @@ func TestResolver_HappyPath_ResolvesAndCallsThroughAdapter(t *testing.T) {
 
 	insertAdmittedServer(t, s, tenantID, "github", srv.URL)
 
-	r := &Resolver{Store: s, AllowedHosts: []string{"*"}}
+	r := &mcp.Resolver{Servers: mcppg.New(s, nil), AllowedHosts: []string{"*"}}
 	ref := tools.ToolRef{Namespace: "mcp/github", Name: "create_issue", Version: "v" + remoteTool.SchemaDigest()}
 	tool, ok, err := r.Resolve(context.Background(), tenantID, uuid.New(), ref)
 	if err != nil {
@@ -216,12 +218,12 @@ func TestResolver_SchemaDriftRefusesTheStaleRef(t *testing.T) {
 	tenantID := uuid.New()
 	insertTenant(t, s, tenantID)
 
-	remoteTool := Tool{Name: "create_issue", Description: "opens an issue", InputSchema: json.RawMessage(`{"type":"object"}`)}
-	srv := fakeMCPServer(t, "", remoteTool, func(string, json.RawMessage) CallResult { return CallResult{} })
+	remoteTool := mcp.Tool{Name: "create_issue", Description: "opens an issue", InputSchema: json.RawMessage(`{"type":"object"}`)}
+	srv := fakeMCPServer(t, "", remoteTool, func(string, json.RawMessage) mcp.CallResult { return mcp.CallResult{} })
 	defer srv.Close()
 	insertAdmittedServer(t, s, tenantID, "github", srv.URL)
 
-	r := &Resolver{Store: s, AllowedHosts: []string{"*"}}
+	r := &mcp.Resolver{Servers: mcppg.New(s, nil), AllowedHosts: []string{"*"}}
 	// A ref pinned to a digest that no longer matches the server's CURRENT
 	// schema (README task 11.1's #15 "digest re-verification at use") — the
 	// server and tool NAME both still exist, but this specific qualified
@@ -242,8 +244,8 @@ func TestResolver_BearerStaticAuthIsInjected(t *testing.T) {
 	tenantID := uuid.New()
 	insertTenant(t, s, tenantID)
 
-	remoteTool := Tool{Name: "whoami", Description: "", InputSchema: json.RawMessage(`{}`)}
-	srv := fakeMCPServer(t, "static-secret-123", remoteTool, func(string, json.RawMessage) CallResult { return CallResult{} })
+	remoteTool := mcp.Tool{Name: "whoami", Description: "", InputSchema: json.RawMessage(`{}`)}
+	srv := fakeMCPServer(t, "static-secret-123", remoteTool, func(string, json.RawMessage) mcp.CallResult { return mcp.CallResult{} })
 	defer srv.Close()
 
 	kek, err := crypto.GenerateKEK()
@@ -272,7 +274,7 @@ func TestResolver_BearerStaticAuthIsInjected(t *testing.T) {
 		t.Fatalf("insert bearer_static server: %v", err)
 	}
 
-	r := &Resolver{Store: s, Keys: keys, AllowedHosts: []string{"*"}}
+	r := &mcp.Resolver{Servers: mcppg.New(s, keys), AllowedHosts: []string{"*"}}
 	ref := tools.ToolRef{Namespace: "mcp/github", Name: "whoami", Version: "v" + remoteTool.SchemaDigest()}
 	tool, ok, err := r.Resolve(context.Background(), tenantID, uuid.New(), ref)
 	if err != nil {
@@ -294,12 +296,12 @@ func TestResolver_EgressDeniedHostRefusesEvenForAnAdmittedServer(t *testing.T) {
 	tenantID := uuid.New()
 	insertTenant(t, s, tenantID)
 
-	remoteTool := Tool{Name: "create_issue", Description: "", InputSchema: json.RawMessage(`{}`)}
-	srv := fakeMCPServer(t, "", remoteTool, func(string, json.RawMessage) CallResult { return CallResult{} })
+	remoteTool := mcp.Tool{Name: "create_issue", Description: "", InputSchema: json.RawMessage(`{}`)}
+	srv := fakeMCPServer(t, "", remoteTool, func(string, json.RawMessage) mcp.CallResult { return mcp.CallResult{} })
 	defer srv.Close()
 	insertAdmittedServer(t, s, tenantID, "github", srv.URL)
 
-	r := &Resolver{Store: s, AllowedHosts: []string{"some-other-host.example.com"}}
+	r := &mcp.Resolver{Servers: mcppg.New(s, nil), AllowedHosts: []string{"some-other-host.example.com"}}
 	ref := tools.ToolRef{Namespace: "mcp/github", Name: "create_issue", Version: "v" + remoteTool.SchemaDigest()}
 	tool, ok, err := r.Resolve(context.Background(), tenantID, uuid.New(), ref)
 	if err == nil {

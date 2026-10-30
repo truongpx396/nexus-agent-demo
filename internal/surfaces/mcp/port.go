@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 )
@@ -34,24 +33,14 @@ type Port struct {
 // oauth_connector-authed server authenticates as the calling user, never a
 // service account (README task 11's own point).
 func (p *Port) entries(ctx context.Context, tenantID, userID uuid.UUID) ([]provider.ToolSchema, error) {
-	var servers []serverRow
-	err := p.Resolver.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		var err error
-		servers, err = listAdmittedServers(ctx, tx, tenantID)
-		return err
-	})
+	servers, err := p.Resolver.Servers.Admitted(ctx, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("mcp: list admitted servers: %w", err)
 	}
 
 	var out []provider.ToolSchema
 	for _, server := range servers {
-		var bearer string
-		err := p.Resolver.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-			var err error
-			bearer, err = p.Resolver.resolveAuth(ctx, tx, tenantID, userID, server)
-			return err
-		})
+		bearer, err := p.Resolver.resolveAuth(ctx, tenantID, userID, server)
 		if err != nil {
 			// One misconfigured/unreachable server must not take down a
 			// run's whole catalog — skip it and keep going, the same

@@ -28,6 +28,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/skills"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/mcp"
+	mcppg "github.com/truongpx396/nexus-agent-demo/internal/surfaces/mcp/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/teams"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools/builtin"
@@ -65,7 +66,7 @@ func newToolPipeline(st *store.Store, keyStore *crypto.KeyStore, chain *audit.Ch
 	// second allowlist mechanism per host class.
 	webFetchAllowlist := strings.Split(envOr("NEXUS_WEB_FETCH_ALLOWLIST", ""), ",")
 
-	mcpResolver := &mcp.Resolver{Store: st, Keys: keyStore, Tokens: vault, AllowedHosts: webFetchAllowlist}
+	mcpResolver := &mcp.Resolver{Servers: mcppg.New(st, keyStore), Tokens: vault, AllowedHosts: webFetchAllowlist}
 	mcpPort := &mcp.Port{Resolver: mcpResolver}
 
 	// Phase 12: platform/retrieve's own Searcher, backed by a Retriever
