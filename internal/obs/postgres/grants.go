@@ -12,6 +12,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/sealed"
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
@@ -21,9 +22,9 @@ import (
 // hash-chained through Chain, in the same transaction as the change they
 // record), and the decryption of a session's history.
 type GrantStore struct {
-	st    *store.Store
-	keys  *cryptopg.KeyStore
-	chain *auditpg.Chain
+	st     *store.Store
+	keys   *cryptopg.KeyStore
+	sealer *sealed.Sealer
 }
 
 var _ obs.GrantStore = (*GrantStore)(nil)
@@ -31,7 +32,7 @@ var _ obs.GrantStore = (*GrantStore)(nil)
 // NewGrantStore returns a GrantStore. chain may be nil, in which case audit
 // events are appended without a signed receipt (a minimal wiring for tests).
 func NewGrantStore(st *store.Store, keys *cryptopg.KeyStore, chain *auditpg.Chain) *GrantStore {
-	return &GrantStore{st: st, keys: keys, chain: chain}
+	return &GrantStore{st: st, keys: keys, sealer: sealed.NewSealer(keys, chain)}
 }
 
 func (s *GrantStore) Issue(ctx context.Context, gr obs.Grant) (obs.Grant, error) {
@@ -145,43 +146,9 @@ type accessedPayload struct {
 	EventCount int       `json:"event_count"`
 }
 
-// appendEvent seals payload under sessionID's active key (its most recent
-// event whose KeyID isn't the erasure sentinel) and durably appends it,
-// chaining it via chain if set — the same shape internal/oversight's own
-// deps.appendEvent uses, reimplemented here rather than shared: the two
-// packages have no reason to depend on each other, and this is a handful of
-// lines, not shared logic worth a common package for (the same call this
-// codebase already makes for internal/hooks's and internal/tools/
-// builtin's duplicated SSRF guards).
+// appendEvent appends one audit event about a grant, sealed under the
+// session's own key and chained, in the caller's transaction.
 func (s *GrantStore) appendEvent(ctx context.Context, tx pgx.Tx, tenantID, sessionID uuid.UUID, typ eventlog.EventType, payload any) error {
-	plaintext, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("obs: marshal %s payload: %w", typ, err)
-	}
-	var keyID string
-	if err := tx.QueryRow(ctx, `SELECT key_id FROM events WHERE session_id = $1 AND key_id != $2 ORDER BY seq DESC LIMIT 1`, sessionID, crypto.ErasureKeyID).Scan(&keyID); err != nil {
-		return fmt.Errorf("obs: find active key for session %s: %w", sessionID, err)
-	}
-	dek, err := s.keys.Unwrap(ctx, tx, keyID)
-	if err != nil {
-		return fmt.Errorf("obs: unwrap key for session %s: %w", sessionID, err)
-	}
-	sealed, err := crypto.Seal(dek, plaintext, tenantID.String(), sessionID.String())
-	if err != nil {
-		return fmt.Errorf("obs: seal %s payload: %w", typ, err)
-	}
-	e := eventlog.Event{
-		EventID: uuid.New(), SessionID: sessionID, TenantID: tenantID, SchemaVersion: eventlog.CurrentSchemaVersion,
-		Type: typ, Payload: sealed, PayloadDigest: crypto.Digest(plaintext), KeyID: dek.KeyID, Actor: eventlog.ActorSystem,
-	}
-	out, err := store.Append(ctx, tx, e)
-	if err != nil {
-		return fmt.Errorf("obs: append %s: %w", typ, err)
-	}
-	if s.chain != nil {
-		if _, err := s.chain.Append(ctx, tx, tenantID, sessionID, out.Seq, out.EventID, string(out.Type), out.PayloadDigest); err != nil {
-			return fmt.Errorf("obs: chain %s: %w", typ, err)
-		}
-	}
-	return nil
+	_, err := s.sealer.Bind(tx).Append(ctx, tenantID, sessionID, typ, nil, nil, payload)
+	return err
 }
