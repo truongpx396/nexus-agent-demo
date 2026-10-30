@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"iter"
 
+	delegatepg "github.com/truongpx396/nexus-agent-demo/internal/delegate/postgres"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
@@ -59,7 +61,7 @@ func onSuspendFunc(approvals *oversight.Approvals) postgres.OnSuspend {
 // event log's delegate hook. kernel itself never sees internal/delegate.
 func onDelegateFunc(delegations *delegate.Delegations) postgres.OnDelegate {
 	return func(ctx context.Context, tx pgx.Tx, req kernel.DelegateSuspendRequest) error {
-		return delegations.Bind(ctx, tx, req.ChildSessionID, req.ToolUseEventID)
+		return delegatepg.Bind(ctx, tx, req.ChildSessionID, req.ToolUseEventID)
 	}
 }
 

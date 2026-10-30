@@ -1,6 +1,7 @@
 package runstate_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -162,5 +163,45 @@ func TestDecryptor_PassesAnErasureRecordThroughUntouched(t *testing.T) {
 	got, err := dec(context.Background(), eventlog.Event{KeyID: crypto.ErasureKeyID, Payload: []byte("erased")})
 	if err != nil || string(got) != "erased" {
 		t.Errorf("decrypt of an erasure record = %q, %v, want the plaintext as is", got, err)
+	}
+}
+
+// TestSeal_RoundTrips is README task 13.8: runstate.Seal is what every
+// resumed or spawned run seals its events with — a fast, in-memory
+// round trip (no DB, no KeyStore) over the same crypto.Seal/Open pair the
+// real DEK-backed path uses, proving the closure it returns actually seals
+// what it's given and reports a stable digest/key id.
+func TestSeal_RoundTrips(t *testing.T) {
+	dek, err := crypto.GenerateDEK("test-key-1")
+	if err != nil {
+		t.Fatalf("GenerateDEK: %v", err)
+	}
+	tenantID, sessionID := uuid.New(), uuid.New()
+	seal := runstate.Seal(dek, tenantID, sessionID)
+
+	plaintext := []byte(`{"tool_name":"delegate"}`)
+	sealed, digest, keyID, err := seal(plaintext)
+	if err != nil {
+		t.Fatalf("seal: %v", err)
+	}
+	if keyID != dek.KeyID {
+		t.Errorf("keyID = %q, want %q", keyID, dek.KeyID)
+	}
+	if !bytes.Equal(digest, crypto.Digest(plaintext)) {
+		t.Error("digest does not match crypto.Digest(plaintext)")
+	}
+
+	opened, err := crypto.Open(dek, sealed, tenantID.String(), sessionID.String())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if !bytes.Equal(opened, plaintext) {
+		t.Errorf("round trip = %q, want %q", opened, plaintext)
+	}
+
+	// Sealing under the WRONG tenant/session (the AAD) must fail to open —
+	// this is what actually scopes an event to its own session.
+	if _, err := crypto.Open(dek, sealed, uuid.New().String(), sessionID.String()); err == nil {
+		t.Error("Open succeeded with the wrong tenantID AAD — sealed data is not scoped correctly")
 	}
 }

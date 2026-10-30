@@ -10,6 +10,9 @@ import (
 	"syscall"
 	"time"
 
+	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
+	delegatepg "github.com/truongpx396/nexus-agent-demo/internal/delegate/postgres"
+
 	runctlpg "github.com/truongpx396/nexus-agent-demo/internal/runctl/postgres"
 
 	queueredis "github.com/truongpx396/nexus-agent-demo/internal/queue/redis"
@@ -193,7 +196,7 @@ func serve(ctx context.Context) error {
 	// it" ordering vault itself already follows one step up.
 	gate := newCostGate(st, redisClient)
 
-	delegations := delegate.NewDelegations(st, keyStore, chain)
+	delegations := delegate.NewDelegations(delegatepg.New(st, keyStore, chain))
 	teamsSvc := teams.NewService(st, keyStore, chain)
 	pipeline, catalog, catalogManifestDigest, admittedSkillBundles, mcpPort := newToolPipeline(st, keyStore, chain, delegations, teamsSvc, vault, gate)
 	loadedTools := make([]string, len(catalog))
@@ -238,6 +241,7 @@ func serve(ctx context.Context) error {
 	// configured identically to a root run's (README task 8.9's own child
 	// session inherits the parent's harness_digest for the same reason).
 	delegations.Wire(delegate.Config{
+		Prices: costpg.New(st),
 		Kernel: k, Pipeline: pipeline,
 		System: starter.system, Catalog: catalog, LoadedTools: loadedTools, MaxTurns: starter.maxTurns,
 	})

@@ -21,6 +21,9 @@ import (
 	"testing"
 	"time"
 
+	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
+	delegatepg "github.com/truongpx396/nexus-agent-demo/internal/delegate/postgres"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -154,7 +157,7 @@ func (a spawnerAdapter) Spawn(ctx context.Context, req builtin.SpawnRequest) (uu
 
 func onDelegateFunc(d *delegate.Delegations) postgres.OnDelegate {
 	return func(ctx context.Context, tx pgx.Tx, req kernel.DelegateSuspendRequest) error {
-		return d.Bind(ctx, tx, req.ChildSessionID, req.ToolUseEventID)
+		return delegatepg.Bind(ctx, tx, req.ChildSessionID, req.ToolUseEventID)
 	}
 }
 
@@ -176,7 +179,7 @@ func buildDelegationRig(t *testing.T, r *oversightRig, prov provider.Provider, t
 		t.Fatalf("declare namespace: %v", err)
 	}
 
-	d := delegate.NewDelegations(r.st, r.keys, r.chain)
+	d := delegate.NewDelegations(delegatepg.New(r.st, r.keys, r.chain))
 	del := builtin.Delegate{Ledger: d, Spawner: spawnerAdapter{d}, Registry: reg}
 	if err := reg.Register(del); err != nil {
 		t.Fatalf("register delegate: %v", err)
@@ -199,7 +202,7 @@ func buildDelegationRig(t *testing.T, r *oversightRig, prov provider.Provider, t
 		Tracer:   tracer,
 		Log:      postgres.New(r.st, postgres.Hooks{Receipt: r.receiptFunc(), Delegate: onDelegateFunc(d)}),
 	}
-	d.Wire(delegate.Config{Kernel: k, Pipeline: pipeline, System: "test", MaxTurns: 10})
+	d.Wire(delegate.Config{Prices: costpg.New(r.st), Kernel: k, Pipeline: pipeline, System: "test", MaxTurns: 10})
 
 	desc := del.Descriptor()
 	catalog := []provider.ToolSchema{{Name: desc.ID.String(), Description: desc.Description, InputSchema: desc.InputSchema}}

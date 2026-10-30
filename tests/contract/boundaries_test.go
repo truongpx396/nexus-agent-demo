@@ -65,6 +65,7 @@ func init() {
 		{"the tool pipeline", "internal/tools"},
 		{"run control", "internal/runctl"},
 		{"run-state rebuilding", "internal/runstate"},
+		{"the delegation service", "internal/delegate"},
 		{"the job queue port", "internal/queue"},
 		{"the oversight service", "internal/oversight"},
 	} {

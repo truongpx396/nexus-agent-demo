@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 
+	delegatepg "github.com/truongpx396/nexus-agent-demo/internal/delegate/postgres"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
@@ -93,7 +95,7 @@ func (e *Executor) runDelegateFanout(ctx context.Context, tenantID, sessionID uu
 	var envelopeID uuid.UUID
 	if err := e.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
-		envelopeID, err = delegate.CreateEnvelope(ctx, tx, tenantID, sessionID, ceiling, cfg.ChildCount)
+		envelopeID, err = delegatepg.CreateEnvelope(ctx, tx, tenantID, sessionID, ceiling, cfg.ChildCount)
 		return err
 	}); err != nil {
 		return nil, false, err

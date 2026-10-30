@@ -5,15 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/truongpx396/nexus-agent-demo/internal/runstate"
+
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
 
@@ -76,6 +76,7 @@ type SpawnRequest struct {
 // resident catalog cover a delegated child exactly as they cover a root run.
 type Config struct {
 	Kernel      *kernel.Kernel
+	Prices      PriceBooks // prices a fan-out child's real usage against its envelope; required for fan-out
 	Pipeline    TaintFolder
 	Lock        Locker         // optional
 	Fanout      FanoutResolver // optional
@@ -114,17 +115,17 @@ func (d *Delegations) Spawn(ctx context.Context, req SpawnRequest) (uuid.UUID, e
 	var parent eventlog.Session
 	var childID = uuid.New()
 	var dek crypto.DEK
-	err := d.Store.InTenantTx(ctx, req.TenantID, func(ctx context.Context, tx pgx.Tx) error {
+	err := d.Store.InTenant(ctx, req.TenantID, func(ctx context.Context, tx Tx) error {
 		var err error
-		parent, err = store.GetSession(ctx, tx, req.ParentSessionID)
+		parent, err = tx.GetSession(ctx, req.ParentSessionID)
 		if err != nil {
 			return err
 		}
-		dek, err = d.Keys.NewDEK(ctx, tx, req.TenantID)
+		dek, err = tx.NewDEK(ctx, req.TenantID)
 		if err != nil {
 			return err
 		}
-		if err := store.CreateSession(ctx, tx, eventlog.Session{
+		if err := tx.CreateSession(ctx, eventlog.Session{
 			SessionID:      childID,
 			SessionKey:     childID.String(),
 			TenantID:       req.TenantID,
@@ -143,7 +144,7 @@ func (d *Delegations) Spawn(ctx context.Context, req SpawnRequest) (uuid.UUID, e
 		}); err != nil {
 			return err
 		}
-		if _, err := create(ctx, tx, Delegation{
+		if _, err := tx.InsertDelegation(ctx, Delegation{
 			TenantID: req.TenantID, ParentSessionID: req.ParentSessionID, ChildSessionID: childID,
 			FanoutID: req.FanoutID, AgentID: req.AgentID, Task: req.Task,
 			ScopeGrant: req.ScopeGrant, ReturnSchema: req.ReturnSchema,
@@ -163,7 +164,7 @@ func (d *Delegations) Spawn(ctx context.Context, req SpawnRequest) (uuid.UUID, e
 		d.cfg.Pipeline.FoldTaint(childID, d.cfg.Pipeline.TaintStateFor(req.ParentSessionID))
 	}
 
-	childState := &kernel.RunState{TenantID: req.TenantID, SessionID: childID, Seal: sealFuncFor(dek, req.TenantID, childID)}
+	childState := &kernel.RunState{TenantID: req.TenantID, SessionID: childID, Seal: runstate.Seal(dek, req.TenantID, childID)}
 	childCfg := kernel.RunConfig{
 		System: d.cfg.System, Catalog: d.cfg.Catalog, LoadedTools: d.cfg.LoadedTools,
 		ModelID: parent.RouteModelID, MaxTurns: d.cfg.MaxTurns,
@@ -183,7 +184,7 @@ func (d *Delegations) Spawn(ctx context.Context, req SpawnRequest) (uuid.UUID, e
 			log.Error().Err(err).Any("envelope_id", *req.EnvelopeID).Msg("delegate: envelope lookup failed; child will run under the ordinary budget gate")
 		} else {
 			clone := *d.cfg.Kernel
-			clone.Budget = &EnvelopeBudgetGate{Store: d.Store, EnvelopeID: *req.EnvelopeID, TenantID: req.TenantID, PerCallEstimate: perCall, Currency: currency}
+			clone.Budget = &EnvelopeBudgetGate{Store: d.Store, Prices: d.cfg.Prices, EnvelopeID: *req.EnvelopeID, TenantID: req.TenantID, PerCallEstimate: perCall, Currency: currency}
 			childKernel = &clone
 		}
 	}
@@ -239,14 +240,4 @@ func (d *Delegations) Spawn(ctx context.Context, req SpawnRequest) (uuid.UUID, e
 	}()
 
 	return childID, nil
-}
-
-func sealFuncFor(dek crypto.DEK, tenantID, sessionID uuid.UUID) kernel.SealFunc {
-	return func(plaintext []byte) (sealed, digest []byte, keyID string, err error) {
-		sealed, err = crypto.Seal(dek, plaintext, tenantID.String(), sessionID.String())
-		if err != nil {
-			return nil, nil, "", fmt.Errorf("delegate: seal child event payload: %w", err)
-		}
-		return sealed, crypto.Digest(plaintext), dek.KeyID, nil
-	}
 }
