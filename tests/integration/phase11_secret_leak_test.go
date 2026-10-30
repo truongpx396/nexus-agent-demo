@@ -30,6 +30,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/connectors"
+	connectorspg "github.com/truongpx396/nexus-agent-demo/internal/connectors/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/hooks"
@@ -155,7 +156,7 @@ func TestSecretLeak_LiveOAuthTokenNeverAppearsInOutputOrLogs(t *testing.T) {
 		t.Fatalf("seed oauth_connections: %v", err)
 	}
 
-	vault := &connectors.Vault{Store: s, Keys: keyStore, Providers: connectors.NewRegistry(connectors.Provider{Name: "acme"})}
+	vault := &connectors.Vault{Connections: connectorspg.NewConnections(s, keyStore), Providers: connectors.NewRegistry(connectors.Provider{Name: "acme"})}
 	tool := builtin.ConnectorFetch{
 		Tokens:               vault,
 		Sessions:             fakeSessionLookup{userID: userID},

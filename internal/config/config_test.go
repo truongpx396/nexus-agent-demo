@@ -6,20 +6,20 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestDefaultFor_Unconfigured(t *testing.T) {
+func TestDefault_Unconfigured(t *testing.T) {
 	tenantID := uuid.New()
-	c := defaultFor(tenantID)
+	c := Default(tenantID)
 	if c.TenantID != tenantID {
-		t.Errorf("defaultFor(%s).TenantID = %s, want %s", tenantID, c.TenantID, tenantID)
+		t.Errorf("Default(%s).TenantID = %s, want %s", tenantID, c.TenantID, tenantID)
 	}
 	if c.MemoryRetentionDays != DefaultMemoryRetentionDays {
-		t.Errorf("defaultFor(%s).MemoryRetentionDays = %d, want %d", tenantID, c.MemoryRetentionDays, DefaultMemoryRetentionDays)
+		t.Errorf("Default(%s).MemoryRetentionDays = %d, want %d", tenantID, c.MemoryRetentionDays, DefaultMemoryRetentionDays)
 	}
 	if len(c.AdmittedSkillIDs) != 0 {
-		t.Errorf("defaultFor(%s).AdmittedSkillIDs = %v, want empty", tenantID, c.AdmittedSkillIDs)
+		t.Errorf("Default(%s).AdmittedSkillIDs = %v, want empty", tenantID, c.AdmittedSkillIDs)
 	}
 	if len(c.AdmittedConnectorProviders) != 0 {
-		t.Errorf("defaultFor(%s).AdmittedConnectorProviders = %v, want empty", tenantID, c.AdmittedConnectorProviders)
+		t.Errorf("Default(%s).AdmittedConnectorProviders = %v, want empty", tenantID, c.AdmittedConnectorProviders)
 	}
 }
 

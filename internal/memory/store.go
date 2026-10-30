@@ -15,11 +15,15 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/truongpx396/nexus-agent-demo/internal/config"
 )
 
 // Store roots every tenant's memory files under RootDir/{tenant_id}/.
 type Store struct {
 	RootDir string
+	// Config supplies each tenant's retention window (Load only).
+	Config config.Loader
 }
 
 func (s *Store) tenantDir(tenantID uuid.UUID) string {

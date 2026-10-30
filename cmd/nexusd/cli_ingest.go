@@ -14,6 +14,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/ingest"
 	"github.com/truongpx396/nexus-agent-demo/internal/retrieval"
+	retrievalpg "github.com/truongpx396/nexus-agent-demo/internal/retrieval/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
@@ -54,7 +55,7 @@ func runIngest(ctx context.Context, args []string) error {
 
 	redisClient := redis.NewClient(&redis.Options{Addr: envOr("NEXUS_REDIS_ADDR", defaultRedisAddr)})
 	gate := newCostGate(st, redisClient)
-	retriever := &retrieval.Retriever{Store: st, Gate: gate, Embedder: newEmbedder(), ModelID: "fake-embedder-v1"}
+	retriever := &retrieval.Retriever{Index: retrievalpg.NewIndex(st), Gate: gate, Embedder: newEmbedder(), ModelID: "fake-embedder-v1"}
 
 	tenantID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("nexus-agent-demo/tenant/"+*tenantName))
 	sessionID := uuid.New()
