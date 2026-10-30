@@ -23,6 +23,8 @@ import (
 	"testing"
 	"time"
 
+	queueredis "github.com/truongpx396/nexus-agent-demo/internal/queue/redis"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -310,7 +312,7 @@ func repeatedToolUseScripts(n int, toolName, input string) []fake.Script {
 func TestQueue_RedisStreamsNeverDoubleLeases(t *testing.T) {
 	rig := newPhase6Rig(t)
 	ctx := context.Background()
-	port, err := queue.NewRedisStreams(ctx, rig.env.redisClient)
+	port, err := queueredis.NewStreams(ctx, rig.env.redisClient)
 	if err != nil {
 		t.Fatalf("new redis streams port: %v", err)
 	}
@@ -355,7 +357,7 @@ func TestQueue_RedisStreamsNeverDoubleLeases(t *testing.T) {
 func TestQueue_ReclaimsAbandonedLeaseAfterIdleTimeout(t *testing.T) {
 	rig := newPhase6Rig(t)
 	ctx := context.Background()
-	port, err := queue.NewRedisStreams(ctx, rig.env.redisClient)
+	port, err := queueredis.NewStreams(ctx, rig.env.redisClient)
 	if err != nil {
 		t.Fatalf("new redis streams port: %v", err)
 	}
@@ -400,7 +402,7 @@ func TestQueue_ReclaimsAbandonedLeaseAfterIdleTimeout(t *testing.T) {
 func TestQueue_WorkerCompletesAndFailsRealJobs(t *testing.T) {
 	rig := newPhase6Rig(t)
 	ctx := context.Background()
-	port, err := queue.NewRedisStreams(ctx, rig.env.redisClient)
+	port, err := queueredis.NewStreams(ctx, rig.env.redisClient)
 	if err != nil {
 		t.Fatalf("new redis streams port: %v", err)
 	}
@@ -432,7 +434,7 @@ func TestQueue_WorkerCompletesAndFailsRealJobs(t *testing.T) {
 func TestSessionLock_SerialPerSessionConcurrentAcrossSessions(t *testing.T) {
 	rig := newPhase6Rig(t)
 	ctx := context.Background()
-	lock := queue.NewSessionLock(rig.env.redisClient, 5*time.Second)
+	lock := queueredis.NewSessionLock(rig.env.redisClient, 5*time.Second)
 
 	// Serial: a second Acquire for the SAME session_key fails while the
 	// first holder still has it.
@@ -461,7 +463,7 @@ func TestSessionLock_SerialPerSessionConcurrentAcrossSessions(t *testing.T) {
 func TestSessionLock_ReleaseNeverStealsAnotherHoldersLock(t *testing.T) {
 	rig := newPhase6Rig(t)
 	ctx := context.Background()
-	lock := queue.NewSessionLock(rig.env.redisClient, 5*time.Second)
+	lock := queueredis.NewSessionLock(rig.env.redisClient, 5*time.Second)
 
 	_, ok, err := lock.Acquire(ctx, "session-c")
 	if err != nil || !ok {

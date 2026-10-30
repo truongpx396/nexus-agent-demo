@@ -1,6 +1,7 @@
 package eventlog
 
 import (
+	"context"
 	"time"
 
 	"github.com/google/uuid"
@@ -84,4 +85,24 @@ type Session struct {
 	// SessionStatusAwaitingInput with nobody answering. Read-only here
 	// (CreateSession never sets it; the column's own DEFAULT now() does).
 	UpdatedAt time.Time
+}
+
+// SessionRows reads and writes session rows and their history inside one
+// tenant-scoped unit of work. A service's own Tx interface embeds it, so a
+// session's status never changes in a different transaction from the event that
+// justifies it. The Postgres implementation is internal/eventlog/sealed.
+type SessionRows interface {
+	// GetSession returns the session, or an error if it does not exist in the
+	// tenant's scope (which cannot be told apart from another tenant's).
+	GetSession(ctx context.Context, sessionID uuid.UUID) (Session, error)
+
+	// CreateSession inserts a new session row.
+	CreateSession(ctx context.Context, s Session) error
+
+	// SetSessionStatus moves the session to status, recording terminalReason
+	// when it ends.
+	SetSessionStatus(ctx context.Context, sessionID uuid.UUID, status string, terminalReason *string) error
+
+	// ListEvents returns the session's events in sequence order, still sealed.
+	ListEvents(ctx context.Context, sessionID uuid.UUID) ([]Event, error)
 }

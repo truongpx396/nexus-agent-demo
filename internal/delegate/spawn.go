@@ -33,7 +33,7 @@ type TaintFolder interface {
 	SeedTaint(sessionID uuid.UUID, autonomyLevel string, engaged [3]bool)
 }
 
-// Locker is the session-key serial lock (internal/queue.SessionLock,
+// Locker is the session-key serial lock (internal/queue/redis.SessionLock,
 // README task 6.2) — acquired around resuming the PARENT, so two children
 // of the same fan-out (or a child's return racing an operator's cancel)
 // never both drive the parent's kernel run concurrently. Nil is valid (every

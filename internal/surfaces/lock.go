@@ -7,7 +7,7 @@ import (
 
 // Locker is the structural seam every conversational webhook surface
 // (telegram/zalo/email dispatch) locks a conversation's decide-then-act
-// sequence through — *internal/queue.SessionLock's own Acquire/Release
+// sequence through — *internal/queue/redis.SessionLock's own Acquire/Release
 // shape, duplicated here exactly like internal/queue.Locker itself is
 // duplicated in internal/delegate/spawn.go: this package must not import
 // internal/queue (a data-plane package) for the same reason

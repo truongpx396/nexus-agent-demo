@@ -1,4 +1,4 @@
-package queue
+package redis
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/redis/go-redis/v9"
+	goredis "github.com/redis/go-redis/v9"
 )
 
 // SessionLock is the per-session-key Redis serial lock README task 6.2
@@ -24,11 +24,11 @@ import (
 // lock THIS holder still owns, never one another worker already acquired
 // after this holder's lease expired and got reaped.
 type SessionLock struct {
-	client *redis.Client
+	client *goredis.Client
 	ttl    time.Duration
 }
 
-func NewSessionLock(client *redis.Client, ttl time.Duration) *SessionLock {
+func NewSessionLock(client *goredis.Client, ttl time.Duration) *SessionLock {
 	if ttl <= 0 {
 		ttl = 30 * time.Second
 	}
@@ -63,8 +63,8 @@ func (l *SessionLock) Acquire(ctx context.Context, sessionKey string) (token str
 // expired (and was reacquired by someone else) can never delete a stranger's
 // lock.
 const luaCompareAndDelete = `
-if redis.call('GET', KEYS[1]) == ARGV[1] then
-  return redis.call('DEL', KEYS[1])
+if goredis.call('GET', KEYS[1]) == ARGV[1] then
+  return goredis.call('DEL', KEYS[1])
 end
 return 0
 `
@@ -82,8 +82,8 @@ func (l *SessionLock) Release(ctx context.Context, sessionKey, token string) err
 // needs to keep renewing it rather than have another worker steal the
 // session mid-run.
 const luaCompareAndExtend = `
-if redis.call('GET', KEYS[1]) == ARGV[1] then
-  return redis.call('PEXPIRE', KEYS[1], ARGV[2])
+if goredis.call('GET', KEYS[1]) == ARGV[1] then
+  return goredis.call('PEXPIRE', KEYS[1], ARGV[2])
 end
 return 0
 `

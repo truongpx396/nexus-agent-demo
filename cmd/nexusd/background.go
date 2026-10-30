@@ -6,6 +6,8 @@ import (
 	"os"
 	"time"
 
+	queueredis "github.com/truongpx396/nexus-agent-demo/internal/queue/redis"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -221,7 +223,7 @@ func startQueueWorkers(ctx context.Context, redisClient *redis.Client, port queu
 		return func() {}
 	}
 
-	lock := queue.NewSessionLock(redisClient, 30*time.Second)
+	lock := queueredis.NewSessionLock(redisClient, 30*time.Second)
 	runner := &queueRunner{ctl: ctl, delegations: delegations, teams: teamsSvc, srv: srv}
 
 	recoverOrphanedSessions(ctx, adminPool, port)

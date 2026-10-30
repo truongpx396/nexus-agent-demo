@@ -1,11 +1,13 @@
 //go:build integration
 
-package queue
+package redis
 
 import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/truongpx396/nexus-agent-demo/internal/queue"
 
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
@@ -15,7 +17,7 @@ import (
 // newTestQueue starts a throwaway Redis (the consumer-group, XAUTOCLAIM and
 // XDEL semantics under test only exist in a real one) and returns the Port
 // plus the raw client so a test can look at the stream itself.
-func newTestQueue(t *testing.T) (*RedisStreams, *goredis.Client) {
+func newTestQueue(t *testing.T) (*Streams, *goredis.Client) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -36,16 +38,16 @@ func newTestQueue(t *testing.T) (*RedisStreams, *goredis.Client) {
 	client := goredis.NewClient(opts)
 	t.Cleanup(func() { _ = client.Close() })
 
-	q, err := NewRedisStreams(ctx, client)
+	q, err := NewStreams(ctx, client)
 	if err != nil {
 		t.Fatalf("new redis streams: %v", err)
 	}
 	return q, client
 }
 
-func newTestJob() Job {
+func newTestJob() queue.Job {
 	id := uuid.New()
-	return Job{TenantID: uuid.New(), SessionID: id, SessionKey: id.String(), Kind: KindResume}
+	return queue.Job{TenantID: uuid.New(), SessionID: id, SessionKey: id.String(), Kind: queue.KindResume}
 }
 
 func streamLen(t *testing.T, client *goredis.Client, key string) int64 {
@@ -68,7 +70,7 @@ func pendingCount(t *testing.T, client *goredis.Client) int64 {
 
 // leaseWithin polls Lease until it yields a job or the deadline passes — a
 // delayed retry becomes leasable on a wall-clock schedule, not on demand.
-func leaseWithin(t *testing.T, q *RedisStreams, owner string, d time.Duration) (Job, bool) {
+func leaseWithin(t *testing.T, q *Streams, owner string, d time.Duration) (queue.Job, bool) {
 	t.Helper()
 	deadline := time.Now().Add(d)
 	for {

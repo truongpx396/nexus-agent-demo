@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"time"
 
+	queueredis "github.com/truongpx396/nexus-agent-demo/internal/queue/redis"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
@@ -27,7 +29,6 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
 	oversightpg "github.com/truongpx396/nexus-agent-demo/internal/oversight/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
-	"github.com/truongpx396/nexus-agent-demo/internal/queue"
 	"github.com/truongpx396/nexus-agent-demo/internal/reliability"
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
 	"github.com/truongpx396/nexus-agent-demo/internal/runs"
@@ -163,7 +164,7 @@ func serve(ctx context.Context) error {
 	// and runctl.Control below, both of which need to enqueue a queued run
 	// (README task 6.1's own successor) once they've durably seeded/
 	// appended it.
-	queuePort, err := queue.NewRedisStreams(ctx, redisClient)
+	queuePort, err := queueredis.NewStreams(ctx, redisClient)
 	if err != nil {
 		return fmt.Errorf("configure queue: %w", err)
 	}
@@ -178,7 +179,7 @@ func serve(ctx context.Context) error {
 	// and each start a fresh one. SessionLock's key derivation is a fixed
 	// function of the key, so this and startQueueWorkers' own instance
 	// need not be the same value.
-	sessionLock := queue.NewSessionLock(redisClient, 30*time.Second)
+	sessionLock := queueredis.NewSessionLock(redisClient, 30*time.Second)
 
 	vault := &connectors.Vault{Store: st, Keys: keyStore, Providers: newConnectorRegistry(), Redis: redisClient}
 
