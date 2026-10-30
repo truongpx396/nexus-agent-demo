@@ -326,9 +326,20 @@ func TestCreateTeam_SpawnsMembersAndCompletesWhenBoardEmptyAndMembersTerminal(t 
 		t.Fatalf("got %d member sessions, want 2", memberCount)
 	}
 
-	coordinatorEvents, err := listEventsDirect(context.Background(), r.st, r.tenantID, coordinatorID)
-	if err != nil {
-		t.Fatalf("list coordinator events: %v", err)
+	// Ending a team is three commits in a row (Service.endTeam): flip the
+	// status, reap the members, append team_ended onto the coordinator's log.
+	// The status above is visible after the first, so the event is polled for
+	// rather than read once -- a single read races the third commit, which is
+	// how this test failed on a slow CI runner.
+	var coordinatorEvents []eventlog.Event
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		coordinatorEvents, err = listEventsDirect(context.Background(), r.st, r.tenantID, coordinatorID)
+		if err != nil {
+			t.Fatalf("list coordinator events: %v", err)
+		}
+		if hasEventType(coordinatorEvents, eventlog.EventTeamEnded) {
+			break
+		}
 	}
 	if !hasEventType(coordinatorEvents, eventlog.EventTeamCreated) {
 		t.Fatalf("coordinator's own log never shows team_created")
