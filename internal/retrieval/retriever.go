@@ -5,25 +5,14 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	"github.com/truongpx396/nexus-agent-demo/internal/ingest"
 	"github.com/truongpx396/nexus-agent-demo/internal/memory"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools"
 )
-
-// TenantTxRunner is the one method this package needs from *store.Store —
-// declared locally, structurally satisfied, the same decoupling idiom
-// internal/tools.SandboxExec and internal/tools/builtin's own resolver
-// interfaces already use, so this package's tests can fake it without a
-// live Postgres.
-type TenantTxRunner interface {
-	InTenantTx(ctx context.Context, tenantID uuid.UUID, fn func(ctx context.Context, tx pgx.Tx) error) error
-}
 
 // EmbeddingBudget is the narrow slice of *internal/cost.Gate this package
 // needs — the same structural-interface idiom kernel.BudgetGate already
@@ -47,7 +36,7 @@ type EmbeddingBudget interface {
 // cmd/nexusd — is where board-card scanning happens: an operation this
 // stateful belongs in a service, not scattered across main.go.
 type Retriever struct {
-	Store    TenantTxRunner
+	Index    Index
 	Gate     EmbeddingBudget
 	Embedder provider.Embedder
 	// ModelID attributes every reservation/cost record this Retriever makes
@@ -81,12 +70,7 @@ func (r *Retriever) IndexDocument(ctx context.Context, tenantID, sessionID uuid.
 		docRow.AdmissionFindings = append(docRow.AdmissionFindings, c.Finding...)
 	}
 
-	var docID uuid.UUID
-	err = r.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		var ierr error
-		docID, ierr = InsertDocument(ctx, tx, tenantID, docRow)
-		return ierr
-	})
+	docID, err := r.Index.InsertDocument(ctx, tenantID, docRow)
 	if err != nil {
 		return Document{}, err
 	}
@@ -119,10 +103,7 @@ func (r *Retriever) IndexDocument(ctx context.Context, tenantID, sessionID uuid.
 			Embedding: embeddings[i], SourceDigest: doc.SourceDigest, InjectionScanStatus: "clean",
 		}
 	}
-	err = r.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		return IndexChunks(ctx, tx, tenantID, docID, rows)
-	})
-	if err != nil {
+	if err := r.Index.IndexChunks(ctx, tenantID, docID, rows); err != nil {
 		return Document{}, err
 	}
 	return docRow, nil
@@ -147,12 +128,7 @@ func (r *Retriever) Search(ctx context.Context, tenantID, sessionID uuid.UUID, q
 		topK = r.TopK
 	}
 
-	var results []ScoredChunk
-	err = r.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		var serr error
-		results, serr = Search(ctx, tx, tenantID, embeddings[0], topK)
-		return serr
-	})
+	results, err := r.Index.Search(ctx, tenantID, embeddings[0], topK)
 	if err != nil {
 		return nil, err
 	}
@@ -205,15 +181,4 @@ func (r *Retriever) embed(ctx context.Context, tenantID, sessionID uuid.UUID, te
 	return embeddings, nil
 }
 
-// Erase is task 12.8's own gate, called from the SAME transaction as
-// internal/cryptopg.EraseTenant (cmd/nexusd's `erase --tenant` path) — see
-// DeleteTenant's own doc comment for why this package never imports
-// internal/crypto to do that itself.
-func Erase(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) (deletedChunks, deletedDocs int, err error) {
-	return DeleteTenant(ctx, tx, tenantID)
-}
-
-var (
-	_ TenantTxRunner  = (*store.Store)(nil)
-	_ EmbeddingBudget = (*cost.Gate)(nil)
-)
+var _ EmbeddingBudget = (*cost.Gate)(nil)

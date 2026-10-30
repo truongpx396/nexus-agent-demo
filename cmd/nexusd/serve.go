@@ -26,7 +26,10 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
 	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/authn"
+	configpg "github.com/truongpx396/nexus-agent-demo/internal/config/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/connectors"
+	connectorspg "github.com/truongpx396/nexus-agent-demo/internal/connectors/postgres"
+	connectorsredis "github.com/truongpx396/nexus-agent-demo/internal/connectors/redis"
 	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/delegate"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
@@ -188,7 +191,11 @@ func serve(ctx context.Context) error {
 	// need not be the same value.
 	sessionLock := queueredis.NewSessionLock(redisClient, 30*time.Second)
 
-	vault := &connectors.Vault{Store: st, Keys: keyStore, Providers: newConnectorRegistry(), Redis: redisClient}
+	cfgStore := configpg.NewStore(st)
+	vault := &connectors.Vault{
+		Config: cfgStore, Connections: connectorspg.NewConnections(st, keyStore), States: connectorsredis.NewStates(redisClient),
+		Providers: newConnectorRegistry(),
+	}
 
 	// Built here, ahead of newToolPipeline (moved up from its original
 	// Phase 4 position below): Phase 12's platform/retrieve tool needs a
@@ -200,7 +207,7 @@ func serve(ctx context.Context) error {
 
 	delegations := delegate.NewDelegations(delegatepg.New(st, keyStore, chain))
 	teamsSvc := teams.NewService(teamspg.New(st, keyStore, chain))
-	pipeline, catalog, catalogManifestDigest, admittedSkillBundles, mcpPort := newToolPipeline(st, keyStore, chain, delegations, teamsSvc, vault, gate)
+	pipeline, catalog, catalogManifestDigest, admittedSkillBundles, mcpPort := newToolPipeline(st, cfgStore, keyStore, chain, delegations, teamsSvc, vault, gate)
 	loadedTools := make([]string, len(catalog))
 	for i, c := range catalog {
 		loadedTools[i] = c.Name
@@ -223,7 +230,7 @@ func serve(ctx context.Context) error {
 		TraceContent: envOr("NEXUS_TRACE_CONTENT", "false") == "true", // opt-in prompt/tool content in traces, docs/local-llm.md — off by default, keeps every span content-free unless explicitly requested
 	}
 
-	memStore := &memory.Store{RootDir: envOr("NEXUS_MEMORY_ROOT", ".dev/memory")}
+	memStore := &memory.Store{RootDir: envOr("NEXUS_MEMORY_ROOT", ".dev/memory"), Config: cfgStore}
 
 	starter := &kernelRunStarter{
 		kernel:      k,
@@ -232,7 +239,6 @@ func serve(ctx context.Context) error {
 		loadedTools: loadedTools,
 		maxTurns:    25,
 		memory:      memStore,
-		store:       st,
 		queue:       queuePort,
 		redisClient: redisClient,
 	}
@@ -292,7 +298,7 @@ func serve(ctx context.Context) error {
 	srv.Oversight = &nexusdOversightPort{approvals: approvals, resumer: resumer, delegations: delegations, teams: teamsSvc}
 	srv.Grants = grants
 	srv.RunCtl = &nexusdRunCtlPort{ctl: ctl}
-	srv.Skills = &nexusdSkillSetPort{store: st, bundles: admittedSkillBundles}
+	srv.Skills = &nexusdSkillSetPort{config: cfgStore, bundles: admittedSkillBundles}
 	srv.MCP = mcpPort
 	srv.Outbox = &surfaces.Outbox{Ledger: surfpg.NewLedger(st, keyStore, chain)}
 	srv.OutboxSender = logSender{}

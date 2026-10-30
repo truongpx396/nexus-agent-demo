@@ -21,6 +21,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/ingest"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
 	"github.com/truongpx396/nexus-agent-demo/internal/retrieval"
+	retrievalpg "github.com/truongpx396/nexus-agent-demo/internal/retrieval/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/migrations"
 )
@@ -102,7 +103,7 @@ func newTestRetriever(t *testing.T, pool *pgxpool.Pool) (*retrieval.Retriever, *
 	st := store.New(pool)
 	gate := cost.NewGate(costpg.New(st), nil, cost.DefaultMeters(), cost.GateConfig{})
 	return &retrieval.Retriever{
-		Store: st, Gate: gate, Embedder: fake.NewEmbedder(), ModelID: "fake-embedder-v1", TopK: 5,
+		Index: retrievalpg.NewIndex(st), Gate: gate, Embedder: fake.NewEmbedder(), ModelID: "fake-embedder-v1", TopK: 5,
 	}, st
 }
 
@@ -224,12 +225,12 @@ func TestRetrieval_IngestIndexSearchErase(t *testing.T) {
 	}
 
 	// Erase the tenant (task 12.8) — the SAME shape cmd/nexusd's `erase
-	// --tenant` command uses: retrieval.Erase inside the tenant's own
+	// --tenant` command uses: retrievalpg.Erase inside the tenant's own
 	// scoped transaction.
 	var deletedChunks, deletedDocs int
 	err = st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var eerr error
-		deletedChunks, deletedDocs, eerr = retrieval.Erase(ctx, tx, tenantID)
+		deletedChunks, deletedDocs, eerr = retrievalpg.Erase(ctx, tx, tenantID)
 		return eerr
 	})
 	if err != nil {

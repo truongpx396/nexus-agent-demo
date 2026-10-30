@@ -69,6 +69,10 @@ func init() {
 		{"the teams service", "internal/teams"},
 		{"the job queue port", "internal/queue"},
 		{"the oversight service", "internal/oversight"},
+		{"tenant config", "internal/config"},
+		{"file-first memory", "internal/memory"},
+		{"the retrieval service", "internal/retrieval"},
+		{"the connectors vault", "internal/connectors"},
 	} {
 		rules = append(rules, noStorage(s.subject, s.pkg))
 	}

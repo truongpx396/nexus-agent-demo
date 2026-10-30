@@ -79,12 +79,37 @@ func TestAnswer_ARequestThatIsNoLongerPendingCannotBeAnswered(t *testing.T) {
 	}
 }
 
-func TestAnswer_AfterTheTTLIsRefused(t *testing.T) {
-	in, f := newInputs()
-	seeded := f.seedInput(uuid.New(), oversight.OnExpiryExpire, true)
-	if _, err := in.Answer(context.Background(), tenant, seeded.InputRequestID, json.RawMessage(`"late"`)); err == nil {
-		t.Error("an answer after the request's TTL was accepted")
-	}
+func TestAnswer_AfterTheTTLIsRefusedAndTheRequestResolvedPerItsPolicy(t *testing.T) {
+	// A late answer is refused, but the request's own on_expiry policy still
+	// takes effect: refusing must not roll back the typed expiry (or the
+	// recorded default assumption) that the lapse owes the run.
+	t.Run("on_expiry=expire keeps the typed expiry", func(t *testing.T) {
+		in, f := newInputs()
+		seeded := f.seedInput(uuid.New(), oversight.OnExpiryExpire, true)
+		if _, err := in.Answer(context.Background(), tenant, seeded.InputRequestID, json.RawMessage(`"late"`)); err == nil {
+			t.Fatal("an answer after the request's TTL was accepted")
+		}
+		if got := f.inputs[seeded.InputRequestID]; got.Status != oversight.InputExpired || got.Answer != nil {
+			t.Errorf("stored request = %s answer %s, want expired with the late answer discarded", got.Status, got.Answer)
+		}
+		if types := f.eventTypes(); len(types) != 1 || types[0] != eventlog.EventInputExpired {
+			t.Errorf("events = %v, want exactly input_expired", types)
+		}
+	})
+	t.Run("on_expiry=default keeps the recorded assumption, not the late answer", func(t *testing.T) {
+		in, f := newInputs()
+		seeded := f.seedInput(uuid.New(), oversight.OnExpiryDefault, true)
+		if _, err := in.Answer(context.Background(), tenant, seeded.InputRequestID, json.RawMessage(`"late"`)); err == nil {
+			t.Fatal("an answer after the request's TTL was accepted")
+		}
+		got := f.inputs[seeded.InputRequestID]
+		if got.Status != oversight.InputAnswered || !got.UsedDefault || string(got.Answer) != `"eu-west-1"` {
+			t.Errorf("stored request = %s answer %s default=%v, want answered with the default assumption", got.Status, got.Answer, got.UsedDefault)
+		}
+		if types := f.eventTypes(); len(types) != 1 || types[0] != eventlog.EventInputAnswered {
+			t.Errorf("events = %v, want exactly input_answered", types)
+		}
+	})
 }
 
 func TestExpire_ResolvesAnOverdueRequestPerItsOwnPolicy(t *testing.T) {

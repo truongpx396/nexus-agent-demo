@@ -14,19 +14,14 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/redis/go-redis/v9"
 	"golang.org/x/oauth2"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/config"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
-	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
 // Provider is one OAuth2 authorization-code provider this DEPLOYMENT
@@ -75,20 +70,19 @@ func (r *Registry) oauth2Config(name string) (oauth2.Config, bool) {
 	}, true
 }
 
-// Vault is the per-user OAuth token vault: migrations/0018_oauth_connections.sql
-// backs it, and a bounded-TTL Redis key (not a durable table — CSRF state
-// lives minutes, not the lifetime of a connection, and needs no audit
-// durability) carries the authorization-code flow's state parameter between
-// BeginAuth and HandleCallback.
+// Vault is the per-user OAuth token vault: Connections (migrations/
+// 0018_oauth_connections.sql) holds the sealed tokens, and States — a
+// bounded-TTL store, not a durable table, since CSRF state lives minutes, not
+// the lifetime of a connection, and needs no audit durability — carries the
+// authorization-code flow's state parameter between BeginAuth and
+// HandleCallback.
 type Vault struct {
-	Store     *store.Store
-	Keys      *cryptopg.KeyStore
-	Providers *Registry
-	Redis     *redis.Client
-	StateTTL  time.Duration // default 5 minutes
+	Config      config.Loader
+	Connections Connections
+	States      StateStore
+	Providers   *Registry
+	StateTTL    time.Duration // default 5 minutes
 }
-
-const stateKeyPrefix = "nexus:connectors:oauth_state:"
 
 // stateRecord is what BeginAuth stashes in Redis under the state token —
 // enough for HandleCallback to resume without trusting anything the
@@ -113,7 +107,7 @@ func randomState() (string, error) {
 // being a recognized Provider in the process-wide Registry is necessary
 // but never sufficient.
 func (v *Vault) BeginAuth(ctx context.Context, tenantID, userID uuid.UUID, providerName string) (redirectURL string, err error) {
-	cfg, err := config.LoadForTenant(ctx, v.Store, tenantID)
+	cfg, err := v.Config.Load(ctx, tenantID)
 	if err != nil {
 		return "", fmt.Errorf("connectors: load tenant config: %w", err)
 	}
@@ -137,37 +131,25 @@ func (v *Vault) BeginAuth(ctx context.Context, tenantID, userID uuid.UUID, provi
 	if ttl <= 0 {
 		ttl = 5 * time.Minute
 	}
-	if err := v.Redis.Set(ctx, stateKeyPrefix+state, raw, ttl).Err(); err != nil {
-		return "", fmt.Errorf("connectors: store state: %w", err)
+	if err := v.States.Put(ctx, state, raw, ttl); err != nil {
+		return "", err
 	}
 	return oc.AuthCodeURL(state), nil
 }
-
-// luaGetAndDelete: single-use retrieval, the same compare-and-consume
-// atomicity internal/queue/lock.go's own release script uses for its
-// (different) purpose — a replayed callback with an already-consumed state
-// finds nothing and fails closed, rather than re-running a stale exchange
-// against whatever "code" a replay happens to carry.
-const luaGetAndDelete = `
-local v = redis.call('GET', KEYS[1])
-if v then redis.call('DEL', KEYS[1]) end
-return v
-`
 
 // HandleCallback completes the authorization-code exchange for state/code,
 // seals the resulting token pair under the tenant's own DEK, and upserts
 // oauth_connections. state is consumed exactly once.
 func (v *Vault) HandleCallback(ctx context.Context, state, code string) error {
-	res, err := v.Redis.Eval(ctx, luaGetAndDelete, []string{stateKeyPrefix + state}).Result()
-	if err != nil && !errors.Is(err, redis.Nil) {
-		return fmt.Errorf("connectors: consume state: %w", err)
+	raw, found, err := v.States.Take(ctx, state)
+	if err != nil {
+		return err
 	}
-	raw, _ := res.(string)
-	if raw == "" {
+	if !found {
 		return fmt.Errorf("connectors: state %q is unknown, expired, or already consumed", state)
 	}
 	var rec stateRecord
-	if err := json.Unmarshal([]byte(raw), &rec); err != nil {
+	if err := json.Unmarshal(raw, &rec); err != nil {
 		return fmt.Errorf("connectors: unmarshal state: %w", err)
 	}
 	tenantID, err := uuid.Parse(rec.TenantID)
@@ -200,43 +182,24 @@ func aadLabel(userID uuid.UUID, providerName string) string {
 }
 
 func (v *Vault) persist(ctx context.Context, tenantID, userID uuid.UUID, providerName string, tok *oauth2.Token) error {
-	return v.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		dek, err := v.Keys.NewDEK(ctx, tx, tenantID)
-		if err != nil {
-			return fmt.Errorf("mint DEK: %w", err)
-		}
+	var expiresAt *time.Time
+	if !tok.Expiry.IsZero() {
+		e := tok.Expiry
+		expiresAt = &e
+	}
+	return v.Connections.Save(ctx, tenantID, userID, providerName, expiresAt, func(dek crypto.DEK) (access, refresh []byte, err error) {
 		aad := aadLabel(userID, providerName)
-		sealedAccess, err := crypto.Seal(dek, []byte(tok.AccessToken), tenantID.String(), aad)
+		access, err = crypto.Seal(dek, []byte(tok.AccessToken), tenantID.String(), aad)
 		if err != nil {
-			return fmt.Errorf("seal access token: %w", err)
+			return nil, nil, fmt.Errorf("seal access token: %w", err)
 		}
-		var sealedRefresh []byte
 		if tok.RefreshToken != "" {
-			sealedRefresh, err = crypto.Seal(dek, []byte(tok.RefreshToken), tenantID.String(), aad)
+			refresh, err = crypto.Seal(dek, []byte(tok.RefreshToken), tenantID.String(), aad)
 			if err != nil {
-				return fmt.Errorf("seal refresh token: %w", err)
+				return nil, nil, fmt.Errorf("seal refresh token: %w", err)
 			}
 		}
-		var expiresAt *time.Time
-		if !tok.Expiry.IsZero() {
-			e := tok.Expiry
-			expiresAt = &e
-		}
-		_, err = tx.Exec(ctx, `
-			INSERT INTO oauth_connections (connection_id, tenant_id, user_id, provider, sealed_access_token, sealed_refresh_token, key_id, expires_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
-			ON CONFLICT (tenant_id, user_id, provider) DO UPDATE
-			SET sealed_access_token = EXCLUDED.sealed_access_token,
-			    sealed_refresh_token = EXCLUDED.sealed_refresh_token,
-			    key_id = EXCLUDED.key_id,
-			    expires_at = EXCLUDED.expires_at,
-			    updated_at = now()`,
-			uuid.New(), tenantID, userID, providerName, sealedAccess, sealedRefresh, dek.KeyID, expiresAt,
-		)
-		if err != nil {
-			return fmt.Errorf("upsert oauth_connections: %w", err)
-		}
-		return nil
+		return access, refresh, nil
 	})
 }
 
@@ -250,44 +213,25 @@ func (v *Vault) Token(ctx context.Context, tenantID, userID uuid.UUID, providerN
 		return nil, fmt.Errorf("connectors: unrecognized provider %q", providerName)
 	}
 
-	var tok *oauth2.Token
-	err := v.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		var sealedAccess, sealedRefresh []byte
-		var keyID string
-		var expiresAt *time.Time
-		err := tx.QueryRow(ctx,
-			`SELECT sealed_access_token, sealed_refresh_token, key_id, expires_at FROM oauth_connections WHERE tenant_id = $1 AND user_id = $2 AND provider = $3`,
-			tenantID, userID, providerName,
-		).Scan(&sealedAccess, &sealedRefresh, &keyID, &expiresAt)
-		if err != nil {
-			return fmt.Errorf("load connection: %w", err)
-		}
-		dek, err := v.Keys.Unwrap(ctx, tx, keyID)
-		if err != nil {
-			return fmt.Errorf("unwrap key: %w", err)
-		}
-		aad := aadLabel(userID, providerName)
-		access, err := crypto.Open(dek, sealedAccess, tenantID.String(), aad)
-		if err != nil {
-			return fmt.Errorf("open access token: %w", err)
-		}
-		var refresh string
-		if len(sealedRefresh) > 0 {
-			r, err := crypto.Open(dek, sealedRefresh, tenantID.String(), aad)
-			if err != nil {
-				return fmt.Errorf("open refresh token: %w", err)
-			}
-			refresh = string(r)
-		}
-		t := &oauth2.Token{AccessToken: string(access), RefreshToken: refresh}
-		if expiresAt != nil {
-			t.Expiry = *expiresAt
-		}
-		tok = t
-		return nil
-	})
+	conn, err := v.Connections.Load(ctx, tenantID, userID, providerName)
 	if err != nil {
 		return nil, err
+	}
+	aad := aadLabel(userID, providerName)
+	access, err := crypto.Open(conn.DEK, conn.SealedAccess, tenantID.String(), aad)
+	if err != nil {
+		return nil, fmt.Errorf("open access token: %w", err)
+	}
+	tok := &oauth2.Token{AccessToken: string(access)}
+	if len(conn.SealedRefresh) > 0 {
+		refresh, err := crypto.Open(conn.DEK, conn.SealedRefresh, tenantID.String(), aad)
+		if err != nil {
+			return nil, fmt.Errorf("open refresh token: %w", err)
+		}
+		tok.RefreshToken = string(refresh)
+	}
+	if conn.ExpiresAt != nil {
+		tok.Expiry = *conn.ExpiresAt
 	}
 
 	if !tok.Valid() && tok.RefreshToken != "" {

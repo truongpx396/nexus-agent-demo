@@ -25,6 +25,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/permissions/safety"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/retrieval"
+	retrievalpg "github.com/truongpx396/nexus-agent-demo/internal/retrieval/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
 	"github.com/truongpx396/nexus-agent-demo/internal/sandbox"
 	"github.com/truongpx396/nexus-agent-demo/internal/skills"
@@ -53,7 +54,7 @@ import (
 // Ledger/Spawner fields are satisfied by delegations/nexusdDelegationSpawner
 // immediately — Wire only needs to land before the FIRST real dispatch,
 // which is well after serve() finishes wiring everything.
-func newToolPipeline(st *store.Store, keyStore *cryptopg.KeyStore, chain *auditpg.Chain, delegations *delegate.Delegations, teamsSvc *teams.Service, vault *connectors.Vault, gate *cost.Gate) (*tools.Pipeline, []provider.ToolSchema, []byte, []skills.SkillBundle, *mcp.Port) {
+func newToolPipeline(st *store.Store, cfgStore config.Loader, keyStore *cryptopg.KeyStore, chain *auditpg.Chain, delegations *delegate.Delegations, teamsSvc *teams.Service, vault *connectors.Vault, gate *cost.Gate) (*tools.Pipeline, []provider.ToolSchema, []byte, []skills.SkillBundle, *mcp.Port) {
 	reg := tools.NewRegistry()
 	if err := reg.DeclareNamespace("platform", "nexusd"); err != nil {
 		fatalf("declare platform namespace: %v", err)
@@ -77,7 +78,7 @@ func newToolPipeline(st *store.Store, keyStore *cryptopg.KeyStore, chain *auditp
 	// book/cost-record label, not a live credential (internal/retrieval.
 	// Retriever.ModelID's own doc comment).
 	retriever := &retrieval.Retriever{
-		Store: st, Gate: gate, Embedder: newEmbedder(), ModelID: "fake-embedder-v1", TopK: 5,
+		Index: retrievalpg.NewIndex(st), Gate: gate, Embedder: newEmbedder(), ModelID: "fake-embedder-v1", TopK: 5,
 	}
 
 	builtinTools := []tools.Tool{
@@ -91,7 +92,7 @@ func newToolPipeline(st *store.Store, keyStore *cryptopg.KeyStore, chain *auditp
 			Registry: reg,
 			Events:   runctl.NewSkillEventRecorder(runctlpg.New(st, keyStore, chain)),
 			Admitted: func(tenantID uuid.UUID) []string {
-				cfg, err := config.LoadForTenant(context.Background(), st, tenantID)
+				cfg, err := cfgStore.Load(context.Background(), tenantID)
 				if err != nil {
 					log.Error().Err(err).Any("tenant_id", tenantID).Msg("nexusd: load tenant config for skill admission check")
 					return nil // fail closed: an unreadable config admits nothing

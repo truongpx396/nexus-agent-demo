@@ -8,11 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
-
-	"github.com/truongpx396/nexus-agent-demo/internal/config"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
 // Snapshot is what gets folded into a fresh session's byte-stable system
@@ -32,8 +28,8 @@ type Snapshot struct {
 // (cmd/nexusd's kernelRunStarter.StartRun) — "writes take effect next
 // session" is exactly the fact that Load runs at session start and never
 // again mid-session.
-func (s *Store) Load(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) (Snapshot, error) {
-	cfg, err := config.Load(ctx, tx, tenantID)
+func (s *Store) Load(ctx context.Context, tenantID uuid.UUID) (Snapshot, error) {
+	cfg, err := s.Config.Load(ctx, tenantID)
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("memory: load tenant config: %w", err)
 	}
@@ -62,18 +58,4 @@ func (s *Store) Load(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) (Snapsh
 		sources = append(sources, e.name)
 	}
 	return Snapshot{Text: buf.String(), SourceIDs: sources}, nil
-}
-
-// LoadForSession is Load's convenience wrapper for a caller that only has a
-// *store.Store, not an open transaction — cmd/nexusd's kernelRunStarter is
-// the one caller, at the moment it builds a fresh session's RunConfig
-// (README task 7.1's "injected at session start").
-func (s *Store) LoadForSession(ctx context.Context, st *store.Store, tenantID uuid.UUID) (Snapshot, error) {
-	var snap Snapshot
-	err := st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		var err error
-		snap, err = s.Load(ctx, tx, tenantID)
-		return err
-	})
-	return snap, err
 }

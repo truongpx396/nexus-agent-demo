@@ -11,7 +11,6 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/queue"
 	"github.com/truongpx396/nexus-agent-demo/internal/runs"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
 
@@ -26,11 +25,10 @@ type kernelRunStarter struct {
 	loadedTools []string
 	maxTurns    int
 
-	// memory/store back README task 7.1's "injected at session start": a
-	// nil memory leaves cfg.System untouched and cfg.MemorySources empty,
-	// exactly the pre-Phase-7 behavior every earlier test still gets.
+	// memory backs README task 7.1's "injected at session start": a nil
+	// memory leaves cfg.System untouched and cfg.MemorySources empty, exactly
+	// the pre-Phase-7 behavior every earlier test still gets.
 	memory *memory.Store
-	store  *store.Store
 
 	// queue is where StartRun enqueues the queue.KindStart job that
 	// actually drives the turn loop, once Seed has durably appended the
@@ -61,8 +59,8 @@ type kernelRunStarter struct {
 func (a *kernelRunStarter) StartRun(ctx context.Context, req runs.Request) (<-chan runs.Event, error) {
 	system := a.system
 	var memorySources []string
-	if a.memory != nil && a.store != nil {
-		snap, err := a.memory.LoadForSession(ctx, a.store, req.TenantID)
+	if a.memory != nil {
+		snap, err := a.memory.Load(ctx, req.TenantID)
 		if err != nil {
 			return nil, fmt.Errorf("load memory for tenant %s: %w", req.TenantID, err)
 		}
