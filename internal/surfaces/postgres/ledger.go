@@ -2,16 +2,14 @@ package postgres
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/sealed"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces"
 )
@@ -21,9 +19,8 @@ import (
 // audit event, sealed under the session's own key and hash-chained through
 // Chain.
 type Ledger struct {
-	st    *store.Store
-	keys  *cryptopg.KeyStore
-	chain *auditpg.Chain
+	st     *store.Store
+	sealer *sealed.Sealer
 }
 
 var _ surfaces.DeliveryLedger = (*Ledger)(nil)
@@ -31,7 +28,7 @@ var _ surfaces.DeliveryLedger = (*Ledger)(nil)
 // NewLedger returns a Ledger. chain may be nil, in which case events are
 // appended without a signed receipt (a minimal wiring for tests).
 func NewLedger(st *store.Store, keys *cryptopg.KeyStore, chain *auditpg.Chain) *Ledger {
-	return &Ledger{st: st, keys: keys, chain: chain}
+	return &Ledger{st: st, sealer: sealed.NewSealer(keys, chain)}
 }
 
 // deliveryEnqueuedPayload/deliveryOutcomePayload are what
@@ -87,54 +84,9 @@ func (l *Ledger) Record(ctx context.Context, tenantID, sessionID, deliveryID uui
 	})
 }
 
-// activeKeyID and appendEvent are near-identical copies of
-// internal/runctl's own same-named functions (internal/runctl/append.go),
-// which are themselves a copy of internal/oversight's — see either's own
-// doc comment for why duplicating rather than importing is the right call:
-// every session in this demo has exactly one DEK for its whole lifetime,
-// so "the session's most recent non-erasure key_id" is still the correct,
-// and only, notion of "the current key," and this package has no live
-// kernel.RunState.Seal closure to reuse instead.
-func (l *Ledger) activeKeyID(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) (string, error) {
-	var keyID string
-	err := tx.QueryRow(ctx,
-		`SELECT key_id FROM events WHERE session_id = $1 AND key_id != $2 ORDER BY seq DESC LIMIT 1`,
-		sessionID, crypto.ErasureKeyID,
-	).Scan(&keyID)
-	if err != nil {
-		return "", fmt.Errorf("surfaces: find active key for session %s: %w", sessionID, err)
-	}
-	return keyID, nil
-}
-
+// appendEvent appends one delivery audit event, sealed under the session's own
+// key and chained, in the caller's transaction.
 func (l *Ledger) appendEvent(ctx context.Context, tx pgx.Tx, tenantID, sessionID uuid.UUID, typ eventlog.EventType, payload any) error {
-	plaintext, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("surfaces: marshal %s payload: %w", typ, err)
-	}
-	keyID, err := l.activeKeyID(ctx, tx, sessionID)
-	if err != nil {
-		return err
-	}
-	dek, err := l.keys.Unwrap(ctx, tx, keyID)
-	if err != nil {
-		return fmt.Errorf("surfaces: unwrap key for session %s: %w", sessionID, err)
-	}
-	sealed, err := crypto.Seal(dek, plaintext, tenantID.String(), sessionID.String())
-	if err != nil {
-		return fmt.Errorf("surfaces: seal %s payload: %w", typ, err)
-	}
-	out, err := store.Append(ctx, tx, eventlog.Event{
-		EventID: uuid.New(), SessionID: sessionID, TenantID: tenantID, SchemaVersion: eventlog.CurrentSchemaVersion,
-		Type: typ, Payload: sealed, PayloadDigest: crypto.Digest(plaintext), KeyID: dek.KeyID, Actor: eventlog.ActorSystem,
-	})
-	if err != nil {
-		return fmt.Errorf("surfaces: append %s: %w", typ, err)
-	}
-	if l.chain != nil {
-		if _, err := l.chain.Append(ctx, tx, tenantID, sessionID, out.Seq, out.EventID, string(out.Type), out.PayloadDigest); err != nil {
-			return fmt.Errorf("surfaces: chain %s: %w", typ, err)
-		}
-	}
-	return nil
+	_, err := l.sealer.Bind(tx).Append(ctx, tenantID, sessionID, typ, nil, nil, payload)
+	return err
 }
