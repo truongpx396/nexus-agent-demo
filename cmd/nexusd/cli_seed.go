@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/config"
+	configpg "github.com/truongpx396/nexus-agent-demo/internal/config/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
@@ -70,14 +70,14 @@ func runSeed(ctx context.Context, args []string) error {
 var demoSkillIDs = []string{"web-research", "sandboxed-code"}
 
 // seedDemoSkills admits demoSkillIDs into tenantID's config, UNIONED with
-// whatever is already admitted (config.Upsert replaces the whole
+// whatever is already admitted (configpg.Upsert replaces the whole
 // admitted_skill_ids array, so a naive overwrite here would silently
 // un-admit anything an operator had already turned on by hand) — idempotent
 // like seedPriceBook, and harmless if skills/'s bundles fail the signature
 // or scan check at load time (task 7.3/7.5): admission and trust are two
 // independent gates, checked in two different places.
 func seedDemoSkills(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) error {
-	cfg, err := config.Load(ctx, tx, tenantID)
+	cfg, err := configpg.Load(ctx, tx, tenantID)
 	if err != nil {
 		return fmt.Errorf("load tenant config: %w", err)
 	}
@@ -96,7 +96,7 @@ func seedDemoSkills(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) error {
 		return nil
 	}
 	cfg.TenantID = tenantID
-	return config.Upsert(ctx, tx, cfg)
+	return configpg.Upsert(ctx, tx, cfg)
 }
 
 // seedPriceBook inserts one price book entry per (meter, model) pair the

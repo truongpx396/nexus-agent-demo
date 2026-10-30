@@ -29,6 +29,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/authn"
+	configpg "github.com/truongpx396/nexus-agent-demo/internal/config/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
@@ -59,13 +60,13 @@ func TestMemory_InjectedAtSessionStart_ProducesLeadingAuditEvent(t *testing.T) {
 	sessionID, userID := uuid.New(), uuid.New()
 	rig.createSession(t, sessionID, userID, "autonomous")
 
-	memStore := &memory.Store{RootDir: t.TempDir()}
+	memStore := &memory.Store{RootDir: t.TempDir(), Config: configpg.NewStore(rig.st)}
 	if err := memStore.Write(rig.tenantID, "notes.md", []byte("The user prefers terse commit messages.")); err != nil {
 		t.Fatalf("write memory file: %v", err)
 	}
-	snap, err := memStore.LoadForSession(ctx, rig.st, rig.tenantID)
+	snap, err := memStore.Load(ctx, rig.tenantID)
 	if err != nil {
-		t.Fatalf("LoadForSession: %v", err)
+		t.Fatalf("Load: %v", err)
 	}
 	if len(snap.SourceIDs) != 1 || snap.SourceIDs[0] != "notes.md" || !strings.Contains(snap.Text, "terse commit messages") {
 		t.Fatalf("snapshot = %+v, want notes.md loaded with its content", snap)

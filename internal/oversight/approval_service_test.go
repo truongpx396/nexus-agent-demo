@@ -130,17 +130,49 @@ func TestDeny_RecordsTheReasonOnTheApprovalAndInItsEvent(t *testing.T) {
 	}
 }
 
-func TestAnApprovalPastItsTTLIsRefusedEvenIfNothingSweptItYet(t *testing.T) {
-	a, f := newApprovals()
-	pending := f.seedApproval(uuid.New(), past)
-
-	_, err := a.Grant(context.Background(), tenant, pending.ApprovalID, "alice")
-	var notPending oversight.ErrApprovalNotPending
-	if !errors.As(err, &notPending) || notPending.Status != oversight.ApprovalExpired {
-		t.Fatalf("Grant after expiry = %v, want ErrApprovalNotPending with status expired", err)
+func TestAnApprovalPastItsTTLIsRefusedAndTheExpiryIsKept(t *testing.T) {
+	// Each decision is tried on its own approval: whichever one finds the
+	// approval overdue must refuse the decision and still leave it expired.
+	decisions := map[string]func(a *oversight.Approvals, id uuid.UUID) error{
+		"grant": func(a *oversight.Approvals, id uuid.UUID) error {
+			_, err := a.Grant(context.Background(), tenant, id, "alice")
+			return err
+		},
+		"grant modified": func(a *oversight.Approvals, id uuid.UUID) error {
+			_, err := a.GrantModified(context.Background(), tenant, id, "alice", json.RawMessage(`{"to":"bob"}`))
+			return err
+		},
+		"deny": func(a *oversight.Approvals, id uuid.UUID) error {
+			_, err := a.Deny(context.Background(), tenant, id, "alice", "no")
+			return err
+		},
 	}
-	if len(f.events) != 0 {
-		t.Errorf("%d events for a refused grant, want none", len(f.events))
+	for name, decide := range decisions {
+		t.Run(name, func(t *testing.T) {
+			a, f := newApprovals()
+			session := uuid.New()
+			pending := f.seedApproval(session, past)
+
+			err := decide(a, pending.ApprovalID)
+			var notPending oversight.ErrApprovalNotPending
+			if !errors.As(err, &notPending) || notPending.Status != oversight.ApprovalExpired {
+				t.Fatalf("decision after expiry = %v, want ErrApprovalNotPending with status expired", err)
+			}
+			// The refusal must not roll the expiry back: the approval is expired
+			// in the table, no longer listed as pending, and the log says so.
+			if got := f.approvals[pending.ApprovalID].Status; got != oversight.ApprovalExpired {
+				t.Errorf("stored status = %s, want expired: the refusal rolled the expiry back", got)
+			}
+			if listed, _ := a.ListPending(context.Background(), tenant); len(listed) != 0 {
+				t.Errorf("%d approvals still listed as pending, want none", len(listed))
+			}
+			if types := f.eventTypes(); len(types) != 1 || types[0] != eventlog.EventApprovalExpired {
+				t.Errorf("events = %v, want exactly approval_expired: a status must never change without its event", types)
+			}
+			if f.approvals[pending.ApprovalID].DecidedBy != "" {
+				t.Errorf("decided_by = %q on an expired approval, want it untouched", f.approvals[pending.ApprovalID].DecidedBy)
+			}
+		})
 	}
 }
 
