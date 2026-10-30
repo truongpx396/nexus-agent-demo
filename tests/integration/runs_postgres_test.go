@@ -199,6 +199,31 @@ func TestReader(t *testing.T) {
 		}
 	})
 
+	t.Run("FindByKey returns the most recent run under a key, and nothing for an unknown key or another tenant", func(t *testing.T) {
+		const key = "telegram:chat-42"
+		admitKeyed := func(tenantID uuid.UUID) uuid.UUID {
+			req := admitReq(tenantID)
+			req.UserID = user
+			req.SessionKey = key
+			if res, err := (runspg.Sessions{Store: st}).CreateSession(ctx, req); err != nil || !res.Admitted {
+				t.Fatalf("CreateSession = %+v, %v", res, err)
+			}
+			return req.SessionID
+		}
+		_, second := admitKeyed(tenantA), admitKeyed(tenantA)
+
+		run, found, err := reader.FindByKey(ctx, tenantA, key)
+		if err != nil || !found || run.RunID != second || run.Status != eventlog.SessionStatusQueued {
+			t.Fatalf("FindByKey = (%+v, %v, %v), want the newer of the two runs sharing the key", run, found, err)
+		}
+		if _, found, err := reader.FindByKey(ctx, tenantA, "telegram:nobody"); err != nil || found {
+			t.Errorf("an unknown key = (found=%v, err=%v), want (false, nil): no run yet is an answer, not an error", found, err)
+		}
+		if _, found, _ := reader.FindByKey(ctx, tenantB, key); found {
+			t.Error("another tenant found this tenant's run by its key: RLS must make it indistinguishable from absent")
+		}
+	})
+
 	t.Run("Events come back in order and open to the plaintext, only for their own tenant", func(t *testing.T) {
 		dek, err := runspg.Keys{Store: st, KeyStore: ks}.NewDEK(ctx, tenantA)
 		if err != nil {

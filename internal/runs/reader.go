@@ -35,6 +35,12 @@ type Reader interface {
 	// ListRuns returns userID's own root runs, newest first, at most limit.
 	ListRuns(ctx context.Context, tenantID, userID uuid.UUID, limit int) ([]RunView, error)
 
+	// FindByKey returns the most recent run created under sessionKey, or
+	// found=false. A conversational surface uses it to find the run a user's
+	// next message continues; "no run for this peer yet" is an answer, not an
+	// error, and a key is only ever looked up within one tenant.
+	FindByKey(ctx context.Context, tenantID uuid.UUID, sessionKey string) (run RunView, found bool, err error)
+
 	// Events returns runID's events in sequence order, still sealed.
 	Events(ctx context.Context, tenantID, runID uuid.UUID) ([]eventlog.Event, error)
 
