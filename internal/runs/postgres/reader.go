@@ -25,7 +25,7 @@ type Reader struct {
 
 var _ runs.Reader = Reader{}
 
-func view(s store.Session) runs.RunView {
+func view(s eventlog.Session) runs.RunView {
 	return runs.RunView{
 		RunID: s.SessionID, UserID: s.UserID, Status: s.Status, TerminalReason: s.TerminalReason,
 		CreatedAt: s.CreatedAt, AutonomyLevel: s.AutonomyLevel,
@@ -33,7 +33,7 @@ func view(s store.Session) runs.RunView {
 }
 
 func (r Reader) GetRun(ctx context.Context, tenantID, runID uuid.UUID) (runs.RunView, error) {
-	var sess store.Session
+	var sess eventlog.Session
 	err := r.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var gerr error
 		sess, gerr = store.GetSession(ctx, tx, runID)
@@ -50,7 +50,7 @@ func (r Reader) GetRun(ctx context.Context, tenantID, runID uuid.UUID) (runs.Run
 
 func (r Reader) FindByKey(ctx context.Context, tenantID uuid.UUID, sessionKey string) (runs.RunView, bool, error) {
 	var (
-		sess  store.Session
+		sess  eventlog.Session
 		found bool
 	)
 	err := r.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
@@ -65,7 +65,7 @@ func (r Reader) FindByKey(ctx context.Context, tenantID uuid.UUID, sessionKey st
 }
 
 func (r Reader) ListRuns(ctx context.Context, tenantID, userID uuid.UUID, limit int) ([]runs.RunView, error) {
-	var sessions []store.Session
+	var sessions []eventlog.Session
 	err := r.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var lerr error
 		sessions, lerr = store.ListSessionsForUser(ctx, tx, userID, limit)

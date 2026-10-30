@@ -15,6 +15,8 @@
 package integration
 
 import (
+	runctlpg "github.com/truongpx396/nexus-agent-demo/internal/runctl/postgres"
+
 	"context"
 	"encoding/json"
 	"fmt"
@@ -98,7 +100,7 @@ func TestStore_GetSessionByKey_ReturnsMostRecentWhenKeyIsShared(t *testing.T) {
 	newer := uuid.New()
 	err := st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		for _, id := range []uuid.UUID{older, newer} {
-			if err := store.CreateSession(ctx, tx, store.Session{
+			if err := store.CreateSession(ctx, tx, eventlog.Session{
 				SessionID: id, SessionKey: sharedKey, TenantID: tenantID,
 				SurfaceID: "telegram", UserID: uuid.New(), AgentVersion: 1,
 				HarnessDigest: []byte("test-digest"), DataLabel: "internal", RouteModelID: "test-model",
@@ -122,7 +124,7 @@ func TestStore_GetSessionByKey_ReturnsMostRecentWhenKeyIsShared(t *testing.T) {
 		t.Fatalf("create sessions: %v", err)
 	}
 
-	var got store.Session
+	var got eventlog.Session
 	var found bool
 	err = st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var derr error
@@ -337,7 +339,7 @@ func TestRunCtl_ResumeConversation_RefusesWhenNotAwaitingInput(t *testing.T) {
 		if derr != nil {
 			return derr
 		}
-		return store.CreateSession(ctx, tx, store.Session{
+		return store.CreateSession(ctx, tx, eventlog.Session{
 			SessionID: sessionID, SessionKey: sessionID.String(), TenantID: tenantID,
 			SurfaceID: "test", UserID: userID, AgentVersion: 1,
 			HarnessDigest: []byte("test-digest"), DataLabel: "internal", RouteModelID: "test-model",
@@ -375,7 +377,7 @@ func TestRunCtl_ResumeConversation_RefusesWhenNotAwaitingInput(t *testing.T) {
 		t.Fatalf("test setup bug: session is already awaiting_input (status=%q)", sess.Status)
 	}
 
-	ctl := &runctl.Control{Store: st, Keys: keys, Kernel: k, System: "test", MaxTurns: 5}
+	ctl := &runctl.Control{Store: runctlpg.New(st, keys, nil), Kernel: k, System: "test", MaxTurns: 5}
 
 	if _, err := ctl.ResumeConversation(ctx, tenantID, sessionID, "hello"); err == nil {
 		t.Fatal("expected ResumeConversation to refuse a session that isn't awaiting_input")
@@ -417,7 +419,7 @@ func TestRunCtl_ResumeConversation_Succeeds(t *testing.T) {
 		if derr != nil {
 			return derr
 		}
-		return store.CreateSession(ctx, tx, store.Session{
+		return store.CreateSession(ctx, tx, eventlog.Session{
 			SessionID: sessionID, SessionKey: sessionID.String(), TenantID: tenantID,
 			SurfaceID: "test", UserID: userID, AgentVersion: 1,
 			HarnessDigest: []byte("test-digest"), DataLabel: "internal", RouteModelID: "test-model",
@@ -465,7 +467,7 @@ func TestRunCtl_ResumeConversation_Succeeds(t *testing.T) {
 	// Control.Resume call does in production (cmd/nexusd/background.go's
 	// queueRunner.Run) -- called directly here since this test has no
 	// queue behind it.
-	ctl := &runctl.Control{Store: st, Keys: keys, Kernel: k, System: "test", MaxTurns: 5}
+	ctl := &runctl.Control{Store: runctlpg.New(st, keys, nil), Kernel: k, System: "test", MaxTurns: 5}
 	appended, err := ctl.ResumeConversation(ctx, tenantID, sessionID, "tell me more")
 	if err != nil {
 		t.Fatalf("ResumeConversation refused a genuinely awaiting_input session: %v", err)
@@ -531,7 +533,7 @@ func TestRunCtl_EndIdleConversation(t *testing.T) {
 		if derr != nil {
 			return derr
 		}
-		return store.CreateSession(ctx, tx, store.Session{
+		return store.CreateSession(ctx, tx, eventlog.Session{
 			SessionID: sessionID, SessionKey: sessionID.String(), TenantID: tenantID,
 			SurfaceID: "test", UserID: userID, AgentVersion: 1,
 			HarnessDigest: []byte("test-digest"), DataLabel: "internal", RouteModelID: "test-model",
@@ -567,7 +569,7 @@ func TestRunCtl_EndIdleConversation(t *testing.T) {
 		_ = ev
 	}
 
-	ctl := &runctl.Control{Store: st, Keys: keys, Kernel: k, System: "test", MaxTurns: 5}
+	ctl := &runctl.Control{Store: runctlpg.New(st, keys, nil), Kernel: k, System: "test", MaxTurns: 5}
 
 	if err := ctl.EndIdleConversation(ctx, tenantID, sessionID); err != nil {
 		t.Fatalf("EndIdleConversation: %v", err)
@@ -720,7 +722,7 @@ func TestRESTConversationalSession_MultiTurnSameSessionID(t *testing.T) {
 		Log:      postgres.New(st, postgres.Hooks{}),
 	}
 	starter := &testRunStarter{kernel: k}
-	ctl := &runctl.Control{Store: st, Keys: keyStore, Kernel: k, System: "test", MaxTurns: 10}
+	ctl := &runctl.Control{Store: runctlpg.New(st, keyStore, nil), Kernel: k, System: "test", MaxTurns: 10}
 
 	signingKey, err := authn.GeneratePrivateKey()
 	if err != nil {

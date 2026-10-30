@@ -154,7 +154,7 @@ func (s *Server) publishUntilDone(tenantID, sessionID uuid.UUID, events <-chan r
 // getRunResponse already exposes over plain HTTP, now also reaching
 // whichever Exporter (stdout or OTLPExporter, internal/obs) cmd/nexusd
 // wired in. TerminalReason is read from the session row (a plaintext
-// column, store.Session's own field — never the sealed event payload), so
+// column, eventlog.Session's own field — never the sealed event payload), so
 // this needs no decrypt path of its own.
 func (s *Server) emitTerminalSpan(tenantID, sessionID uuid.UUID) {
 	sess, err := s.getSession(context.Background(), tenantID, sessionID)

@@ -41,7 +41,7 @@ func TestComputeGoldenSignals(t *testing.T) {
 			id      uuid.UUID
 			surface string
 		}{{completed, "test"}, {stuck, "telegram"}} {
-			if err := store.CreateSession(ctx, tx, store.Session{
+			if err := store.CreateSession(ctx, tx, eventlog.Session{
 				SessionID: s.id, SessionKey: s.id.String(), TenantID: r.tenantID,
 				SurfaceID: s.surface, UserID: userID, AgentID: uuid.Nil, AgentVersion: 1,
 				HarnessDigest: []byte("test"), DataLabel: "internal", RouteModelID: "fake",

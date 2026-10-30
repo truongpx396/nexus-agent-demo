@@ -53,7 +53,7 @@ func (s *Store) InTenant(ctx context.Context, tenantID uuid.UUID, fn func(ctx co
 
 func (s *Store) Load(ctx context.Context, tenantID, sessionID uuid.UUID) (oversight.SessionInfo, []eventlog.Event, error) {
 	var (
-		sess    store.Session
+		sess    eventlog.Session
 		history []eventlog.Event
 	)
 	err := s.st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {

@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 )
 
 // Snapshot is the artifact README task 6.4 names: a DISPOSABLE cache of one
@@ -81,17 +82,17 @@ func DeleteAllSnapshots(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) err
 // deliberate, separate step (internal/runctl and internal/queue's worker
 // decide WHEN a fresh snapshot is worth taking; LoadProjection only ever
 // reads).
-func LoadProjection(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) (Projection, error) {
+func LoadProjection(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) (eventlog.Projection, error) {
 	snap, ok, err := LatestSnapshot(ctx, tx, sessionID)
 	if err != nil {
-		return Projection{}, err
+		return eventlog.Projection{}, err
 	}
 	if ok {
-		return Projection{Status: snap.Status, TerminalReason: snap.TerminalReason}, nil
+		return eventlog.Projection{Status: snap.Status, TerminalReason: snap.TerminalReason}, nil
 	}
 	history, err := ListEvents(ctx, tx, sessionID)
 	if err != nil {
-		return Projection{}, err
+		return eventlog.Projection{}, err
 	}
-	return ReplayProjection(history), nil
+	return eventlog.ReplayProjection(history), nil
 }

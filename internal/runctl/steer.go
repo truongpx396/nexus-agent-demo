@@ -5,11 +5,9 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
 type userMessagePayload struct {
@@ -35,10 +33,9 @@ type userMessagePayload struct {
 // is what actually sees it, because it is already part of the session's
 // own transcript by the time either looks.
 func (c *Control) Steer(ctx context.Context, tenantID, sessionID uuid.UUID, input string) (eventlog.Event, error) {
-	d := c.deps()
 	var ev eventlog.Event
-	err := c.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		sess, err := store.GetSession(ctx, tx, sessionID)
+	err := c.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
+		sess, err := tx.GetSession(ctx, sessionID)
 		if err != nil {
 			return err
 		}
@@ -59,7 +56,7 @@ func (c *Control) Steer(ctx context.Context, tenantID, sessionID uuid.UUID, inpu
 				return fmt.Errorf("runctl: steer: invalidate pending approval: %w", err)
 			}
 		}
-		ev, err = d.appendEvent(ctx, tx, tenantID, sessionID, eventlog.EventUserMessage, nil, nil, userMessagePayload{Body: input})
+		ev, err = tx.Append(ctx, tenantID, sessionID, eventlog.EventUserMessage, nil, nil, userMessagePayload{Body: input})
 		return err
 	})
 	if err != nil {

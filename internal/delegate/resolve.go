@@ -5,12 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+	"github.com/truongpx396/nexus-agent-demo/internal/runstate"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/google/uuid"
+
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
 
@@ -33,14 +32,14 @@ import (
 func (d *Delegations) OnChildTerminal(ctx context.Context, tenantID, childSessionID uuid.UUID) error {
 	var pending Delegation
 	var found bool
-	var child store.Session
-	err := d.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+	var child eventlog.Session
+	err := d.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
 		var err error
-		pending, found, err = findPendingByChild(ctx, tx, childSessionID)
+		pending, found, err = tx.FindPendingByChild(ctx, childSessionID)
 		if err != nil || !found {
 			return err
 		}
-		child, err = store.GetSession(ctx, tx, childSessionID)
+		child, err = tx.GetSession(ctx, childSessionID)
 		return err
 	})
 	if err != nil || !found {
@@ -76,7 +75,7 @@ func (d *Delegations) OnChildTerminal(ctx context.Context, tenantID, childSessio
 // delegation resumes one suspended kernel run (resumeParent); a fanout
 // child instead asks internal/plan whether its whole cohort is done yet
 // (ResolveFanout).
-func (d *Delegations) finalize(ctx context.Context, tenantID uuid.UUID, pending Delegation, child store.Session) (outcome kernel.DelegationOutcomeKind, result json.RawMessage, reason string, err error) {
+func (d *Delegations) finalize(ctx context.Context, tenantID uuid.UUID, pending Delegation, child eventlog.Session) (outcome kernel.DelegationOutcomeKind, result json.RawMessage, reason string, err error) {
 	result, reason, boundExceeded, err := d.extractResult(ctx, tenantID, child, pending.ReturnSchema)
 	if err != nil {
 		return "", nil, "", fmt.Errorf("delegate: extract result for delegation %s: %w", pending.DelegationID, err)
@@ -107,18 +106,18 @@ func (d *Delegations) finalize(ctx context.Context, tenantID uuid.UUID, pending 
 		d.cfg.Pipeline.FoldTaint(pending.ParentSessionID, childEngaged)
 	}
 
-	if err := d.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		if err := resolveStatus(ctx, tx, pending.DelegationID, status, result, reason); err != nil {
+	if err := d.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
+		if err := tx.SetDelegationResult(ctx, pending.DelegationID, status, result, reason); err != nil {
 			return err
 		}
 		toolID := pending.AgentID // best available label; delegate.go's own tool ref is what actually matters for the pair
-		_, err := d.appendEvent(ctx, tx, tenantID, pending.ParentSessionID, eventlog.EventTaintTransition, nil, nil, taintTransitionPayload{
+		_, err := tx.Append(ctx, tenantID, pending.ParentSessionID, eventlog.EventTaintTransition, nil, nil, taintTransitionPayload{
 			ChildSessionID: child.SessionID, Engaged: childEngaged,
 		})
 		if err != nil {
 			return err
 		}
-		_, err = d.appendEvent(ctx, tx, tenantID, pending.ParentSessionID, eventlog.EventDelegationReturned, &toolID, &pending.ParentToolUseEventID, delegationReturnedPayload{
+		_, err = tx.Append(ctx, tenantID, pending.ParentSessionID, eventlog.EventDelegationReturned, &toolID, &pending.ParentToolUseEventID, delegationReturnedPayload{
 			DelegationID: pending.DelegationID, ChildSessionID: child.SessionID, Outcome: string(outcome), Reason: reason,
 		})
 		return err
@@ -172,7 +171,7 @@ func (d *Delegations) resumeParent(ctx context.Context, tenantID uuid.UUID, pend
 // carrying every one of them — a deliberately light check (this codebase
 // carries no JSON-Schema library), honest about what it does and does not
 // verify; a failure here is what makes boundExceeded=true.
-func (d *Delegations) extractResult(ctx context.Context, tenantID uuid.UUID, child store.Session, schema json.RawMessage) (result json.RawMessage, reason string, boundExceeded bool, err error) {
+func (d *Delegations) extractResult(ctx context.Context, tenantID uuid.UUID, child eventlog.Session, schema json.RawMessage) (result json.RawMessage, reason string, boundExceeded bool, err error) {
 	text, err := d.lastContentText(ctx, tenantID, child.SessionID)
 	if err != nil {
 		return nil, "", false, err
@@ -200,13 +199,13 @@ func (d *Delegations) extractResult(ctx context.Context, tenantID uuid.UUID, chi
 }
 
 // lastContentText decrypts the child's own final EventContent — the same
-// selective-decrypt idiom store.ReplayFullProjection already uses for a
+// selective-decrypt idiom eventlog.ReplayFullProjection already uses for a
 // terminal event's exact reason, applied here to a content event instead.
 func (d *Delegations) lastContentText(ctx context.Context, tenantID, sessionID uuid.UUID) (string, error) {
 	var history []eventlog.Event
-	err := d.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+	err := d.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
 		var err error
-		history, err = store.ListEvents(ctx, tx, sessionID)
+		history, err = tx.ListEvents(ctx, sessionID)
 		return err
 	})
 	if err != nil {
@@ -224,15 +223,7 @@ func (d *Delegations) lastContentText(ctx context.Context, tenantID, sessionID u
 		return "", nil
 	}
 
-	var dek crypto.DEK
-	if err := d.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		var uerr error
-		dek, uerr = d.Keys.Unwrap(ctx, tx, last.KeyID)
-		return uerr
-	}); err != nil {
-		return "", err
-	}
-	plaintext, err := crypto.Open(dek, last.Payload, tenantID.String(), sessionID.String())
+	plaintext, err := runstate.Decryptor[Tx](d.Store, tenantID, sessionID)(ctx, *last)
 	if err != nil {
 		return "", err
 	}
@@ -245,85 +236,25 @@ func (d *Delegations) lastContentText(ctx context.Context, tenantID, sessionID u
 	return payload.Body, nil
 }
 
-// loadRunState mirrors internal/oversight.Resumer.loadRunState field-for-
-// field (that file's own doc comment explains why this can't be shared:
-// each out-of-band driver rehydrates independently, with no live
-// RunState.Seal to reuse).
-func (d *Delegations) loadRunState(ctx context.Context, tenantID, sessionID uuid.UUID) (*kernel.RunState, store.Session, error) {
-	var sess store.Session
-	var history []eventlog.Event
-	err := d.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		var err error
-		sess, err = store.GetSession(ctx, tx, sessionID)
-		if err != nil {
-			return err
-		}
-		history, err = store.ListEvents(ctx, tx, sessionID)
-		return err
-	})
+// loadRunState rebuilds the parent's RunState (runstate.Load) and restores its
+// Rule-of-Two taint state before ResumeDelegation dispatches the parent's next
+// tool call — kernel.TaintSeeder's own doc comment on why this can't just
+// happen lazily inside the tool executor itself. This package already holds a
+// concrete TaintFolder (d.cfg.Pipeline, already used by TaintStateFor/FoldTaint
+// above) rather than going through an interface indirection.
+func (d *Delegations) loadRunState(ctx context.Context, tenantID, sessionID uuid.UUID) (*kernel.RunState, eventlog.Session, error) {
+	loaded, err := runstate.Load[Tx](ctx, d.Store, tenantID, sessionID)
 	if err != nil {
-		return nil, store.Session{}, err
+		return nil, eventlog.Session{}, err
 	}
-
-	dekCache := map[string]crypto.DEK{}
-	decrypt := func(ctx context.Context, e eventlog.Event) ([]byte, error) {
-		if e.KeyID == crypto.ErasureKeyID {
-			return e.Payload, nil
-		}
-		if dek, ok := dekCache[e.KeyID]; ok {
-			return crypto.Open(dek, e.Payload, tenantID.String(), sessionID.String())
-		}
-		var dek crypto.DEK
-		if err := d.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-			var uerr error
-			dek, uerr = d.Keys.Unwrap(ctx, tx, e.KeyID)
-			return uerr
-		}); err != nil {
-			return nil, err
-		}
-		dekCache[e.KeyID] = dek
-		return crypto.Open(dek, e.Payload, tenantID.String(), sessionID.String())
-	}
-
-	transcript, toolUseIDs, err := kernel.Rehydrate(ctx, history, decrypt)
+	engaged, err := kernel.RehydrateTaint(ctx, loaded.History, loaded.Decrypt)
 	if err != nil {
-		return nil, store.Session{}, err
+		return nil, eventlog.Session{}, err
 	}
-
-	// Restore this session's Rule-of-Two taint state before
-	// ResumeDelegation dispatches the parent's next tool call —
-	// kernel.TaintSeeder's own doc comment on why this can't just happen
-	// lazily inside the tool executor itself. Unlike
-	// internal/runctl/oversight's own equivalent seed call, this package
-	// already holds a concrete *tools.Pipeline (d.cfg.Pipeline, already
-	// used by TaintStateFor/FoldTaint above) rather than going through the
-	// interface indirection those two need.
-	if engaged, terr := kernel.RehydrateTaint(ctx, history, decrypt); terr != nil {
-		return nil, store.Session{}, terr
-	} else if d.cfg.Pipeline != nil {
-		d.cfg.Pipeline.SeedTaint(sessionID, sess.AutonomyLevel, engaged)
+	if d.cfg.Pipeline != nil {
+		d.cfg.Pipeline.SeedTaint(sessionID, loaded.Session.AutonomyLevel, engaged)
 	}
-
-	var keyID string
-	for i := len(history) - 1; i >= 0; i-- {
-		if history[i].KeyID != crypto.ErasureKeyID {
-			keyID = history[i].KeyID
-			break
-		}
-	}
-	if keyID == "" {
-		return nil, store.Session{}, fmt.Errorf("delegate: session %s has no active key in its history", sessionID)
-	}
-	var dek crypto.DEK
-	if err := d.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		var uerr error
-		dek, uerr = d.Keys.Unwrap(ctx, tx, keyID)
-		return uerr
-	}); err != nil {
-		return nil, store.Session{}, err
-	}
-
-	return &kernel.RunState{TenantID: tenantID, SessionID: sessionID, Seal: sealFuncFor(dek, tenantID, sessionID), History: history, Transcript: transcript, ToolUseIDs: toolUseIDs}, sess, nil
+	return loaded.State, loaded.Session, nil
 }
 
 type taintTransitionPayload struct {

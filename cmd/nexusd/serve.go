@@ -10,6 +10,15 @@ import (
 	"syscall"
 	"time"
 
+	teamspg "github.com/truongpx396/nexus-agent-demo/internal/teams/postgres"
+
+	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
+	delegatepg "github.com/truongpx396/nexus-agent-demo/internal/delegate/postgres"
+
+	runctlpg "github.com/truongpx396/nexus-agent-demo/internal/runctl/postgres"
+
+	queueredis "github.com/truongpx396/nexus-agent-demo/internal/queue/redis"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
@@ -30,7 +39,6 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
 	oversightpg "github.com/truongpx396/nexus-agent-demo/internal/oversight/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
-	"github.com/truongpx396/nexus-agent-demo/internal/queue"
 	"github.com/truongpx396/nexus-agent-demo/internal/reliability"
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
 	"github.com/truongpx396/nexus-agent-demo/internal/runs"
@@ -166,7 +174,7 @@ func serve(ctx context.Context) error {
 	// and runctl.Control below, both of which need to enqueue a queued run
 	// (README task 6.1's own successor) once they've durably seeded/
 	// appended it.
-	queuePort, err := queue.NewRedisStreams(ctx, redisClient)
+	queuePort, err := queueredis.NewStreams(ctx, redisClient)
 	if err != nil {
 		return fmt.Errorf("configure queue: %w", err)
 	}
@@ -181,7 +189,7 @@ func serve(ctx context.Context) error {
 	// and each start a fresh one. SessionLock's key derivation is a fixed
 	// function of the key, so this and startQueueWorkers' own instance
 	// need not be the same value.
-	sessionLock := queue.NewSessionLock(redisClient, 30*time.Second)
+	sessionLock := queueredis.NewSessionLock(redisClient, 30*time.Second)
 
 	cfgStore := configpg.NewStore(st)
 	vault := &connectors.Vault{
@@ -197,8 +205,8 @@ func serve(ctx context.Context) error {
 	// it" ordering vault itself already follows one step up.
 	gate := newCostGate(st, redisClient)
 
-	delegations := delegate.NewDelegations(st, keyStore, chain)
-	teamsSvc := teams.NewService(st, keyStore, chain)
+	delegations := delegate.NewDelegations(delegatepg.New(st, keyStore, chain))
+	teamsSvc := teams.NewService(teamspg.New(st, keyStore, chain))
 	pipeline, catalog, catalogManifestDigest, admittedSkillBundles, mcpPort := newToolPipeline(st, cfgStore, keyStore, chain, delegations, teamsSvc, vault, gate)
 	loadedTools := make([]string, len(catalog))
 	for i, c := range catalog {
@@ -241,6 +249,7 @@ func serve(ctx context.Context) error {
 	// configured identically to a root run's (README task 8.9's own child
 	// session inherits the parent's harness_digest for the same reason).
 	delegations.Wire(delegate.Config{
+		Prices: costpg.New(st),
 		Kernel: k, Pipeline: pipeline,
 		System: starter.system, Catalog: catalog, LoadedTools: loadedTools, MaxTurns: starter.maxTurns,
 	})
@@ -252,7 +261,7 @@ func serve(ctx context.Context) error {
 	grants := obs.NewGrants(obspg.NewGrantStore(st, keyStore, chain))
 
 	ctl := &runctl.Control{
-		Store: st, Keys: keyStore, Chain: chain, Approvals: approvals, Inputs: inputs, Kernel: k,
+		Store: runctlpg.New(st, keyStore, chain), Approvals: approvals, Inputs: inputs, Kernel: k,
 		System: starter.system, Catalog: catalog, MaxTurns: starter.maxTurns, CatalogManifestDigest: catalogManifestDigest,
 		Queue: queuePort,
 	}
@@ -263,6 +272,7 @@ func serve(ctx context.Context) error {
 	// endTeam reaps a still-active member the same way runctl.Control.Cancel
 	// already reaps anything else (README task 9.9, reusing 8.14).
 	teamsSvc.Wire(teams.Config{
+		Prices: costpg.New(st),
 		Kernel: k, Pipeline: pipeline, Canceler: ctl,
 		System: starter.system, Catalog: catalog, LoadedTools: loadedTools, MaxTurns: starter.maxTurns,
 	})
@@ -331,10 +341,10 @@ func serve(ctx context.Context) error {
 	stopTeamBackstop := startTeamBackstopLoop(ctx, teamsSvc)
 	defer stopTeamBackstop()
 
-	stopIdleConversationSweep := startIdleConversationSweepLoop(ctx, ctl)
+	stopIdleConversationSweep := startIdleConversationSweepLoop(ctx, st, ctl)
 	defer stopIdleConversationSweep()
 
-	stopWorkers := startQueueWorkers(ctx, redisClient, queuePort, srv, ctl, delegations, teamsSvc)
+	stopWorkers := startQueueWorkers(ctx, st, redisClient, queuePort, srv, ctl, delegations, teamsSvc)
 	defer stopWorkers()
 
 	stopEventBus := startEventBus(ctx, redisClient, srv)

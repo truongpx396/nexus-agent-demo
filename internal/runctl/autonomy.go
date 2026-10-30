@@ -5,11 +5,9 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/permissions"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
 type autonomyTightenedPayload struct {
@@ -32,9 +30,8 @@ func (c *Control) TightenAutonomy(ctx context.Context, tenantID, sessionID uuid.
 	if err != nil {
 		return fmt.Errorf("runctl: tighten autonomy: %w", err)
 	}
-	d := c.deps()
-	return c.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		sess, err := store.GetSession(ctx, tx, sessionID)
+	return c.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
+		sess, err := tx.GetSession(ctx, sessionID)
 		if err != nil {
 			return err
 		}
@@ -47,10 +44,10 @@ func (c *Control) TightenAutonomy(ctx context.Context, tenantID, sessionID uuid.
 			return fmt.Errorf("runctl: %w", err)
 		}
 
-		if _, err := tx.Exec(ctx, `UPDATE sessions SET autonomy_level = $2 WHERE session_id = $1`, sessionID, target); err != nil {
-			return fmt.Errorf("runctl: update autonomy_level: %w", err)
+		if err := tx.SetAutonomyLevel(ctx, sessionID, target); err != nil {
+			return err
 		}
-		_, err = d.appendEvent(ctx, tx, tenantID, sessionID, eventlog.EventAutonomyTightened, nil, nil,
+		_, err = tx.Append(ctx, tenantID, sessionID, eventlog.EventAutonomyTightened, nil, nil,
 			autonomyTightenedPayload{From: sess.AutonomyLevel, To: target})
 		return err
 	})

@@ -117,7 +117,7 @@ func (r *oversightRig) onSuspend(approvals *oversight.Approvals) postgres.OnSusp
 func (r *oversightRig) createSession(t *testing.T, sessionID, userID uuid.UUID, autonomy string) {
 	t.Helper()
 	err := r.st.InTenantTx(context.Background(), r.tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		return store.CreateSession(ctx, tx, store.Session{
+		return store.CreateSession(ctx, tx, eventlog.Session{
 			SessionID: sessionID, SessionKey: sessionID.String(), TenantID: r.tenantID,
 			SurfaceID: "test", UserID: userID, AgentID: uuid.Nil, AgentVersion: 1,
 			HarnessDigest: []byte("test-digest"), DataLabel: "internal", RouteModelID: "fake",
@@ -149,9 +149,9 @@ func (r *oversightRig) seal(t *testing.T, sessionID uuid.UUID) kernel.SealFunc {
 	}
 }
 
-func (r *oversightRig) getSession(t *testing.T, sessionID uuid.UUID) store.Session {
+func (r *oversightRig) getSession(t *testing.T, sessionID uuid.UUID) eventlog.Session {
 	t.Helper()
-	var sess store.Session
+	var sess eventlog.Session
 	err := r.st.InTenantTx(context.Background(), r.tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
 		sess, err = store.GetSession(ctx, tx, sessionID)

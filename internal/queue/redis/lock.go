@@ -1,4 +1,4 @@
-package queue
+package redis
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/redis/go-redis/v9"
+	goredis "github.com/redis/go-redis/v9"
 )
 
 // SessionLock is the per-session-key Redis serial lock README task 6.2
@@ -24,11 +24,11 @@ import (
 // lock THIS holder still owns, never one another worker already acquired
 // after this holder's lease expired and got reaped.
 type SessionLock struct {
-	client *redis.Client
+	client *goredis.Client
 	ttl    time.Duration
 }
 
-func NewSessionLock(client *redis.Client, ttl time.Duration) *SessionLock {
+func NewSessionLock(client *goredis.Client, ttl time.Duration) *SessionLock {
 	if ttl <= 0 {
 		ttl = 30 * time.Second
 	}

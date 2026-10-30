@@ -6,6 +6,8 @@ import (
 	"os"
 	"time"
 
+	queueredis "github.com/truongpx396/nexus-agent-demo/internal/queue/redis"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -109,7 +111,7 @@ func sweepTeamBackstopAllTenants(ctx context.Context, teamsSvc *teams.Service) {
 // idleConversationWindow and end it via runctl.Control.EndIdleConversation
 // — the same list-every-tenant-then-loop shape startAnchorLoop/
 // startTeamBackstopLoop already use for a periodic cross-tenant pass.
-func startIdleConversationSweepLoop(ctx context.Context, ctl *runctl.Control) (stop func()) {
+func startIdleConversationSweepLoop(ctx context.Context, st *store.Store, ctl *runctl.Control) (stop func()) {
 	ticker := time.NewTicker(idleConversationSweepInterval)
 	done := make(chan struct{})
 	go func() {
@@ -119,14 +121,14 @@ func startIdleConversationSweepLoop(ctx context.Context, ctl *runctl.Control) (s
 			case <-done:
 				return
 			case <-ticker.C:
-				sweepIdleConversationsAllTenants(ctx, ctl)
+				sweepIdleConversationsAllTenants(ctx, st, ctl)
 			}
 		}
 	}()
 	return func() { close(done) }
 }
 
-func sweepIdleConversationsAllTenants(ctx context.Context, ctl *runctl.Control) {
+func sweepIdleConversationsAllTenants(ctx context.Context, st *store.Store, ctl *runctl.Control) {
 	tenantIDs, err := listTenantIDs(ctx)
 	if err != nil {
 		log.Error().Err(err).Msg("nexusd: list tenants for idle-conversation sweep")
@@ -135,7 +137,7 @@ func sweepIdleConversationsAllTenants(ctx context.Context, ctl *runctl.Control) 
 	olderThan := time.Now().Add(-idleConversationWindow)
 	for _, tenantID := range tenantIDs {
 		var staleIDs []uuid.UUID
-		if err := ctl.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+		if err := st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 			var err error
 			staleIDs, err = store.ListStaleAwaitingInputSessionIDs(ctx, tx, olderThan)
 			return err
@@ -213,7 +215,7 @@ func listTenantIDs(ctx context.Context) ([]uuid.UUID, error) {
 // "running" in the first place, so a session only ever reaches "running"
 // once it durably has at least its seed/message event — recovering an
 // orphaned FRESH run is already exactly what this sweep covers.
-func startQueueWorkers(ctx context.Context, redisClient *redis.Client, port queue.Port, srv *rest.Server, ctl *runctl.Control, delegations *delegate.Delegations, teamsSvc *teams.Service) (stop func()) {
+func startQueueWorkers(ctx context.Context, st *store.Store, redisClient *redis.Client, port queue.Port, srv *rest.Server, ctl *runctl.Control, delegations *delegate.Delegations, teamsSvc *teams.Service) (stop func()) {
 	adminDSN := envOr("NEXUS_ADMIN_DATABASE_URL", envOr("NEXUS_MIGRATE_DATABASE_URL", defaultMigrateDSN))
 	adminPool, err := pgxpool.New(ctx, adminDSN)
 	if err != nil {
@@ -221,8 +223,8 @@ func startQueueWorkers(ctx context.Context, redisClient *redis.Client, port queu
 		return func() {}
 	}
 
-	lock := queue.NewSessionLock(redisClient, 30*time.Second)
-	runner := &queueRunner{ctl: ctl, delegations: delegations, teams: teamsSvc, srv: srv}
+	lock := queueredis.NewSessionLock(redisClient, 30*time.Second)
+	runner := &queueRunner{st: st, ctl: ctl, delegations: delegations, teams: teamsSvc, srv: srv}
 
 	recoverOrphanedSessions(ctx, adminPool, port)
 
@@ -277,6 +279,7 @@ func recoverOrphanedSessions(ctx context.Context, adminPool *pgxpool.Pool, port 
 // are driven synchronously via REST instead of through the queue, since
 // none of them drive the turn loop themselves.
 type queueRunner struct {
+	st          *store.Store
 	ctl         *runctl.Control
 	delegations *delegate.Delegations
 	teams       *teams.Service
@@ -329,7 +332,7 @@ func (r *queueRunner) Run(ctx context.Context, job queue.Job) error {
 	// never the source of truth for any one field (its own doc comment,
 	// internal/store/checkpoint.go).
 	var harnessDigest []byte
-	err := r.ctl.Store.InTenantTx(ctx, job.TenantID, func(ctx context.Context, tx pgx.Tx) error {
+	err := r.st.InTenantTx(ctx, job.TenantID, func(ctx context.Context, tx pgx.Tx) error {
 		sess, err := store.GetSession(ctx, tx, job.SessionID)
 		if err != nil {
 			return err

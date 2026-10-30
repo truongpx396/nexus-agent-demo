@@ -5,11 +5,9 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
 
@@ -40,9 +38,8 @@ type terminalPayload struct {
 // A session already terminal is a no-op, not an error — matching every
 // other "second call is harmless" convention in this codebase.
 func (c *Control) Cancel(ctx context.Context, tenantID, sessionID uuid.UUID, reason string) error {
-	d := c.deps()
-	return c.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		sess, err := store.GetSession(ctx, tx, sessionID)
+	return c.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
+		sess, err := tx.GetSession(ctx, sessionID)
 		if err != nil {
 			return err
 		}
@@ -63,11 +60,11 @@ func (c *Control) Cancel(ctx context.Context, tenantID, sessionID uuid.UUID, rea
 
 		t := kernel.TerminalAborted(reason)
 		payload := terminalPayload{Reason: string(t.Reason), Detail: t.Detail}
-		if _, err := d.appendEvent(ctx, tx, tenantID, sessionID, eventlog.EventTerminal, nil, nil, payload); err != nil {
+		if _, err := tx.Append(ctx, tenantID, sessionID, eventlog.EventTerminal, nil, nil, payload); err != nil {
 			return fmt.Errorf("cancel: append terminal event: %w", err)
 		}
 		terminalReason := string(t.Reason)
-		if err := store.UpdateSessionStatus(ctx, tx, sessionID, eventlog.SessionStatusFailed, &terminalReason); err != nil {
+		if err := tx.SetSessionStatus(ctx, sessionID, eventlog.SessionStatusFailed, &terminalReason); err != nil {
 			return fmt.Errorf("cancel: update session status: %w", err)
 		}
 		return nil

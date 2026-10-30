@@ -56,7 +56,7 @@ Concretely, three collapses:
 | Collapse | Original | Demo | Why it's honest |
 |---|---|---|---|
 | **Deployment** | 3 Go binaries (`control-plane`, `runtime-worker`, `surface-gateway`) + Python helper + React app | 1 binary `nexusd` (+ `nexusctl` CLI, + `signerd` for key custody) | The control↔data-plane split stays a **Go interface** (`controlplane.Port`) with a versioned request/response shape, and the packages never import across the boundary. Splitting into processes later is a `main.go` change, not a rewrite. |
-| **Infrastructure** | NATS JetStream, gVisor/Kata warm pool, S3, KMS/HSM, external vault, PgBouncer, OTel collector, pgvector | Redis Streams (`internal/queue/redis_streams.go` — a consumer group + `XAUTOCLAIM`; Postgres `SKIP LOCKED` was the original demo's own stand-in, retired in `migrations/0024_retire_queue_jobs.sql`), Docker sandbox (no warm pool), local blob dir, file-backed KEK + `signerd`, PgBouncer (kept — it's load-bearing), stdout OTLP | Each sits behind a port with one adapter — `internal/queue.Port`'s own doc comment names this exact swap as the reason it exists. The original's own cut line still defers NATS JetStream; Redis Streams is a second, closer-to-production demo stand-in ahead of it, not the final word. **PgBouncer is kept** because the transaction-local RLS rule is meaningless without a transaction pooler to prove it against. |
+| **Infrastructure** | NATS JetStream, gVisor/Kata warm pool, S3, KMS/HSM, external vault, PgBouncer, OTel collector, pgvector | Redis Streams (`internal/queue/redis/streams.go` — a consumer group + `XAUTOCLAIM`; Postgres `SKIP LOCKED` was the original demo's own stand-in, retired in `migrations/0024_retire_queue_jobs.sql`), Docker sandbox (no warm pool), local blob dir, file-backed KEK + `signerd`, PgBouncer (kept — it's load-bearing), stdout OTLP | Each sits behind a port with one adapter — `internal/queue.Port`'s own doc comment names this exact swap as the reason it exists. The original's own cut line still defers NATS JetStream; Redis Streams is a second, closer-to-production demo stand-in ahead of it, not the final word. **PgBouncer is kept** because the transaction-local RLS rule is meaningless without a transaction pooler to prove it against. |
 | **Commercial + compliance tail** | Credit ledger, billing periods, FX, price overrides, multi-region residency, BYOK, chargeback export, MCP/OAuth connectors, Telegram/Zalo, document conversion, retrieval tier, adversarial scan, adaptation proposals | Dropped (columns kept where they're schema seams) | These are business processes, not patterns. Dropping them removes ~60 of 191 FRs and zero architectural ideas. |
 
 Everything else — the kernel, the pipeline, the permission chain, the approval transaction,
@@ -149,12 +149,19 @@ nexus-agent-demo/
 │   │   ├── logtest/            # the contract suite both adapters pass
 │   │   └── sealed/             # eventlog.Appender over Postgres: seal under the session key, append, chain — one copy for every out-of-band writer
 │   ├── store/                  # Postgres adapter: events, projections, checkpoints, snapshots, claims, RLS scoping
-│   ├── queue/                  # Queue port + Redis Streams adapter + session-key lock
+│   ├── queue/                  # Queue port, worker pool, admission control
+│   │   └── redis/              # Redis Streams adapter + the session-key lock
 │   ├── reliability/            # classifier, backoff, breaker, stuck detector
-│   ├── runctl/                 # steer, cancel, resume, replay, fork, tightenAutonomy
+│   ├── runctl/                 # steer, cancel, resume, replay, fork, tightenAutonomy, the claim ledger — over a unit-of-work Store
+│   │   └── postgres/           # its Store: claims, the awaiting_input claim, the autonomy write
+│   ├── runstate/               # one place that rebuilds a kernel.RunState from a session's history (generic over a service's own Tx)
 │   ├── sandbox/                # docker exec, limits, deny-net, (optional) broker
-│   ├── plan/                   # orchestration plane: schema, validator, predicate AST, evaluator
+│   ├── plan/                   # orchestration plane: schema, validator, predicate AST, evaluator, lifecycle
+│   │   └── postgres/           # orchestration_plans and the executor's writes
 │   ├── delegate/               # sub-agent seam (a tool invocation, not a side channel)
+│   │   └── postgres/           # delegations and fan-out envelopes; Bind and CreateEnvelope for callers that hold a transaction
+│   ├── teams/                  # peer teams: roster, shared board, shared budget envelope, atomic end
+│   │   └── postgres/           # teams, board cards, team envelopes
 │   ├── runs/                   # application layer: the run-admission use case (Launcher/Service) and the vocabulary surfaces share
 │   │   └── postgres/           # its Postgres adapters: session admission (+ budget), per-session key provisioning, and the Reader REST's GET endpoints use
 │   ├── surfaces/               # rest/, cli/, telegram/, zalo/, email/, cron/, mcp/ — Phase 11 adds the last five
@@ -192,7 +199,7 @@ nexus-agent-demo/
 and nothing else, and reaches durable state only through the `kernel.EventLog` port — never `internal/store`,
 a database driver, or an adapter of its own ports (`internal/eventlog/{postgres,inmem}`). The same holds for
 everything it imports for vocabulary: `cost`, `obs`, `crypto`, `audit`, `runs`, `controlplane`, `tools`, `oversight`,
-`config`, `memory`, `retrieval`, `connectors` and every surface each have a rule of their own that none of them reaches
+`config`, `memory`, `retrieval`, `connectors`, `runctl`, `runstate`, `delegate`, `teams`, `plan`, `queue` and every surface each have a rule of their own that none of them reaches
 `internal/store`, `pgx` or `redis` even transitively, because their storage lives in a `postgres/` (or `redis/`, `inmem/`)
 subpackage that only `cmd/nexusd`, the composition root, wires in.
 `internal/surfaces/` may not import `kernel/`. `internal/controlplane/` may not import
@@ -259,7 +266,7 @@ Plus, all with `tenant_id` + RLS: `checkpoints`, `snapshots`, `idempotency_claim
 ~31 tables. The original has ~50; the dropped set is billing, FX, connectors, integration
 adapters, the eval entities (which live in `evals/` as files here, not rows), and — as of
 `migrations/0024_retire_queue_jobs.sql` — the job queue itself, now a Redis Streams
-consumer group (`internal/queue/redis_streams.go`) instead of a Postgres table.
+consumer group (`internal/queue/redis/streams.go`) instead of a Postgres table.
 
 Phases 11–12 add their own tables when they ship — `oauth_tokens` (`tenant_id`, `user_id`,
 `provider`, sealed under the same per-tenant DEK as any encrypted payload) and

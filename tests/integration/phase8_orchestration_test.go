@@ -21,6 +21,11 @@ import (
 	"testing"
 	"time"
 
+	planpg "github.com/truongpx396/nexus-agent-demo/internal/plan/postgres"
+
+	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
+	delegatepg "github.com/truongpx396/nexus-agent-demo/internal/delegate/postgres"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -78,7 +83,7 @@ func TestPlan_ZeroTokenRouting(t *testing.T) {
 		Log:      postgres.New(r.st, postgres.Hooks{Receipt: r.receiptFunc()}),
 	}
 	exec := &plan.Executor{Kernel: k, System: "test", MaxTurns: 10}
-	exec.Store, exec.Keys, exec.Chain = r.st, r.keys, r.chain
+	exec.Store = planpg.New(r.st, r.keys, r.chain)
 
 	p := plan.Plan{
 		Name: "zero-token-routing", StartStep: "start",
@@ -95,7 +100,7 @@ func TestPlan_ZeroTokenRouting(t *testing.T) {
 		t.Fatalf("Validate: %v", err)
 	}
 
-	lc := &plan.Lifecycle{Store: r.st}
+	lc := &plan.Lifecycle{Store: planpg.New(r.st, r.keys, r.chain)}
 	created, err := lc.Create(context.Background(), r.tenantID, p, "test")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -104,7 +109,7 @@ func TestPlan_ZeroTokenRouting(t *testing.T) {
 	sessionID, userID := uuid.New(), uuid.New()
 	err = r.st.InTenantTx(context.Background(), r.tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		version := created.Version
-		return store.CreateSession(ctx, tx, store.Session{
+		return store.CreateSession(ctx, tx, eventlog.Session{
 			SessionID: sessionID, SessionKey: sessionID.String(), TenantID: r.tenantID,
 			SurfaceID: "test", UserID: userID, AgentID: uuid.Nil, AgentVersion: 1,
 			HarnessDigest: []byte("test"), DataLabel: "internal", RouteModelID: "fake",
@@ -154,7 +159,7 @@ func (a spawnerAdapter) Spawn(ctx context.Context, req builtin.SpawnRequest) (uu
 
 func onDelegateFunc(d *delegate.Delegations) postgres.OnDelegate {
 	return func(ctx context.Context, tx pgx.Tx, req kernel.DelegateSuspendRequest) error {
-		return d.Bind(ctx, tx, req.ChildSessionID, req.ToolUseEventID)
+		return delegatepg.Bind(ctx, tx, req.ChildSessionID, req.ToolUseEventID)
 	}
 }
 
@@ -176,7 +181,7 @@ func buildDelegationRig(t *testing.T, r *oversightRig, prov provider.Provider, t
 		t.Fatalf("declare namespace: %v", err)
 	}
 
-	d := delegate.NewDelegations(r.st, r.keys, r.chain)
+	d := delegate.NewDelegations(delegatepg.New(r.st, r.keys, r.chain))
 	del := builtin.Delegate{Ledger: d, Spawner: spawnerAdapter{d}, Registry: reg}
 	if err := reg.Register(del); err != nil {
 		t.Fatalf("register delegate: %v", err)
@@ -199,7 +204,7 @@ func buildDelegationRig(t *testing.T, r *oversightRig, prov provider.Provider, t
 		Tracer:   tracer,
 		Log:      postgres.New(r.st, postgres.Hooks{Receipt: r.receiptFunc(), Delegate: onDelegateFunc(d)}),
 	}
-	d.Wire(delegate.Config{Kernel: k, Pipeline: pipeline, System: "test", MaxTurns: 10})
+	d.Wire(delegate.Config{Prices: costpg.New(r.st), Kernel: k, Pipeline: pipeline, System: "test", MaxTurns: 10})
 
 	desc := del.Descriptor()
 	catalog := []provider.ToolSchema{{Name: desc.ID.String(), Description: desc.Description, InputSchema: desc.InputSchema}}
@@ -224,7 +229,7 @@ func contentScript(text string) fake.Script {
 // waitForStatus polls sessionID's status (a real background goroutine drives
 // the child and the parent's resume, so the test can't just synchronously
 // drain a channel the way runToCompletion does for a foreground run).
-func waitForStatus(t *testing.T, r *oversightRig, sessionID uuid.UUID, want string) store.Session {
+func waitForStatus(t *testing.T, r *oversightRig, sessionID uuid.UUID, want string) eventlog.Session {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
@@ -235,7 +240,7 @@ func waitForStatus(t *testing.T, r *oversightRig, sessionID uuid.UUID, want stri
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("session %s did not reach status %q within the deadline (last status %q)", sessionID, want, r.getSession(t, sessionID).Status)
-	return store.Session{}
+	return eventlog.Session{}
 }
 
 // TestDelegate_RoundTrip is the demo's own core case: an ordinary tool_use
@@ -371,7 +376,7 @@ func mustMarshal(t *testing.T, v any) json.RawMessage {
 func mustCreateChildSession(t *testing.T, r *oversightRig, childID, parentID uuid.UUID, depth int) {
 	t.Helper()
 	err := r.st.InTenantTx(context.Background(), r.tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		return store.CreateSession(ctx, tx, store.Session{
+		return store.CreateSession(ctx, tx, eventlog.Session{
 			SessionID: childID, SessionKey: childID.String(), TenantID: r.tenantID,
 			SurfaceID: "test", UserID: uuid.New(), AgentID: uuid.Nil, AgentVersion: 1,
 			HarnessDigest: []byte("test"), DataLabel: "internal", RouteModelID: "fake",

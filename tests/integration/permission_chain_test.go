@@ -68,7 +68,7 @@ func newTestSession(t *testing.T, ctx context.Context, st *store.Store, autonomy
 		if derr != nil {
 			return derr
 		}
-		return store.CreateSession(ctx, tx, store.Session{
+		return store.CreateSession(ctx, tx, eventlog.Session{
 			SessionID:     sessionID,
 			SessionKey:    sessionID.String(),
 			TenantID:      tenantID,
@@ -190,8 +190,8 @@ func TestKernel_AwaitingApprovalSuspendsRun(t *testing.T) {
 	}
 }
 
-func getSessionDirect(ctx context.Context, st *store.Store, tenantID, sessionID uuid.UUID) (store.Session, error) {
-	var sess store.Session
+func getSessionDirect(ctx context.Context, st *store.Store, tenantID, sessionID uuid.UUID) (eventlog.Session, error) {
+	var sess eventlog.Session
 	err := st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var gerr error
 		sess, gerr = store.GetSession(ctx, tx, sessionID)
