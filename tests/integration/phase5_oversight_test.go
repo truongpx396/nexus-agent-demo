@@ -29,6 +29,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
+	oversightpg "github.com/truongpx396/nexus-agent-demo/internal/oversight/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/permissions"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
@@ -229,7 +230,7 @@ func TestOversightApproval_GrantModifiedExecutesApproverInput(t *testing.T) {
 	workspaceRoot := t.TempDir()
 
 	pipeline, catalog := newFileWritePipeline(t, workspaceRoot)
-	approvals := oversight.NewApprovals(rig.st, rig.keys, rig.chain)
+	approvals := oversight.NewApprovals(oversightpg.New(rig.st, rig.keys, rig.chain))
 
 	prov := fake.New(
 		fake.Script{Chunks: []fake.ChunkSpec{
@@ -269,7 +270,7 @@ func TestOversightApproval_GrantModifiedExecutesApproverInput(t *testing.T) {
 	}
 
 	resumer := &oversight.Resumer{
-		Kernel: k, Approvals: approvals, Store: rig.st, Keys: rig.keys,
+		Kernel: k, Approvals: approvals, Sessions: oversightpg.New(rig.st, rig.keys, rig.chain), Keys: oversightpg.New(rig.st, rig.keys, rig.chain),
 		System: "test", Catalog: catalog, MaxTurns: 10,
 	}
 	modifiedInput := json.RawMessage(`{"path":"out.txt","content":"MODIFIED BY THE APPROVER"}`)
@@ -309,7 +310,7 @@ func TestOversightApproval_MismatchRefusesExecution(t *testing.T) {
 	workspaceRoot := t.TempDir()
 
 	pipeline, catalog := newFileWritePipeline(t, workspaceRoot)
-	approvals := oversight.NewApprovals(rig.st, rig.keys, rig.chain)
+	approvals := oversight.NewApprovals(oversightpg.New(rig.st, rig.keys, rig.chain))
 
 	prov := fake.New(fake.Script{Chunks: []fake.ChunkSpec{
 		{Kind: "tool_use", ToolUseID: "tu1", ToolName: "platform/file_write@v1", Input: `{"path":"out.txt","content":"original"}`},
@@ -343,7 +344,7 @@ func TestOversightApproval_MismatchRefusesExecution(t *testing.T) {
 	}
 
 	resumer := &oversight.Resumer{
-		Kernel: k, Approvals: approvals, Store: rig.st, Keys: rig.keys,
+		Kernel: k, Approvals: approvals, Sessions: oversightpg.New(rig.st, rig.keys, rig.chain), Keys: oversightpg.New(rig.st, rig.keys, rig.chain),
 		System: "test", Catalog: catalog, MaxTurns: 10,
 	}
 	for ev, err := range resumer.Grant(ctx, rig.tenantID, approvalID, userID.String()) {
@@ -395,7 +396,7 @@ func TestOversightApproval_SimulatedConsentHasNoEffect(t *testing.T) {
 	workspaceRoot := t.TempDir()
 
 	pipeline, catalog := newFileWritePipeline(t, workspaceRoot)
-	approvals := oversight.NewApprovals(rig.st, rig.keys, rig.chain)
+	approvals := oversight.NewApprovals(oversightpg.New(rig.st, rig.keys, rig.chain))
 
 	// The model's own tool_use input smuggles approval-shaped JSON fields —
 	// the chain must still ask, exactly as it would for any other mutating

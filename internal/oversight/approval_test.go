@@ -27,16 +27,6 @@ func TestErrApprovalNotPending_Error(t *testing.T) {
 	}
 }
 
-func TestNullIfEmpty(t *testing.T) {
-	if got := nullIfEmpty(""); got != nil {
-		t.Errorf("nullIfEmpty(\"\") = %v, want nil", got)
-	}
-	got := nullIfEmpty("operator@example.com")
-	if got == nil || *got != "operator@example.com" {
-		t.Errorf("nullIfEmpty(...) = %v, want a pointer to the input", got)
-	}
-}
-
 // TestCurrentActiveKeyID is README task 13.8: the pure scan
 // Resumer.loadRunState uses to find the most recent non-erasure key id in a
 // session's history — walks backward so a key rotated mid-session resolves

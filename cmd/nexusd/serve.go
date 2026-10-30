@@ -25,6 +25,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 	obspg "github.com/truongpx396/nexus-agent-demo/internal/obs/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
+	oversightpg "github.com/truongpx396/nexus-agent-demo/internal/oversight/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/queue"
 	"github.com/truongpx396/nexus-agent-demo/internal/reliability"
@@ -197,8 +198,9 @@ func serve(ctx context.Context) error {
 		loadedTools[i] = c.Name
 	}
 
-	approvals := oversight.NewApprovals(st, keyStore, chain)
-	inputs := oversight.NewInputs(st, keyStore, chain)
+	oversightStore := oversightpg.New(st, keyStore, chain)
+	approvals := oversight.NewApprovals(oversightStore)
+	inputs := oversight.NewInputs(oversightStore)
 	k := &kernel.Kernel{
 		Provider: provider.Wrap([]provider.Provider{prov}),
 		Tools:    kernel.PipelineExecutor{Pipeline: pipeline}, // real tool pipeline, Phase 3
@@ -238,7 +240,7 @@ func serve(ctx context.Context) error {
 	})
 
 	resumer := &oversight.Resumer{
-		Kernel: k, Approvals: approvals, Store: st, Keys: keyStore,
+		Kernel: k, Approvals: approvals, Sessions: oversightStore, Keys: oversightStore,
 		System: starter.system, Catalog: catalog, MaxTurns: starter.maxTurns,
 	}
 	grants := obs.NewGrants(obspg.NewGrantStore(st, keyStore, chain))

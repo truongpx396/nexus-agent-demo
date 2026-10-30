@@ -26,6 +26,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
+	oversightpg "github.com/truongpx396/nexus-agent-demo/internal/oversight/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
@@ -45,7 +46,7 @@ func buildTeamsRig(t *testing.T, r *oversightRig, prov provider.Provider) (*team
 		Tools:    kernel.NotImplementedToolExecutor{},
 		Log:      postgres.New(r.st, postgres.Hooks{Receipt: r.receiptFunc()}),
 	}
-	approvals := oversight.NewApprovals(r.st, r.keys, r.chain)
+	approvals := oversight.NewApprovals(oversightpg.New(r.st, r.keys, r.chain))
 	ctl := &runctl.Control{Store: r.st, Keys: r.keys, Chain: r.chain, Approvals: approvals, Kernel: k, System: "test", MaxTurns: 10}
 
 	svc := teams.NewService(r.st, r.keys, r.chain)

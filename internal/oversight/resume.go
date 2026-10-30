@@ -7,13 +7,10 @@ import (
 	"iter"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
-	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
@@ -36,8 +33,8 @@ import (
 type Resumer struct {
 	Kernel    *kernel.Kernel
 	Approvals *Approvals
-	Store     *store.Store
-	Keys      *cryptopg.KeyStore
+	Sessions  Sessions
+	Keys      KeyOpener
 	System    string
 	Catalog   []provider.ToolSchema
 	MaxTurns  int
@@ -97,20 +94,10 @@ func (r *Resumer) resume(ctx context.Context, tenantID uuid.UUID, ap Approval, d
 // (there is no live RunState.Seal to reuse the way a fresh run's
 // handleCreateRun has one in hand — Resume runs entirely out of band, after
 // the original Run call already returned).
-func (r *Resumer) loadRunState(ctx context.Context, tenantID, sessionID uuid.UUID) (*kernel.RunState, store.Session, error) {
-	var sess store.Session
-	var history []eventlog.Event
-	err := r.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		var err error
-		sess, err = store.GetSession(ctx, tx, sessionID)
-		if err != nil {
-			return err
-		}
-		history, err = store.ListEvents(ctx, tx, sessionID)
-		return err
-	})
+func (r *Resumer) loadRunState(ctx context.Context, tenantID, sessionID uuid.UUID) (*kernel.RunState, SessionInfo, error) {
+	sess, history, err := r.Sessions.Load(ctx, tenantID, sessionID)
 	if err != nil {
-		return nil, store.Session{}, err
+		return nil, SessionInfo{}, err
 	}
 
 	dekCache := map[string]crypto.DEK{}
@@ -121,12 +108,8 @@ func (r *Resumer) loadRunState(ctx context.Context, tenantID, sessionID uuid.UUI
 		if dek, ok := dekCache[e.KeyID]; ok {
 			return crypto.Open(dek, e.Payload, tenantID.String(), sessionID.String())
 		}
-		var dek crypto.DEK
-		if err := r.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-			var uerr error
-			dek, uerr = r.Keys.Unwrap(ctx, tx, e.KeyID)
-			return uerr
-		}); err != nil {
+		dek, err := r.Keys.Unwrap(ctx, tenantID, e.KeyID)
+		if err != nil {
 			return nil, err
 		}
 		dekCache[e.KeyID] = dek
@@ -135,7 +118,7 @@ func (r *Resumer) loadRunState(ctx context.Context, tenantID, sessionID uuid.UUI
 
 	transcript, toolUseIDs, err := kernel.Rehydrate(ctx, history, decrypt)
 	if err != nil {
-		return nil, store.Session{}, err
+		return nil, SessionInfo{}, err
 	}
 
 	// Restore this session's Rule-of-Two taint state before Kernel.Resume
@@ -144,22 +127,18 @@ func (r *Resumer) loadRunState(ctx context.Context, tenantID, sessionID uuid.UUI
 	// executor itself (internal/runctl/rehydrate.go's own loadRunState
 	// mirrors this exactly for its own resume paths).
 	if engaged, terr := kernel.RehydrateTaint(ctx, history, decrypt); terr != nil {
-		return nil, store.Session{}, terr
+		return nil, SessionInfo{}, terr
 	} else if seeder, ok := r.Kernel.Tools.(kernel.TaintSeeder); ok {
 		seeder.SeedTaint(sessionID, sess.AutonomyLevel, engaged)
 	}
 
 	keyID, err := currentActiveKeyID(history)
 	if err != nil {
-		return nil, store.Session{}, err
+		return nil, SessionInfo{}, err
 	}
-	var dek crypto.DEK
-	if err := r.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		var uerr error
-		dek, uerr = r.Keys.Unwrap(ctx, tx, keyID)
-		return uerr
-	}); err != nil {
-		return nil, store.Session{}, err
+	dek, err := r.Keys.Unwrap(ctx, tenantID, keyID)
+	if err != nil {
+		return nil, SessionInfo{}, err
 	}
 
 	seal := func(plaintext []byte) (sealed, digest []byte, kid string, err error) {

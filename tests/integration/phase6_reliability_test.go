@@ -37,6 +37,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
+	oversightpg "github.com/truongpx396/nexus-agent-demo/internal/oversight/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/permissions"
 	"github.com/truongpx396/nexus-agent-demo/internal/permissions/safety"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
@@ -707,7 +708,7 @@ func TestRunctl_Cancel_ReleasesPendingApprovalAndAborts(t *testing.T) {
 	d := ft.Descriptor()
 	catalog := []provider.ToolSchema{{Name: d.ID.String(), Description: d.Description, InputSchema: d.InputSchema}}
 
-	approvals := oversight.NewApprovals(rig.st, rig.keys, rig.chain)
+	approvals := oversight.NewApprovals(oversightpg.New(rig.st, rig.keys, rig.chain))
 	prov := fake.New(fake.Script{Chunks: []fake.ChunkSpec{
 		{Kind: "tool_use", ToolUseID: "tu1", ToolName: "platform/file_write@v1", Input: `{"path":"out.txt","content":"x"}`},
 		{Kind: "done", Done: "stop"},
@@ -855,7 +856,7 @@ func TestRunctl_Resume_RecoversAToolUseAKilledWorkerLeftOrphaned(t *testing.T) {
 	prov := fake.New(fake.Script{Chunks: []fake.ChunkSpec{{Kind: "content", Text: "done"}, {Kind: "done", Done: "stop"}}})
 	k := &kernel.Kernel{Provider: provider.Wrap([]provider.Provider{prov}), Tools: kernel.PipelineExecutor{Pipeline: pipeline}, Budget: kernel.NoopBudgetGate{}, Log: postgres.New(rig.st, postgres.Hooks{})}
 
-	control := rig.control(k, oversight.NewApprovals(rig.st, rig.keys, rig.chain), nil)
+	control := rig.control(k, oversight.NewApprovals(oversightpg.New(rig.st, rig.keys, rig.chain)), nil)
 	control.Catalog = catalog
 
 	var resumeEvents []eventlog.Event

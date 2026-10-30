@@ -63,6 +63,7 @@ func init() {
 		{"the mcp surface", "internal/surfaces/mcp"},
 		{"the control plane port", "internal/controlplane"},
 		{"the tool pipeline", "internal/tools"},
+		{"the oversight service", "internal/oversight"},
 	} {
 		rules = append(rules, noStorage(s.subject, s.pkg))
 	}
