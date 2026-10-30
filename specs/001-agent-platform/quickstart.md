@@ -10,7 +10,7 @@ Legend — **Auto**: a named test asserts it · **Manual**: you run it and look 
 
 ## 0. Prerequisites and bring-up
 
-- Go 1.25 (`go.mod` pins 1.25.14), Docker running, Node for `web/`. `jq` and `goimports` if you use the Claude Code hooks.
+- Go 1.26 (`go.mod` pins 1.26.10), Docker running, Node for `web/`. `jq` and `goimports` if you use the Claude Code hooks.
 - **Ports**: Postgres `5433` (direct — admin/migrations only), PgBouncer `6432` (runtime), Redis `6380`, `nexusd` **`8085`**
   (docs say `8080`/`8055`; the code is `8085` — see spec Known deviation 3).
 

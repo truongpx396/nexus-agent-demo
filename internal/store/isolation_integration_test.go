@@ -64,7 +64,7 @@ func setupIsolationEnv(t *testing.T, appPoolMaxConns int32) (*pgxpool.Pool, func
 	pbReq := testcontainers.ContainerRequest{
 		Image:        "edoburu/pgbouncer:latest",
 		ExposedPorts: []string{"5432/tcp"},
-		Env: map[string]string{
+		Env: map[string]string{ //nolint:gosec // disposable test container's own credentials
 			"DATABASE_URL":      "postgres://nexus:nexus@postgres:5432/nexus",
 			"POOL_MODE":         "transaction",
 			"AUTH_TYPE":         "scram-sha-256",

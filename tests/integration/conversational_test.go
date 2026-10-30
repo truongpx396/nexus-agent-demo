@@ -652,7 +652,7 @@ func (p *testRunCtlPort) ResumeConversation(ctx context.Context, tenantID, sessi
 		return err
 	}
 	go func() {
-		for ev, err := range p.ctl.Resume(context.Background(), tenantID, sessionID) {
+		for ev, err := range p.ctl.Resume(context.WithoutCancel(ctx), tenantID, sessionID) {
 			_ = ev
 			if err != nil {
 				return

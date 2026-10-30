@@ -160,7 +160,7 @@ func (s *Service) spawnMember(ctx context.Context, tenantID, teamID, envelopeID 
 		Input: member.Task, AutonomyLevel: creator.AutonomyLevel,
 	}
 
-	go func() {
+	go func() { //nolint:gosec // deliberately detached: the member run outlives the spawning request
 		bg := context.Background()
 		for _, err := range clone.Run(bg, memberState, memberCfg) {
 			if err != nil {

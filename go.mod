@@ -1,6 +1,6 @@
 module github.com/truongpx396/nexus-agent-demo
 
-go 1.26.0
+go 1.26.10
 
 require (
 	github.com/alibaba/OpenSandbox/sdks/sandbox/go v1.1.0
@@ -82,7 +82,7 @@ require (
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/mod v0.41.0 // indirect
-	golang.org/x/net v0.59.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.42.0 // indirect

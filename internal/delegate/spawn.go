@@ -207,7 +207,7 @@ func (d *Delegations) Spawn(ctx context.Context, req SpawnRequest) (uuid.UUID, e
 	if tracer := childKernel.Tracer; tracer != nil {
 		link = tracer.Detach(ctx)
 	}
-	go func() {
+	go func() { //nolint:gosec // deliberately detached: the child run outlives the delegating request; its trace is linked via Tracer.Detach/Attach, not parented
 		bg := context.Background()
 		if tracer := childKernel.Tracer; tracer != nil {
 			bg = tracer.Attach(bg, link)
@@ -217,6 +217,13 @@ func (d *Delegations) Spawn(ctx context.Context, req SpawnRequest) (uuid.UUID, e
 				log.Error().Err(err).Any("child_session_id", childID).Msg("delegate: child run errored")
 				return
 			}
+		}
+		// The parent binds this delegation to its gating tool_use in a
+		// transaction that follows Spawn; resolving before that would pair
+		// the child's result with no tool_use (bindwait.go).
+		if err := d.awaitBound(bg, req.TenantID, childID); err != nil {
+			log.Error().Err(err).Any("child_session_id", childID).Msg("delegate: not resolving the delegation; it stays pending")
+			return
 		}
 		// The child's own Run generator stopping does not always mean it
 		// reached a terminal state — it may have suspended on an ordinary

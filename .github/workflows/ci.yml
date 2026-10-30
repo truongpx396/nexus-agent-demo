@@ -24,7 +24,7 @@ jobs:
           go-version-file: go.mod
       - uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.5.0
+          version: v2.15.0
           args: --build-tags=integration
 
   # README task 13.10 (closing production-readiness finding F11): the

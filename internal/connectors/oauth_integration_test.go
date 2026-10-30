@@ -156,7 +156,7 @@ func TestVault_BeginAuthRefusesUnadmittedProvider(t *testing.T) {
 	}
 	v := &Vault{
 		Store: s, Keys: crypto.NewKeyStore(kek), Redis: redisClient,
-		Providers: NewRegistry(Provider{Name: "acme", Endpoint: oauth2.Endpoint{AuthURL: "https://acme.example/authorize", TokenURL: "https://acme.example/token"}}),
+		Providers: NewRegistry(Provider{Name: "acme", Endpoint: oauth2.Endpoint{AuthURL: "https://acme.example/authorize", TokenURL: "https://acme.example/token"}}), //nolint:gosec // fixture endpoints, no credential
 	}
 	if _, err := v.BeginAuth(context.Background(), tenantID, uuid.New(), "acme"); err == nil {
 		t.Fatal("BeginAuth for an unadmitted provider succeeded, want a refusal")

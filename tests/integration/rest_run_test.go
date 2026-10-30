@@ -136,7 +136,7 @@ func setupPostgresAndPgBouncer(t *testing.T) (appPool *pgxpool.Pool, cleanup fun
 	pbReq := testcontainers.ContainerRequest{
 		Image:        "edoburu/pgbouncer:latest",
 		ExposedPorts: []string{"5432/tcp"},
-		Env: map[string]string{
+		Env: map[string]string{ //nolint:gosec // disposable test container's own credentials
 			"DATABASE_URL":      "postgres://nexus:nexus@postgres:5432/nexus",
 			"POOL_MODE":         "transaction",
 			"AUTH_TYPE":         "scram-sha-256",
@@ -179,7 +179,16 @@ func setupPostgresAndPgBouncer(t *testing.T) (appPool *pgxpool.Pool, cleanup fun
 		t.Fatalf("apply migrations: %v", err)
 	}
 
-	appPool, err = pgxpool.New(ctx, appDSN)
+	// An explicit pool size: pgxpool's default is max(4, NumCPU), so a test
+	// that needs N connections at once (resume_race_test.go holds eight) would
+	// pass on a many-core laptop and block forever on a CI runner. 20 matches
+	// production (cmd/nexusd appPoolMaxConns) and PgBouncer's DEFAULT_POOL_SIZE.
+	appCfg, err := pgxpool.ParseConfig(appDSN)
+	if err != nil {
+		t.Fatalf("parse pgbouncer dsn: %v", err)
+	}
+	appCfg.MaxConns = 20
+	appPool, err = pgxpool.NewWithConfig(ctx, appCfg)
 	if err != nil {
 		t.Fatalf("connect through pgbouncer: %v", err)
 	}
@@ -204,7 +213,7 @@ type testRunStarter struct {
 	kernel *kernel.Kernel
 }
 
-func (a *testRunStarter) StartRun(_ context.Context, req runs.Request) (<-chan runs.Event, error) {
+func (a *testRunStarter) StartRun(ctx context.Context, req runs.Request) (<-chan runs.Event, error) {
 	st := &kernel.RunState{TenantID: req.TenantID, SessionID: req.SessionID, Seal: kernel.SealFunc(req.Seal)}
 	cfg := kernel.RunConfig{
 		System: "You are a helpful agent.", ModelID: req.ModelID, MaxTurns: 10, Input: req.Input,
@@ -214,7 +223,7 @@ func (a *testRunStarter) StartRun(_ context.Context, req runs.Request) (<-chan r
 	ch := make(chan runs.Event, 8)
 	go func() {
 		defer close(ch)
-		for ev, err := range a.kernel.Run(context.Background(), st, cfg) {
+		for ev, err := range a.kernel.Run(context.WithoutCancel(ctx), st, cfg) {
 			ch <- runs.Event{Event: ev, Err: err}
 			if err != nil {
 				return
