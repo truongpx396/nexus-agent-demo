@@ -5,7 +5,7 @@
 // package-level functions (LoadPriceBook, CreateBudget, RecordUsage, ...)
 // take a caller-supplied pgx.Tx instead, for the callers that must write
 // inside a larger transaction of their own — the session-plus-budget
-// admission, the seed command — exactly like internal/crypto.KeyStore's
+// admission, the seed command — exactly like internal/cryptopg.KeyStore's
 // methods: price_book, budgets, budget_decisions and cost_records all carry
 // tenant_id and RLS like every other table.
 package postgres

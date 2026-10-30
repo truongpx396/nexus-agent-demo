@@ -36,6 +36,38 @@ type boundaryRule struct {
 	direct bool
 }
 
+// noStorage is the rule for a package that must reach neither the store nor a
+// database/cache driver, even transitively. The surfaces also have DIRECT rules
+// below that keep them out of internal/crypto altogether (they never seal or
+// open anything themselves); this is the stronger statement that nothing they
+// import brings a driver along.
+func noStorage(subject, pkg string) boundaryRule {
+	return boundaryRule{
+		name: subject + " must not reach the database or cache",
+		pkg:  modulePrefix + pkg,
+		forbidden: []string{
+			modulePrefix + "internal/store",
+			"github.com/jackc/pgx",
+			"github.com/redis",
+		},
+	}
+}
+
+func init() {
+	for _, s := range []struct{ subject, pkg string }{
+		{"the REST surface", "internal/surfaces/rest"},
+		{"the telegram surface", "internal/surfaces/telegram"},
+		{"the zalo surface", "internal/surfaces/zalo"},
+		{"the email surface", "internal/surfaces/email"},
+		{"the cron surface", "internal/surfaces/cron"},
+		{"the mcp surface", "internal/surfaces/mcp"},
+		{"the control plane port", "internal/controlplane"},
+		{"the tool pipeline", "internal/tools"},
+	} {
+		rules = append(rules, noStorage(s.subject, s.pkg))
+	}
+}
+
 var rules = []boundaryRule{
 	{
 		name: "kernel must not import surfaces, controlplane, an adapter of its own ports, or reach the database or cache",
@@ -62,6 +94,19 @@ var rules = []boundaryRule{
 		pkg:  modulePrefix + "internal/obs",
 		forbidden: []string{
 			modulePrefix + "internal/store",
+			"github.com/jackc/pgx",
+			"github.com/redis",
+		},
+	},
+	{
+		// The envelope (DEK, KEK, Seal, Open, the erasure vocabulary) is used
+		// everywhere events are sealed, so it must not drag a driver along.
+		// Its Postgres KeyStore and crypto-shredding are internal/crypto/postgres.
+		name: "crypto must not reach the database or cache",
+		pkg:  modulePrefix + "internal/crypto",
+		forbidden: []string{
+			modulePrefix + "internal/store",
+			modulePrefix + "internal/audit",
 			"github.com/jackc/pgx",
 			"github.com/redis",
 		},
@@ -107,17 +152,16 @@ var rules = []boundaryRule{
 	{
 		// runs is the application layer: it states the run-admission use case
 		// over ports (Admitter, KeyProvider, Starter) and leaves Postgres to
-		// internal/runs/postgres. Checked on its OWN imports because it
-		// reaches store and pgx transitively through internal/crypto, whose
-		// KeyStore methods take a pgx.Tx.
-		name: "runs must not itself import internal/store or a database/cache driver",
+		// internal/runs/postgres. Transitive: the envelope it imports for
+		// SealFor (internal/crypto) has no storage of its own — the KeyStore
+		// is internal/crypto/postgres.
+		name: "runs must not reach the database or cache",
 		pkg:  modulePrefix + "internal/runs",
 		forbidden: []string{
 			modulePrefix + "internal/store",
 			"github.com/jackc/pgx",
 			"github.com/redis",
 		},
-		direct: true,
 	},
 	{
 		// The REST surface starts runs through runs.Launcher and reads them

@@ -18,6 +18,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/mcp"
 	mcppg "github.com/truongpx396/nexus-agent-demo/internal/surfaces/mcp/postgres"
@@ -252,7 +253,7 @@ func TestResolver_BearerStaticAuthIsInjected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateKEK: %v", err)
 	}
-	keys := crypto.NewKeyStore(kek)
+	keys := cryptopg.NewKeyStore(kek)
 
 	if err := s.InTenantTx(context.Background(), tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		dek, err := keys.NewDEK(ctx, tx, tenantID)

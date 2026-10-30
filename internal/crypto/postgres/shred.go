@@ -1,4 +1,4 @@
-package crypto
+package postgres
 
 import (
 	"context"
@@ -10,25 +10,16 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
+	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
-// ErasureKeyID is the sentinel Event.KeyID an EventErasure record carries.
-// Erasure metadata (who/why/when) is not tenant-secret content the way an
-// ordinary event's payload is — it is a structural, administrative fact,
-// same spirit as internal/obs's "structure, not content" — so it is stored
-// as PLAINTEXT directly in Payload rather than sealed under any DEK
-// (there's no DEK left to seal it under once the tenant's key is shredded
-// anyway). ErasureKeyID never names a real encryption_keys row; a reader
-// checks for it before attempting KeyStore.Unwrap.
-const ErasureKeyID = "erasure-record"
-
 // Shred marks one key permanently, irreversibly unusable — the erasure act
 // itself (README.md §5, task 5.4, FR-080): the row and its wrapped
 // ciphertext stay (so a verifier can prove a key was destroyed, not merely
-// forgotten), but Unwrap (internal/crypto/keystore.go) now always returns
-// ErrKeyShredded for it. This is exactly the status flip
+// forgotten), but Unwrap (internal/crypto/postgres/keystore.go) now always returns
+// crypto.ErrKeyShredded for it. This is exactly the status flip
 // keystore_integration_test.go's TestKeyStore_UnwrapAfterShredFails already
 // exercised by hand, promoted to the real implementation it named.
 func Shred(ctx context.Context, tx pgx.Tx, keyID string) error {
@@ -47,7 +38,7 @@ func Shred(ctx context.Context, tx pgx.Tx, keyID string) error {
 
 // ShredTenant shreds every active key belonging to tenantID, returning the
 // key IDs it shredded. handleCreateRun (internal/surfaces/rest/server.go)
-// mints one fresh DEK per SESSION, not one shared per tenant, so tenant-wide
+// mints one fresh crypto.DEK per SESSION, not one shared per tenant, so tenant-wide
 // erasure is "every session's key," not a single row.
 func ShredTenant(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) ([]string, error) {
 	rows, err := tx.Query(ctx,
@@ -70,30 +61,6 @@ func ShredTenant(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) ([]string, 
 	return keyIDs, rows.Err()
 }
 
-// DerivedArtifact mirrors one derived_artifacts row (migrations/
-// 0008_derived_artifacts.sql) — a plaintext-derived file living outside the
-// encrypted event log (today, only internal/tools.BlobStore's oversized-
-// result spill files).
-type DerivedArtifact struct {
-	ArtifactID uuid.UUID
-	TenantID   uuid.UUID
-	SessionID  uuid.UUID
-	Kind       string
-	Path       string
-}
-
-// ErasureResult reports what one erasure transaction did. Callers are
-// responsible for two post-commit, best-effort steps that cannot themselves
-// be transactional with Postgres: unlinking DeletedArtifacts' Path values,
-// and (for a caller that streams events to a client, e.g. an admin surface)
-// forwarding ErasureEvents. ReconcileDerivedArtifacts is the backstop for
-// whatever this best-effort step misses.
-type ErasureResult struct {
-	ShreddedKeyIDs   []string
-	DeletedArtifacts []DerivedArtifact
-	ErasureEvents    []eventlog.Event
-}
-
 type erasurePayload struct {
 	Reason         string   `json:"reason"`
 	ShreddedKeyIDs []string `json:"shredded_key_ids"`
@@ -107,18 +74,18 @@ type erasurePayload struct {
 // non-nil — nil is valid for tests with no audit chain wired). The caller
 // (store.Store.InTenantTx) commits tx; ReconcileDerivedArtifacts is the
 // backstop proving no derived row outlives its source even so.
-func EraseTenant(ctx context.Context, tx pgx.Tx, chain *audit.Chain, tenantID uuid.UUID, reason string) (ErasureResult, error) {
+func EraseTenant(ctx context.Context, tx pgx.Tx, chain *audit.Chain, tenantID uuid.UUID, reason string) (crypto.ErasureResult, error) {
 	keyIDs, err := ShredTenant(ctx, tx, tenantID)
 	if err != nil {
-		return ErasureResult{}, err
+		return crypto.ErasureResult{}, err
 	}
 	if len(keyIDs) == 0 {
-		return ErasureResult{}, nil // nothing active to erase — not an error, a no-op
+		return crypto.ErasureResult{}, nil // nothing active to erase — not an error, a no-op
 	}
 
 	sessionIDs, err := sessionsForKeys(ctx, tx, tenantID, keyIDs)
 	if err != nil {
-		return ErasureResult{}, err
+		return crypto.ErasureResult{}, err
 	}
 	return finishErasure(ctx, tx, chain, tenantID, sessionIDs, keyIDs, reason)
 }
@@ -127,23 +94,23 @@ func EraseTenant(ctx context.Context, tx pgx.Tx, chain *audit.Chain, tenantID uu
 // session: shred whichever key(s) sealed its events (ordinarily one), and
 // the same in-transaction derived-artifact hard-delete + EventErasure as
 // EraseTenant.
-func EraseSession(ctx context.Context, tx pgx.Tx, chain *audit.Chain, tenantID, sessionID uuid.UUID, reason string) (ErasureResult, error) {
-	rows, err := tx.Query(ctx, `SELECT DISTINCT key_id FROM events WHERE session_id = $1 AND key_id != $2`, sessionID, ErasureKeyID)
+func EraseSession(ctx context.Context, tx pgx.Tx, chain *audit.Chain, tenantID, sessionID uuid.UUID, reason string) (crypto.ErasureResult, error) {
+	rows, err := tx.Query(ctx, `SELECT DISTINCT key_id FROM events WHERE session_id = $1 AND key_id != $2`, sessionID, crypto.ErasureKeyID)
 	if err != nil {
-		return ErasureResult{}, fmt.Errorf("crypto: find keys for session %s: %w", sessionID, err)
+		return crypto.ErasureResult{}, fmt.Errorf("crypto: find keys for session %s: %w", sessionID, err)
 	}
 	var candidateKeys []string
 	for rows.Next() {
 		var id string
 		if serr := rows.Scan(&id); serr != nil {
 			rows.Close()
-			return ErasureResult{}, fmt.Errorf("crypto: scan key id: %w", serr)
+			return crypto.ErasureResult{}, fmt.Errorf("crypto: scan key id: %w", serr)
 		}
 		candidateKeys = append(candidateKeys, id)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
-		return ErasureResult{}, err
+		return crypto.ErasureResult{}, err
 	}
 	rows.Close()
 
@@ -160,7 +127,7 @@ func EraseSession(ctx context.Context, tx pgx.Tx, chain *audit.Chain, tenantID, 
 		shredded = append(shredded, keyID)
 	}
 	if len(shredded) == 0 {
-		return ErasureResult{}, nil
+		return crypto.ErasureResult{}, nil
 	}
 	return finishErasure(ctx, tx, chain, tenantID, []uuid.UUID{sessionID}, shredded, reason)
 }
@@ -185,24 +152,24 @@ func sessionsForKeys(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, keyIDs 
 	return ids, rows.Err()
 }
 
-func finishErasure(ctx context.Context, tx pgx.Tx, chain *audit.Chain, tenantID uuid.UUID, sessionIDs []uuid.UUID, shreddedKeyIDs []string, reason string) (ErasureResult, error) {
+func finishErasure(ctx context.Context, tx pgx.Tx, chain *audit.Chain, tenantID uuid.UUID, sessionIDs []uuid.UUID, shreddedKeyIDs []string, reason string) (crypto.ErasureResult, error) {
 	artifacts, err := deleteDerivedArtifacts(ctx, tx, sessionIDs)
 	if err != nil {
-		return ErasureResult{}, err
+		return crypto.ErasureResult{}, err
 	}
 
-	result := ErasureResult{ShreddedKeyIDs: shreddedKeyIDs, DeletedArtifacts: artifacts}
+	result := crypto.ErasureResult{ShreddedKeyIDs: shreddedKeyIDs, DeletedArtifacts: artifacts}
 	for _, sessionID := range sessionIDs {
 		ev, err := appendErasureEvent(ctx, tx, chain, tenantID, sessionID, shreddedKeyIDs, reason)
 		if err != nil {
-			return ErasureResult{}, err
+			return crypto.ErasureResult{}, err
 		}
 		result.ErasureEvents = append(result.ErasureEvents, ev)
 	}
 	return result, nil
 }
 
-func deleteDerivedArtifacts(ctx context.Context, tx pgx.Tx, sessionIDs []uuid.UUID) ([]DerivedArtifact, error) {
+func deleteDerivedArtifacts(ctx context.Context, tx pgx.Tx, sessionIDs []uuid.UUID) ([]crypto.DerivedArtifact, error) {
 	if len(sessionIDs) == 0 {
 		return nil, nil
 	}
@@ -215,9 +182,9 @@ func deleteDerivedArtifacts(ctx context.Context, tx pgx.Tx, sessionIDs []uuid.UU
 		return nil, fmt.Errorf("crypto: delete derived artifacts: %w", err)
 	}
 	defer rows.Close()
-	var out []DerivedArtifact
+	var out []crypto.DerivedArtifact
 	for rows.Next() {
-		var a DerivedArtifact
+		var a crypto.DerivedArtifact
 		if err := rows.Scan(&a.ArtifactID, &a.TenantID, &a.SessionID, &a.Kind, &a.Path); err != nil {
 			return nil, fmt.Errorf("crypto: scan derived artifact: %w", err)
 		}
@@ -237,9 +204,9 @@ func appendErasureEvent(ctx context.Context, tx pgx.Tx, chain *audit.Chain, tena
 		TenantID:      tenantID,
 		SchemaVersion: eventlog.CurrentSchemaVersion,
 		Type:          eventlog.EventErasure,
-		Payload:       plaintext, // plaintext, on purpose — see ErasureKeyID's doc comment
-		PayloadDigest: Digest(plaintext),
-		KeyID:         ErasureKeyID,
+		Payload:       plaintext, // plaintext, on purpose — see crypto.ErasureKeyID's doc comment
+		PayloadDigest: crypto.Digest(plaintext),
+		KeyID:         crypto.ErasureKeyID,
 		Actor:         eventlog.ActorSystem,
 	}
 	out, err := store.Append(ctx, tx, e)
@@ -264,7 +231,7 @@ func appendErasureEvent(ctx context.Context, tx pgx.Tx, chain *audit.Chain, tena
 // reconciliation runs, "in the same transaction as the erasure" no longer
 // applies, and a tombstone proves the gap was found and closed rather than
 // silently erasing evidence that it ever existed.
-func ReconcileDerivedArtifacts(ctx context.Context, tx pgx.Tx) ([]DerivedArtifact, error) {
+func ReconcileDerivedArtifacts(ctx context.Context, tx pgx.Tx) ([]crypto.DerivedArtifact, error) {
 	rows, err := tx.Query(ctx, `
 		UPDATE derived_artifacts da SET deleted_at = now()
 		WHERE da.deleted_at IS NULL
@@ -280,9 +247,9 @@ func ReconcileDerivedArtifacts(ctx context.Context, tx pgx.Tx) ([]DerivedArtifac
 		return nil, fmt.Errorf("crypto: reconcile derived artifacts: %w", err)
 	}
 	defer rows.Close()
-	var out []DerivedArtifact
+	var out []crypto.DerivedArtifact
 	for rows.Next() {
-		var a DerivedArtifact
+		var a crypto.DerivedArtifact
 		if err := rows.Scan(&a.ArtifactID, &a.TenantID, &a.SessionID, &a.Kind, &a.Path); err != nil {
 			return nil, fmt.Errorf("crypto: scan reconciled artifact: %w", err)
 		}

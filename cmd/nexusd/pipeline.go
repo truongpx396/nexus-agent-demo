@@ -16,7 +16,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/config"
 	"github.com/truongpx396/nexus-agent-demo/internal/connectors"
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
-	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/delegate"
 	"github.com/truongpx396/nexus-agent-demo/internal/hooks"
 	"github.com/truongpx396/nexus-agent-demo/internal/permissions"
@@ -51,7 +51,7 @@ import (
 // Ledger/Spawner fields are satisfied by delegations/nexusdDelegationSpawner
 // immediately — Wire only needs to land before the FIRST real dispatch,
 // which is well after serve() finishes wiring everything.
-func newToolPipeline(st *store.Store, keyStore *crypto.KeyStore, chain *audit.Chain, delegations *delegate.Delegations, teamsSvc *teams.Service, vault *connectors.Vault, gate *cost.Gate) (*tools.Pipeline, []provider.ToolSchema, []byte, []skills.SkillBundle, *mcp.Port) {
+func newToolPipeline(st *store.Store, keyStore *cryptopg.KeyStore, chain *audit.Chain, delegations *delegate.Delegations, teamsSvc *teams.Service, vault *connectors.Vault, gate *cost.Gate) (*tools.Pipeline, []provider.ToolSchema, []byte, []skills.SkillBundle, *mcp.Port) {
 	reg := tools.NewRegistry()
 	if err := reg.DeclareNamespace("platform", "nexusd"); err != nil {
 		fatalf("declare platform namespace: %v", err)

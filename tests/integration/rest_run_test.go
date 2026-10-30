@@ -36,6 +36,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/authn"
 	"github.com/truongpx396/nexus-agent-demo/internal/controlplane"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
@@ -73,7 +74,7 @@ func (unusedControlPlaneBackend) AuthorizeContentAccess(context.Context, control
 // newTestLauncher is the runs.Service every REST/CLI-parity test starts runs
 // through: real session admission and real key provisioning over the test's
 // own Postgres, with the test's own Starter standing in for the kernel.
-func newTestLauncher(st *store.Store, keys *crypto.KeyStore, starter runs.Starter) *runs.Service {
+func newTestLauncher(st *store.Store, keys *cryptopg.KeyStore, starter runs.Starter) *runs.Service {
 	return &runs.Service{Admit: newTestControlPlane(st), Keys: runspg.Keys{Store: st, KeyStore: keys}, Starter: starter}
 }
 
@@ -309,7 +310,7 @@ func TestRESTRunEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate KEK: %v", err)
 	}
-	keyStore := crypto.NewKeyStore(kek)
+	keyStore := cryptopg.NewKeyStore(kek)
 
 	// Turn 1: a tool call (exercises the stub ToolExecutor's synthetic
 	// paired result over the wire). Turn 2: natural completion.

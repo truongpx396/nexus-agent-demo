@@ -15,6 +15,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/runs"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/cron"
@@ -150,7 +151,7 @@ func TestScheduler_FiresDueScheduleAcrossMultipleTenants(t *testing.T) {
 	}
 	starter := &fakeStarter{}
 	sched := &cron.Scheduler{
-		Schedules: cronpg.New(s, crypto.NewKeyStore(kek)),
+		Schedules: cronpg.New(s, cryptopg.NewKeyStore(kek)),
 		Starter:   starter,
 		Tenants:   poolTenantLister{pool: adminPool},
 	}
@@ -199,7 +200,7 @@ func TestScheduler_UnparseableCronExprDisablesTheSchedule(t *testing.T) {
 		t.Fatalf("GenerateKEK: %v", err)
 	}
 	starter := &fakeStarter{}
-	sched := &cron.Scheduler{Schedules: cronpg.New(s, crypto.NewKeyStore(kek)), Starter: starter, Tenants: poolTenantLister{pool: adminPool}}
+	sched := &cron.Scheduler{Schedules: cronpg.New(s, cryptopg.NewKeyStore(kek)), Starter: starter, Tenants: poolTenantLister{pool: adminPool}}
 
 	sched.RunOnce(context.Background())
 
@@ -236,7 +237,7 @@ func TestSchedules_FireIsAtomic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateKEK: %v", err)
 	}
-	schedules := cronpg.New(s, crypto.NewKeyStore(kek))
+	schedules := cronpg.New(s, cryptopg.NewKeyStore(kek))
 	sessionID := uuid.New()
 	fire := func(next time.Time) error {
 		_, err := schedules.Fire(ctx, cron.Firing{

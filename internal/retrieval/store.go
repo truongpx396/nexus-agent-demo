@@ -9,7 +9,7 @@ import (
 )
 
 // These take a caller-supplied tx, the same convention internal/cost's
-// price-book access and internal/crypto.KeyStore's methods already follow:
+// price-book access and internal/cryptopg.KeyStore's methods already follow:
 // every tenant-scoped read/write in this system goes through
 // store.Store.InTenantTx at the call site, never opens its own transaction
 // (README §4's "InTenantTx ... the only scoping call in the codebase").
@@ -129,7 +129,7 @@ func DeleteDocument(ctx context.Context, tx pgx.Tx, tenantID, docID uuid.UUID) e
 // tenant's DEK makes its retrieval index unrecoverable too ... indexed
 // chunks are a derived artifact, hard-deleted in the same erasure
 // transaction." Called by the SAME caller that runs
-// internal/crypto.EraseTenant, inside the SAME tx (cmd/nexusd's `erase
+// internal/cryptopg.EraseTenant, inside the SAME tx (cmd/nexusd's `erase
 // --tenant` path) — this package deliberately does not import
 // internal/crypto so the dependency runs the other way (a late,
 // feature-scoped package depending on a Phase-1 foundation one, never the

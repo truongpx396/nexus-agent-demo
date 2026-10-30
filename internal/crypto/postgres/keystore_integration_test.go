@@ -1,6 +1,6 @@
 //go:build integration
 
-package crypto
+package postgres
 
 import (
 	"context"
@@ -15,6 +15,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
+	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/migrations"
 )
@@ -84,7 +85,7 @@ func TestKeyStore_NewDEKThenUnwrapRoundTrip(t *testing.T) {
 	pool := setupKeystoreEnv(t)
 	ctx := context.Background()
 
-	kek, err := GenerateKEK()
+	kek, err := crypto.GenerateKEK()
 	if err != nil {
 		t.Fatalf("GenerateKEK: %v", err)
 	}
@@ -99,7 +100,7 @@ func TestKeyStore_NewDEKThenUnwrapRoundTrip(t *testing.T) {
 		t.Fatalf("insert tenant: %v", err)
 	}
 
-	var dek DEK
+	var dek crypto.DEK
 	if err := s.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
 		dek, err = ks.NewDEK(ctx, tx, tenantID)
@@ -108,17 +109,17 @@ func TestKeyStore_NewDEKThenUnwrapRoundTrip(t *testing.T) {
 		t.Fatalf("NewDEK: %v", err)
 	}
 	if dek.KeyID == "" || len(dek.Key) == 0 {
-		t.Fatalf("NewDEK returned an unusable DEK: %+v", dek)
+		t.Fatalf("NewDEK returned an unusable crypto.DEK: %+v", dek)
 	}
 
-	// Seal/Open with the freshly minted DEK, proving it is immediately
+	// crypto.Seal/crypto.Open with the freshly minted crypto.DEK, proving it is immediately
 	// usable without a round trip to reload it.
-	sealed, err := Seal(dek, []byte("hello"), tenantID.String(), "session-1")
+	sealed, err := crypto.Seal(dek, []byte("hello"), tenantID.String(), "session-1")
 	if err != nil {
 		t.Fatalf("Seal: %v", err)
 	}
 
-	var reloaded DEK
+	var reloaded crypto.DEK
 	if err := s.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
 		reloaded, err = ks.Unwrap(ctx, tx, dek.KeyID)
@@ -127,9 +128,9 @@ func TestKeyStore_NewDEKThenUnwrapRoundTrip(t *testing.T) {
 		t.Fatalf("Unwrap: %v", err)
 	}
 
-	got, err := Open(reloaded, sealed, tenantID.String(), "session-1")
+	got, err := crypto.Open(reloaded, sealed, tenantID.String(), "session-1")
 	if err != nil {
-		t.Fatalf("Open with reloaded DEK: %v", err)
+		t.Fatalf("Open with reloaded crypto.DEK: %v", err)
 	}
 	if string(got) != "hello" {
 		t.Fatalf("got %q, want %q", got, "hello")
@@ -140,7 +141,7 @@ func TestKeyStore_UnwrapUnderWrongTenantIsNotFound(t *testing.T) {
 	pool := setupKeystoreEnv(t)
 	ctx := context.Background()
 
-	kek, err := GenerateKEK()
+	kek, err := crypto.GenerateKEK()
 	if err != nil {
 		t.Fatalf("GenerateKEK: %v", err)
 	}
@@ -183,7 +184,7 @@ func TestKeyStore_UnwrapAfterShredFails(t *testing.T) {
 	pool := setupKeystoreEnv(t)
 	ctx := context.Background()
 
-	kek, err := GenerateKEK()
+	kek, err := crypto.GenerateKEK()
 	if err != nil {
 		t.Fatalf("GenerateKEK: %v", err)
 	}
@@ -220,7 +221,7 @@ func TestKeyStore_UnwrapAfterShredFails(t *testing.T) {
 		_, err := ks.Unwrap(ctx, tx, keyID)
 		return err
 	})
-	if !errors.Is(err, ErrKeyShredded) {
-		t.Fatalf("err = %v, want ErrKeyShredded", err)
+	if !errors.Is(err, crypto.ErrKeyShredded) {
+		t.Fatalf("err = %v, want crypto.ErrKeyShredded", err)
 	}
 }

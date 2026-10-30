@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/mcp"
 )
@@ -19,13 +20,13 @@ import (
 // Directory implements mcp.ServerDirectory over mcp_servers.
 type Directory struct {
 	st   *store.Store
-	keys *crypto.KeyStore
+	keys *cryptopg.KeyStore
 }
 
 var _ mcp.ServerDirectory = (*Directory)(nil)
 
 // New returns a Directory; keys opens a bearer_static server's sealed token.
-func New(st *store.Store, keys *crypto.KeyStore) *Directory { return &Directory{st: st, keys: keys} }
+func New(st *store.Store, keys *cryptopg.KeyStore) *Directory { return &Directory{st: st, keys: keys} }
 
 const selectServer = `SELECT server_id, name, base_url, auth_kind, key_id, oauth_provider, status FROM mcp_servers`
 

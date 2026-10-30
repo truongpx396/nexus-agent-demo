@@ -25,6 +25,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/authn"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
@@ -149,7 +150,7 @@ func TestKernelTracerProducesRootGenerationToolTree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate KEK: %v", err)
 	}
-	keyStore := crypto.NewKeyStore(kek)
+	keyStore := cryptopg.NewKeyStore(kek)
 
 	// Turn 1: one tool call (exercises the tool span, nested under turn 1's
 	// generation span). Turn 2: natural completion (a second, sibling
@@ -321,7 +322,7 @@ func TestKernelTracerContentOptIn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate KEK: %v", err)
 	}
-	keyStore := crypto.NewKeyStore(kek)
+	keyStore := cryptopg.NewKeyStore(kek)
 
 	fakeProvider := fake.New(
 		fake.Script{Chunks: []fake.ChunkSpec{

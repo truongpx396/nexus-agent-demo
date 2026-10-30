@@ -13,6 +13,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/retrieval"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
@@ -45,7 +46,7 @@ func runErase(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("load KEK: %w", err)
 	}
-	_ = crypto.NewKeyStore(kek) // erasure only shreds/reads encryption_keys rows directly; KeyStore isn't needed for that path itself
+	_ = cryptopg.NewKeyStore(kek) // erasure only shreds/reads encryption_keys rows directly; KeyStore isn't needed for that path itself
 
 	signer := audit.NewSignerClient(envOr("NEXUS_SIGNERD_SOCKET", defaultSignerdSocket))
 	chain := audit.NewChain(signer)
@@ -56,7 +57,7 @@ func runErase(ctx context.Context, args []string) error {
 		var deletedChunks, deletedDocs int
 		err := st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 			var eerr error
-			result, eerr = crypto.EraseTenant(ctx, tx, chain, tenantID, *reason)
+			result, eerr = cryptopg.EraseTenant(ctx, tx, chain, tenantID, *reason)
 			if eerr != nil {
 				return eerr
 			}
@@ -101,7 +102,7 @@ func runErase(ctx context.Context, args []string) error {
 	var result crypto.ErasureResult
 	err = st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var eerr error
-		result, eerr = crypto.EraseSession(ctx, tx, chain, tenantID, sessionID, *reason)
+		result, eerr = cryptopg.EraseSession(ctx, tx, chain, tenantID, sessionID, *reason)
 		return eerr
 	})
 	if err != nil {
@@ -115,7 +116,7 @@ func runErase(ctx context.Context, args []string) error {
 // reclaimArtifacts best-effort unlinks the files EraseTenant/EraseSession
 // already hard-deleted the derived_artifacts ROWS for — file removal can't
 // be transactional with Postgres, so a failure here is logged, not fatal:
-// crypto.ReconcileDerivedArtifacts is the backstop for exactly this case.
+// cryptopg.ReconcileDerivedArtifacts is the backstop for exactly this case.
 func reclaimArtifacts(result crypto.ErasureResult) {
 	for _, a := range result.DeletedArtifacts {
 		if err := os.Remove(a.Path); err != nil && !os.IsNotExist(err) {

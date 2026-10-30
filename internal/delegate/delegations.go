@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
-	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
@@ -23,7 +23,7 @@ type Delegations struct {
 	cfg Config
 }
 
-func NewDelegations(st *store.Store, keys *crypto.KeyStore, chain *audit.Chain) *Delegations {
+func NewDelegations(st *store.Store, keys *cryptopg.KeyStore, chain *audit.Chain) *Delegations {
 	return &Delegations{deps: deps{Store: st, Keys: keys, Chain: chain}}
 }
 

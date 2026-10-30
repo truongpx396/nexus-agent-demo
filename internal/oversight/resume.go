@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
@@ -36,7 +37,7 @@ type Resumer struct {
 	Kernel    *kernel.Kernel
 	Approvals *Approvals
 	Store     *store.Store
-	Keys      *crypto.KeyStore
+	Keys      *cryptopg.KeyStore
 	System    string
 	Catalog   []provider.ToolSchema
 	MaxTurns  int

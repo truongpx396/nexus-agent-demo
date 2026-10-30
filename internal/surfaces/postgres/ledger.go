@@ -10,6 +10,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces"
@@ -21,7 +22,7 @@ import (
 // Chain.
 type Ledger struct {
 	st    *store.Store
-	keys  *crypto.KeyStore
+	keys  *cryptopg.KeyStore
 	chain *audit.Chain
 }
 
@@ -29,7 +30,7 @@ var _ surfaces.DeliveryLedger = (*Ledger)(nil)
 
 // NewLedger returns a Ledger. chain may be nil, in which case events are
 // appended without a signed receipt (a minimal wiring for tests).
-func NewLedger(st *store.Store, keys *crypto.KeyStore, chain *audit.Chain) *Ledger {
+func NewLedger(st *store.Store, keys *cryptopg.KeyStore, chain *audit.Chain) *Ledger {
 	return &Ledger{st: st, keys: keys, chain: chain}
 }
 

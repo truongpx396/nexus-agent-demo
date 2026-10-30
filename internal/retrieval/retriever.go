@@ -206,7 +206,7 @@ func (r *Retriever) embed(ctx context.Context, tenantID, sessionID uuid.UUID, te
 }
 
 // Erase is task 12.8's own gate, called from the SAME transaction as
-// internal/crypto.EraseTenant (cmd/nexusd's `erase --tenant` path) — see
+// internal/cryptopg.EraseTenant (cmd/nexusd's `erase --tenant` path) — see
 // DeleteTenant's own doc comment for why this package never imports
 // internal/crypto to do that itself.
 func Erase(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) (deletedChunks, deletedDocs int, err error) {

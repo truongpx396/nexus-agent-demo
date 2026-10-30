@@ -17,7 +17,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
 	"github.com/truongpx396/nexus-agent-demo/internal/authn"
 	"github.com/truongpx396/nexus-agent-demo/internal/connectors"
-	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/delegate"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/memory"
@@ -77,7 +77,7 @@ func serve(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("load KEK: %w", err)
 	}
-	keyStore := crypto.NewKeyStore(kek)
+	keyStore := cryptopg.NewKeyStore(kek)
 
 	signingKey, err := loadOrGenerateSigningKey(cfg.AuthnSigningKeyPath, devMode)
 	if err != nil {

@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/email"
 )
@@ -30,7 +31,7 @@ import (
 // own DEK, unsealed only inside a Sender's own Send call.
 type MessagingChannels struct {
 	Store *store.Store
-	Keys  *crypto.KeyStore
+	Keys  *cryptopg.KeyStore
 }
 
 type channelRow struct {

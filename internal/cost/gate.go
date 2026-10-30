@@ -126,7 +126,7 @@ func (c GateConfig) withDefaults() GateConfig {
 // process-lifetime, not hot-reloaded.
 //
 // Gate owns its own units of work (through the Ledger) rather than taking a
-// caller-supplied tx the way internal/crypto.KeyStore's methods do: the
+// caller-supplied tx the way internal/cryptopg.KeyStore's methods do: the
 // abstract BudgetGate.Reserve/Reconcile signature (README §4) takes no tx
 // parameter, because one Reserve call is its own independent unit of
 // work — not a step nested inside a broader caller transaction the way

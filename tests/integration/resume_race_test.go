@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/queue"
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
@@ -58,7 +59,7 @@ func TestRunCtl_ResumeConversation_ConcurrentCallersResumeExactlyOnce(t *testing
 	if err != nil {
 		t.Fatalf("generate KEK: %v", err)
 	}
-	keys := crypto.NewKeyStore(kek)
+	keys := cryptopg.NewKeyStore(kek)
 	err = st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		dek, err := keys.NewDEK(ctx, tx, tenantID)
 		if err != nil {

@@ -12,6 +12,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/controlplane"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	eventlogpg "github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/runs"
@@ -115,7 +116,7 @@ func TestKeys_NewDEK(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateKEK: %v", err)
 	}
-	ks := crypto.NewKeyStore(kek)
+	ks := cryptopg.NewKeyStore(kek)
 
 	dek, err := runspg.Keys{Store: st, KeyStore: ks}.NewDEK(ctx, tenantID)
 	if err != nil {
@@ -157,7 +158,7 @@ func TestReader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateKEK: %v", err)
 	}
-	ks := crypto.NewKeyStore(kek)
+	ks := cryptopg.NewKeyStore(kek)
 	reader := runspg.Reader{Store: st, KeyStore: ks}
 	log := eventlogpg.New(st, eventlogpg.Hooks{})
 
