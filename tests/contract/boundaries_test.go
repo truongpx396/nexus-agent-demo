@@ -71,7 +71,7 @@ var rules = []boundaryRule{
 		// The budget domain (Money, Gate, the Ledger and Counters ports) is
 		// reached by the kernel, so it must stay free of its own storage.
 		// Its Postgres and Redis adapters are internal/cost/postgres and
-		// internal/cost/redis.
+		// internal/cost/redis; the in-memory ones are internal/cost/inmem.
 		name: "cost must not reach the database or cache",
 		pkg:  modulePrefix + "internal/cost",
 		forbidden: []string{

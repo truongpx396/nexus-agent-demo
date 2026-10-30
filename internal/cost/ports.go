@@ -12,7 +12,8 @@ import (
 // of work in the tenant's own scope — the Gate's Reserve/Reconcile take no
 // caller transaction (gate.go's doc comment), so neither does this port. The
 // Postgres adapter (internal/cost/postgres) runs each call in its own
-// tenant-scoped transaction.
+// tenant-scoped transaction; the in-memory adapter (internal/cost/inmem) is
+// for tests, and costtest.RunLedger holds both to the same contract.
 type Ledger interface {
 	// LoadPriceBook reads every price book entry visible to the tenant.
 	LoadPriceBook(ctx context.Context, tenantID uuid.UUID) (*PriceBook, error)
@@ -53,7 +54,7 @@ const (
 // ceiling. A tenant's workers span goroutines and processes, so the
 // check-then-increment-then-compare has to be one atomic operation outside
 // any one of them (task 4.4); internal/cost/redis implements it with Lua
-// scripts.
+// scripts, internal/cost/inmem with a mutex.
 //
 // Each budget owns an epoch (a generation marker) and a spend counter scoped
 // to it. Reserve refuses to act at all if the epoch is missing or doesn't

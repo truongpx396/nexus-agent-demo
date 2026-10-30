@@ -88,8 +88,9 @@ return 1
 `
 
 // Counters implements cost.Counters over a real *redis.Client. The Lua
-// atomicity is only proven against a real Redis; gate_integration tests in
-// tests/integration exercise it that way.
+// atomicity is only proven against the real thing, so costtest.RunCounters
+// runs the same contract here (integration) as against the in-memory
+// adapter (unit) — that is what keeps the fake honest.
 type Counters struct {
 	client  *goredis.Client
 	timeout time.Duration
