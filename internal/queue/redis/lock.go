@@ -63,8 +63,8 @@ func (l *SessionLock) Acquire(ctx context.Context, sessionKey string) (token str
 // expired (and was reacquired by someone else) can never delete a stranger's
 // lock.
 const luaCompareAndDelete = `
-if goredis.call('GET', KEYS[1]) == ARGV[1] then
-  return goredis.call('DEL', KEYS[1])
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('DEL', KEYS[1])
 end
 return 0
 `
@@ -82,8 +82,8 @@ func (l *SessionLock) Release(ctx context.Context, sessionKey, token string) err
 // needs to keep renewing it rather than have another worker steal the
 // session mid-run.
 const luaCompareAndExtend = `
-if goredis.call('GET', KEYS[1]) == ARGV[1] then
-  return goredis.call('PEXPIRE', KEYS[1], ARGV[2])
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('PEXPIRE', KEYS[1], ARGV[2])
 end
 return 0
 `
