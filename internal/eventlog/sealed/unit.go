@@ -2,6 +2,8 @@ package sealed
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -18,6 +20,7 @@ import (
 // transaction through Tx().
 type Unit struct {
 	eventlog.Appender
+	app  sealedAppender
 	tx   pgx.Tx
 	keys keyStore
 }
@@ -36,7 +39,8 @@ var (
 
 // Unit returns the Unit for tx.
 func (s *Sealer) Unit(tx pgx.Tx) *Unit {
-	return &Unit{Appender: s.Bind(tx), tx: tx, keys: s.keys}
+	app := sealedAppender{s: s, tx: tx}
+	return &Unit{Appender: app, app: app, tx: tx, keys: s.keys}
 }
 
 // InTenant runs fn in tenantID's scope with a Unit over the transaction, and
@@ -78,4 +82,25 @@ func (u *Unit) NewDEK(ctx context.Context, tenantID uuid.UUID) (crypto.DEK, erro
 // Unwrap implements crypto.Keys.
 func (u *Unit) Unwrap(ctx context.Context, keyID string) (crypto.DEK, error) {
 	return u.keys.Unwrap(ctx, u.tx, keyID)
+}
+
+// AppendFirst appends the session's very first event, sealed by seal rather than
+// under a key found from earlier events (there are none to find). It is the one
+// append that cannot use Append, whose active key comes from the session's own
+// history; everything after it can.
+func (u *Unit) AppendFirst(ctx context.Context, tenantID, sessionID uuid.UUID,
+	seal func(plaintext []byte) (sealed, digest []byte, keyID string, err error),
+	typ eventlog.EventType, payload any) (eventlog.Event, error) {
+	plaintext, err := json.Marshal(payload)
+	if err != nil {
+		return eventlog.Event{}, fmt.Errorf("eventlog: marshal %s payload: %w", typ, err)
+	}
+	sealedPayload, digest, keyID, err := seal(plaintext)
+	if err != nil {
+		return eventlog.Event{}, fmt.Errorf("eventlog: seal %s payload: %w", typ, err)
+	}
+	return u.app.appendSealed(ctx, tenantID, sessionID, eventlog.Event{
+		EventID: uuid.New(), SessionID: sessionID, TenantID: tenantID, SchemaVersion: eventlog.CurrentSchemaVersion,
+		Type: typ, Payload: sealedPayload, PayloadDigest: digest, KeyID: keyID, Actor: eventlog.ActorSystem,
+	})
 }

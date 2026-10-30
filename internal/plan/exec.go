@@ -4,14 +4,14 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/truongpx396/nexus-agent-demo/internal/runstate"
+
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/delegate"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
 
@@ -22,7 +22,7 @@ import (
 // exactly what the zero-token routing test (task 8.6) asserts by counting
 // them against internal/provider/fake across a full plan run.
 type Executor struct {
-	deps
+	Store       Store
 	Kernel      *kernel.Kernel
 	Approvals   *oversight.Approvals
 	Inputs      *oversight.Inputs
@@ -48,11 +48,11 @@ type Executor struct {
 // plan_completed OR suspends on a gate/agent-step approval/fanout — never
 // blocks waiting for either.
 func (e *Executor) Start(ctx context.Context, tenantID, sessionID uuid.UUID, p Plan, seal kernel.SealFunc) error {
-	if err := e.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		if _, err := e.appendFirstEvent(ctx, tx, tenantID, sessionID, seal, eventlog.EventPlanStarted, planStartedPayload{PlanID: p.PlanID.String(), Version: p.Version}); err != nil {
+	if err := e.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
+		if _, err := tx.AppendFirst(ctx, tenantID, sessionID, seal, eventlog.EventPlanStarted, planStartedPayload{PlanID: p.PlanID.String(), Version: p.Version}); err != nil {
 			return err
 		}
-		return store.UpdateSessionStatus(ctx, tx, sessionID, eventlog.SessionStatusRunning, nil)
+		return tx.SetSessionStatus(ctx, sessionID, eventlog.SessionStatusRunning, nil)
 	}); err != nil {
 		return err
 	}
@@ -110,8 +110,8 @@ func (e *Executor) ResumeGate(ctx context.Context, tenantID, sessionID uuid.UUID
 	if resultVar != "" {
 		bindings[resultVar] = value
 	}
-	if err := e.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		return store.UpdateSessionStatus(ctx, tx, sessionID, eventlog.SessionStatusRunning, nil)
+	if err := e.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
+		return tx.SetSessionStatus(ctx, sessionID, eventlog.SessionStatusRunning, nil)
 	}); err != nil {
 		return err
 	}
@@ -159,8 +159,8 @@ func (e *Executor) ResolveFanout(ctx context.Context, tenantID, fanoutID uuid.UU
 	if v := step.DelegateFanout.CompletionVar; v != "" {
 		bindings[v] = NumberValue(float64(returned))
 	}
-	if err := e.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		return store.UpdateSessionStatus(ctx, tx, sessionID, eventlog.SessionStatusRunning, nil)
+	if err := e.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
+		return tx.SetSessionStatus(ctx, sessionID, eventlog.SessionStatusRunning, nil)
 	}); err != nil {
 		return err
 	}
@@ -193,13 +193,13 @@ func gateResultVar(s Step) string {
 func (e *Executor) load(ctx context.Context, tenantID, sessionID uuid.UUID) (Plan, state, error) {
 	var sess eventlog.Session
 	var history []eventlog.Event
-	if err := e.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+	if err := e.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
 		var err error
-		sess, err = store.GetSession(ctx, tx, sessionID)
+		sess, err = tx.GetSession(ctx, sessionID)
 		if err != nil {
 			return err
 		}
-		history, err = store.ListEvents(ctx, tx, sessionID)
+		history, err = tx.ListEvents(ctx, sessionID)
 		return err
 	}); err != nil {
 		return Plan{}, state{}, err
@@ -212,7 +212,7 @@ func (e *Executor) load(ctx context.Context, tenantID, sessionID uuid.UUID) (Pla
 	if err != nil {
 		return Plan{}, state{}, err
 	}
-	st, err := replayState(ctx, history, e.decryptWith(tenantID, sessionID))
+	st, err := replayState(ctx, history, runstate.Decryptor[Tx](e.Store, tenantID, sessionID))
 	if err != nil {
 		return Plan{}, state{}, err
 	}

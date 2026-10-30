@@ -5,10 +5,8 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
 // run is the platform's own zero-token transition loop (README task 8.5):
@@ -71,9 +69,9 @@ func (e *Executor) afterStep(ctx context.Context, tenantID, sessionID uuid.UUID,
 
 func (e *Executor) enterStep(ctx context.Context, tenantID, sessionID uuid.UUID, step Step) (eventlog.Event, error) {
 	var ev eventlog.Event
-	err := e.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+	err := e.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
 		var err error
-		ev, err = e.appendEvent(ctx, tx, tenantID, sessionID, eventlog.EventPlanStepEntered, nil, nil, stepEnteredPayload{StepID: step.ID})
+		ev, err = tx.Append(ctx, tenantID, sessionID, eventlog.EventPlanStepEntered, nil, nil, stepEnteredPayload{StepID: step.ID})
 		return err
 	})
 	return ev, err
@@ -87,8 +85,8 @@ func (e *Executor) enterStep(ctx context.Context, tenantID, sessionID uuid.UUID,
 // edge, none whose predicate held) is exactly how a plan run legitimately
 // ends: appends plan_completed and marks the session completed.
 func (e *Executor) exitStepAndTransition(ctx context.Context, tenantID, sessionID uuid.UUID, st *state, step Step, bindings Context) (string, error) {
-	if err := e.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		_, err := e.appendEvent(ctx, tx, tenantID, sessionID, eventlog.EventPlanStepExited, nil, nil, stepExitedPayload{StepID: step.ID, Bindings: bindings})
+	if err := e.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
+		_, err := tx.Append(ctx, tenantID, sessionID, eventlog.EventPlanStepExited, nil, nil, stepExitedPayload{StepID: step.ID, Bindings: bindings})
 		return err
 	}); err != nil {
 		return "", err
@@ -102,20 +100,20 @@ func (e *Executor) exitStepAndTransition(ctx context.Context, tenantID, sessionI
 		return "", err
 	}
 
-	if err := e.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		_, err := e.appendEvent(ctx, tx, tenantID, sessionID, eventlog.EventPlanTransition, nil, nil, transitionPayload{From: step.ID, To: next, Predicate: pred})
+	if err := e.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
+		_, err := tx.Append(ctx, tenantID, sessionID, eventlog.EventPlanTransition, nil, nil, transitionPayload{From: step.ID, To: next, Predicate: pred})
 		return err
 	}); err != nil {
 		return "", err
 	}
 
 	if next == "" {
-		if err := e.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-			if _, err := e.appendEvent(ctx, tx, tenantID, sessionID, eventlog.EventPlanCompleted, nil, nil, planCompletedPayload{}); err != nil {
+		if err := e.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
+			if _, err := tx.Append(ctx, tenantID, sessionID, eventlog.EventPlanCompleted, nil, nil, planCompletedPayload{}); err != nil {
 				return err
 			}
 			reason := "plan_completed"
-			return store.UpdateSessionStatus(ctx, tx, sessionID, eventlog.SessionStatusCompleted, &reason)
+			return tx.SetSessionStatus(ctx, sessionID, eventlog.SessionStatusCompleted, &reason)
 		}); err != nil {
 			return "", err
 		}

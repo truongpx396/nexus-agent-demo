@@ -3,70 +3,24 @@ package plan
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+
+	"github.com/truongpx396/nexus-agent-demo/internal/runstate"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
 
-// loadRunState mirrors internal/oversight.Resumer.loadRunState and
-// internal/delegate.Delegations.loadRunState field-for-field — the same
-// out-of-band rehydration idiom, reimplemented here for the same reason
-// each of those gives: no live RunState.Seal to reuse.
+// loadRunState rebuilds the session's RunState from its own durable history
+// (runstate.Load): the plan executor drives kernel.Continue from outside any
+// live kernel.Run call, with no RunState.Seal to reuse.
 func (e *Executor) loadRunState(ctx context.Context, tenantID, sessionID uuid.UUID) (*kernel.RunState, eventlog.Session, error) {
-	var sess eventlog.Session
-	var history []eventlog.Event
-	if err := e.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		var err error
-		sess, err = store.GetSession(ctx, tx, sessionID)
-		if err != nil {
-			return err
-		}
-		history, err = store.ListEvents(ctx, tx, sessionID)
-		return err
-	}); err != nil {
-		return nil, eventlog.Session{}, err
-	}
-
-	decrypt := e.decryptWith(tenantID, sessionID)
-	transcript, toolUseIDs, err := kernel.Rehydrate(ctx, history, decrypt)
+	loaded, err := runstate.Load[Tx](ctx, e.Store, tenantID, sessionID)
 	if err != nil {
 		return nil, eventlog.Session{}, err
 	}
-
-	var keyID string
-	for i := len(history) - 1; i >= 0; i-- {
-		if history[i].KeyID != crypto.ErasureKeyID {
-			keyID = history[i].KeyID
-			break
-		}
-	}
-	if keyID == "" {
-		return nil, eventlog.Session{}, fmt.Errorf("plan: session %s has no active key in its history", sessionID)
-	}
-	var dek crypto.DEK
-	if err := e.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		var uerr error
-		dek, uerr = e.Keys.Unwrap(ctx, tx, keyID)
-		return uerr
-	}); err != nil {
-		return nil, eventlog.Session{}, err
-	}
-
-	seal := func(plaintext []byte) (sealed, digest []byte, kid string, err error) {
-		sealed, err = crypto.Seal(dek, plaintext, tenantID.String(), sessionID.String())
-		if err != nil {
-			return nil, nil, "", fmt.Errorf("plan: seal event payload: %w", err)
-		}
-		return sealed, crypto.Digest(plaintext), dek.KeyID, nil
-	}
-
-	return &kernel.RunState{TenantID: tenantID, SessionID: sessionID, Seal: seal, History: history, Transcript: transcript, ToolUseIDs: toolUseIDs}, sess, nil
+	return loaded.State, loaded.Session, nil
 }
 
 // lastContentText decrypts the session's own final EventContent — an
@@ -75,9 +29,9 @@ func (e *Executor) loadRunState(ctx context.Context, tenantID, sessionID uuid.UU
 // reason.
 func (e *Executor) lastContentText(ctx context.Context, tenantID, sessionID uuid.UUID) (string, error) {
 	var history []eventlog.Event
-	if err := e.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+	if err := e.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
 		var err error
-		history, err = store.ListEvents(ctx, tx, sessionID)
+		history, err = tx.ListEvents(ctx, sessionID)
 		return err
 	}); err != nil {
 		return "", err
@@ -94,7 +48,7 @@ func (e *Executor) lastContentText(ctx context.Context, tenantID, sessionID uuid
 		return "", nil
 	}
 
-	decrypt := e.decryptWith(tenantID, sessionID)
+	decrypt := runstate.Decryptor[Tx](e.Store, tenantID, sessionID)
 	plaintext, err := decrypt(ctx, *last)
 	if err != nil {
 		return "", err

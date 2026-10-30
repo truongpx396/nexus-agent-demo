@@ -67,6 +67,7 @@ func init() {
 		{"run-state rebuilding", "internal/runstate"},
 		{"the delegation service", "internal/delegate"},
 		{"the teams service", "internal/teams"},
+		{"the plan executor", "internal/plan"},
 		{"the job queue port", "internal/queue"},
 		{"the oversight service", "internal/oversight"},
 		{"tenant config", "internal/config"},
