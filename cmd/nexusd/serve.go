@@ -238,7 +238,7 @@ func serve(ctx context.Context) error {
 		Kernel: k, Approvals: approvals, Store: st, Keys: keyStore,
 		System: starter.system, Catalog: catalog, MaxTurns: starter.maxTurns,
 	}
-	grants := obs.NewGrants(st, keyStore, chain)
+	grants := obs.NewGrants(obspg.NewGrantStore(st, keyStore, chain))
 
 	ctl := &runctl.Control{
 		Store: st, Keys: keyStore, Chain: chain, Approvals: approvals, Inputs: inputs, Kernel: k,

@@ -7,12 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/audit"
-	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
 // Grant mirrors one content_access_grants row (migrations/
@@ -38,86 +34,6 @@ func (g Grant) valid(at time.Time) bool {
 	return g.RevokedAt == nil && at.Before(g.ExpiresAt)
 }
 
-// Grants issues and enforces content access grants. Every grant AND every
-// read under it produces its own hash-chained audit receipt
-// (content_access_granted, content_accessed) — "audited, expiring, receipt
-// per read" (task 5.11's own wording).
-type Grants struct {
-	Store *store.Store
-	Keys  *crypto.KeyStore
-	Chain *audit.Chain
-}
-
-func NewGrants(st *store.Store, keys *crypto.KeyStore, chain *audit.Chain) *Grants {
-	return &Grants{Store: st, Keys: keys, Chain: chain}
-}
-
-// RequestGrant issues a new grant and appends EventContentAccessGranted.
-func (g *Grants) RequestGrant(ctx context.Context, tenantID, sessionID, granteeID uuid.UUID, reason string, ttl time.Duration) (Grant, error) {
-	if ttl <= 0 {
-		ttl = time.Hour
-	}
-	gr := Grant{GrantID: uuid.New(), TenantID: tenantID, SessionID: sessionID, GranteeID: granteeID, Reason: reason, ExpiresAt: time.Now().Add(ttl)}
-	err := g.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		if err := tx.QueryRow(ctx, `
-			INSERT INTO content_access_grants (grant_id, tenant_id, session_id, grantee_id, reason, expires_at)
-			VALUES ($1,$2,$3,$4,$5,$6) RETURNING created_at`,
-			gr.GrantID, gr.TenantID, gr.SessionID, gr.GranteeID, gr.Reason, gr.ExpiresAt,
-		).Scan(&gr.CreatedAt); err != nil {
-			return fmt.Errorf("obs: insert content access grant: %w", err)
-		}
-		return g.appendEvent(ctx, tx, tenantID, sessionID, eventlog.EventContentAccessGranted, grantEventPayload{GrantID: gr.GrantID, GranteeID: granteeID, Reason: reason})
-	})
-	return gr, err
-}
-
-// Authorize finds a currently-valid grant for (sessionID, granteeID) —
-// unexpired and unrevoked. Refuses (and appends EventContentAccessRefused,
-// its own audit trail for a DENIED attempt, not just a granted one) when
-// none exists.
-func (g *Grants) Authorize(ctx context.Context, tenantID, sessionID, granteeID uuid.UUID) (Grant, error) {
-	var gr Grant
-	var found bool
-	err := g.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `
-			SELECT grant_id, tenant_id, session_id, grantee_id, reason, expires_at, revoked_at, created_at
-			FROM content_access_grants WHERE session_id = $1 AND grantee_id = $2 ORDER BY created_at DESC`,
-			sessionID, granteeID,
-		)
-		if err != nil {
-			return fmt.Errorf("obs: query content access grants: %w", err)
-		}
-		now := time.Now()
-		for rows.Next() {
-			var cand Grant
-			if serr := rows.Scan(&cand.GrantID, &cand.TenantID, &cand.SessionID, &cand.GranteeID, &cand.Reason, &cand.ExpiresAt, &cand.RevokedAt, &cand.CreatedAt); serr != nil {
-				rows.Close()
-				return fmt.Errorf("obs: scan content access grant: %w", serr)
-			}
-			if !found && cand.valid(now) {
-				gr, found = cand, true
-			}
-		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
-			return err
-		}
-		rows.Close()
-
-		if !found {
-			return g.appendEvent(ctx, tx, tenantID, sessionID, eventlog.EventContentAccessRefused, refusedPayload{GranteeID: granteeID, Reason: "no valid grant"})
-		}
-		return nil
-	})
-	if err != nil {
-		return Grant{}, err
-	}
-	if !found {
-		return Grant{}, fmt.Errorf("obs: no valid content access grant for session %s, grantee %s", sessionID, granteeID)
-	}
-	return gr, nil
-}
-
 // EventDTO is the decrypted shape Read returns — deliberately narrow (no
 // Payload, no crypto details), the same information REST's own eventDTO
 // exposes to a run's own audience.
@@ -129,120 +45,105 @@ type EventDTO struct {
 	CreatedAt time.Time
 }
 
+// GrantStore is everything Grants needs from storage, and nothing about how
+// it is kept: the grant rows, the audit events about them (each hash-chained
+// by the adapter), and the decrypted history a grant unlocks. The Postgres
+// adapter is internal/obs/postgres; every method runs in the tenant's own
+// scope.
+type GrantStore interface {
+	// Issue stores gr (setting its CreatedAt) and appends the
+	// content_access_granted event for it, atomically: a grant exists if and
+	// only if it was audited.
+	Issue(ctx context.Context, gr Grant) (Grant, error)
+
+	// ListFor returns every grant for (sessionID, granteeID), newest first,
+	// expired and revoked ones included — deciding which is currently valid
+	// is Grants' job, not storage's.
+	ListFor(ctx context.Context, tenantID, sessionID, granteeID uuid.UUID) ([]Grant, error)
+
+	// RecordRefusal appends content_access_refused: a DENIED attempt gets its
+	// own audit trail, not just a granted one.
+	RecordRefusal(ctx context.Context, tenantID, sessionID, granteeID uuid.UUID, reason string) error
+
+	// History returns the session's events in order with their payloads
+	// decrypted. It never opens an EventThought, even under a grant: a
+	// thought comes back with no Body at all.
+	History(ctx context.Context, tenantID, sessionID uuid.UUID) ([]EventDTO, error)
+
+	// RecordAccess appends content_accessed: ONE receipt per read, however
+	// many events that read returned.
+	RecordAccess(ctx context.Context, tenantID, sessionID, granteeID uuid.UUID, eventCount int) error
+}
+
+// Grants issues and enforces content access grants. Every grant AND every
+// read under it produces its own hash-chained audit receipt
+// (content_access_granted, content_accessed) — "audited, expiring, receipt
+// per read" (task 5.11's own wording).
+type Grants struct {
+	Store GrantStore
+
+	// Now is the clock; nil means time.Now. Grants are time-bounded, so a
+	// test needs to be able to move it.
+	Now func() time.Time
+}
+
+// NewGrants returns Grants over store.
+func NewGrants(store GrantStore) *Grants { return &Grants{Store: store} }
+
+func (g *Grants) now() time.Time {
+	if g.Now != nil {
+		return g.Now()
+	}
+	return time.Now()
+}
+
+// RequestGrant issues a new grant and appends EventContentAccessGranted. A
+// non-positive ttl means an hour.
+func (g *Grants) RequestGrant(ctx context.Context, tenantID, sessionID, granteeID uuid.UUID, reason string, ttl time.Duration) (Grant, error) {
+	if ttl <= 0 {
+		ttl = time.Hour
+	}
+	gr := Grant{GrantID: uuid.New(), TenantID: tenantID, SessionID: sessionID, GranteeID: granteeID, Reason: reason, ExpiresAt: g.now().Add(ttl)}
+	return g.Store.Issue(ctx, gr)
+}
+
+// Authorize finds a currently-valid grant for (sessionID, granteeID) —
+// unexpired and unrevoked. Refuses (and appends EventContentAccessRefused,
+// its own audit trail for a DENIED attempt, not just a granted one) when
+// none exists.
+func (g *Grants) Authorize(ctx context.Context, tenantID, sessionID, granteeID uuid.UUID) (Grant, error) {
+	candidates, err := g.Store.ListFor(ctx, tenantID, sessionID, granteeID)
+	if err != nil {
+		return Grant{}, err
+	}
+	now := g.now()
+	for _, c := range candidates {
+		if c.valid(now) {
+			return c, nil
+		}
+	}
+	if err := g.Store.RecordRefusal(ctx, tenantID, sessionID, granteeID, "no valid grant"); err != nil {
+		return Grant{}, err
+	}
+	return Grant{}, fmt.Errorf("obs: no valid content access grant for session %s, grantee %s", sessionID, granteeID)
+}
+
 // Read authorizes granteeID against sessionID (Authorize) and, only on
-// success, decrypts and returns every event's plaintext — recording ONE
+// success, returns every event's decrypted body — recording ONE
 // EventContentAccessed receipt for this read (task 5.11: "receipt ... on
 // every read," read here meaning every access this method grants, not one
-// receipt per individual event it happens to decrypt).
+// receipt per individual event it happens to decrypt). If the receipt cannot
+// be recorded the content is withheld: no unaudited read.
 func (g *Grants) Read(ctx context.Context, tenantID, sessionID, granteeID uuid.UUID) ([]EventDTO, error) {
 	if _, err := g.Authorize(ctx, tenantID, sessionID, granteeID); err != nil {
 		return nil, err
 	}
-
-	var history []eventlog.Event
-	err := g.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		var err error
-		history, err = store.ListEvents(ctx, tx, sessionID)
-		return err
-	})
+	history, err := g.Store.History(ctx, tenantID, sessionID)
 	if err != nil {
 		return nil, err
 	}
-
-	dekCache := map[string]crypto.DEK{}
-	out := make([]EventDTO, 0, len(history))
-	for _, e := range history {
-		dto := EventDTO{EventID: e.EventID, Seq: e.Seq, Type: e.Type, CreatedAt: e.CreatedAt}
-		if e.Type == eventlog.EventThought {
-			out = append(out, dto) // never shown, even under a grant
-			continue
-		}
-		if e.KeyID == crypto.ErasureKeyID {
-			dto.Body = json.RawMessage(e.Payload) // stored plaintext already
-			out = append(out, dto)
-			continue
-		}
-		dek, ok := dekCache[e.KeyID]
-		if !ok {
-			if err := g.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-				var uerr error
-				dek, uerr = g.Keys.Unwrap(ctx, tx, e.KeyID)
-				return uerr
-			}); err != nil {
-				return nil, fmt.Errorf("obs: unwrap key for event %s: %w", e.EventID, err)
-			}
-			dekCache[e.KeyID] = dek
-		}
-		plaintext, err := crypto.Open(dek, e.Payload, tenantID.String(), sessionID.String())
-		if err != nil {
-			return nil, fmt.Errorf("obs: decrypt event %s: %w", e.EventID, err)
-		}
-		dto.Body = plaintext
-		out = append(out, dto)
-	}
-
-	err = g.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		return g.appendEvent(ctx, tx, tenantID, sessionID, eventlog.EventContentAccessed, accessedPayload{GranteeID: granteeID, EventCount: len(history)})
-	})
-	if err != nil {
+	if err := g.Store.RecordAccess(ctx, tenantID, sessionID, granteeID, len(history)); err != nil {
 		return nil, fmt.Errorf("obs: record content access receipt: %w", err)
 	}
-	return out, nil
-}
-
-type grantEventPayload struct {
-	GrantID   uuid.UUID `json:"grant_id"`
-	GranteeID uuid.UUID `json:"grantee_id"`
-	Reason    string    `json:"reason,omitempty"`
-}
-
-type refusedPayload struct {
-	GranteeID uuid.UUID `json:"grantee_id"`
-	Reason    string    `json:"reason,omitempty"`
-}
-
-type accessedPayload struct {
-	GranteeID  uuid.UUID `json:"grantee_id"`
-	EventCount int       `json:"event_count"`
-}
-
-// appendEvent seals payload under sessionID's active key (its most recent
-// event whose KeyID isn't the erasure sentinel) and durably appends it,
-// chaining it via Chain if set — the same shape internal/oversight's own
-// deps.appendEvent uses, reimplemented here rather than shared: the two
-// packages have no reason to depend on each other, and this is a handful of
-// lines, not shared logic worth a common package for (the same call this
-// codebase already makes for internal/hooks's and internal/tools/
-// builtin's duplicated SSRF guards).
-func (g *Grants) appendEvent(ctx context.Context, tx pgx.Tx, tenantID, sessionID uuid.UUID, typ eventlog.EventType, payload any) error {
-	plaintext, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("obs: marshal %s payload: %w", typ, err)
-	}
-	var keyID string
-	if err := tx.QueryRow(ctx, `SELECT key_id FROM events WHERE session_id = $1 AND key_id != $2 ORDER BY seq DESC LIMIT 1`, sessionID, crypto.ErasureKeyID).Scan(&keyID); err != nil {
-		return fmt.Errorf("obs: find active key for session %s: %w", sessionID, err)
-	}
-	dek, err := g.Keys.Unwrap(ctx, tx, keyID)
-	if err != nil {
-		return fmt.Errorf("obs: unwrap key for session %s: %w", sessionID, err)
-	}
-	sealed, err := crypto.Seal(dek, plaintext, tenantID.String(), sessionID.String())
-	if err != nil {
-		return fmt.Errorf("obs: seal %s payload: %w", typ, err)
-	}
-	e := eventlog.Event{
-		EventID: uuid.New(), SessionID: sessionID, TenantID: tenantID, SchemaVersion: eventlog.CurrentSchemaVersion,
-		Type: typ, Payload: sealed, PayloadDigest: crypto.Digest(plaintext), KeyID: dek.KeyID, Actor: eventlog.ActorSystem,
-	}
-	out, err := store.Append(ctx, tx, e)
-	if err != nil {
-		return fmt.Errorf("obs: append %s: %w", typ, err)
-	}
-	if g.Chain != nil {
-		if _, err := g.Chain.Append(ctx, tx, tenantID, sessionID, out.Seq, out.EventID, string(out.Type), out.PayloadDigest); err != nil {
-			return fmt.Errorf("obs: chain %s: %w", typ, err)
-		}
-	}
-	return nil
+	return history, nil
 }
