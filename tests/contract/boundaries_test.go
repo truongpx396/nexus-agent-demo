@@ -64,6 +64,7 @@ func init() {
 		{"the control plane port", "internal/controlplane"},
 		{"the tool pipeline", "internal/tools"},
 		{"run control", "internal/runctl"},
+		{"run-state rebuilding", "internal/runstate"},
 		{"the job queue port", "internal/queue"},
 		{"the oversight service", "internal/oversight"},
 	} {
