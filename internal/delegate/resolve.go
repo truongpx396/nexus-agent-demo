@@ -33,7 +33,7 @@ import (
 func (d *Delegations) OnChildTerminal(ctx context.Context, tenantID, childSessionID uuid.UUID) error {
 	var pending Delegation
 	var found bool
-	var child store.Session
+	var child eventlog.Session
 	err := d.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
 		pending, found, err = findPendingByChild(ctx, tx, childSessionID)
@@ -76,7 +76,7 @@ func (d *Delegations) OnChildTerminal(ctx context.Context, tenantID, childSessio
 // delegation resumes one suspended kernel run (resumeParent); a fanout
 // child instead asks internal/plan whether its whole cohort is done yet
 // (ResolveFanout).
-func (d *Delegations) finalize(ctx context.Context, tenantID uuid.UUID, pending Delegation, child store.Session) (outcome kernel.DelegationOutcomeKind, result json.RawMessage, reason string, err error) {
+func (d *Delegations) finalize(ctx context.Context, tenantID uuid.UUID, pending Delegation, child eventlog.Session) (outcome kernel.DelegationOutcomeKind, result json.RawMessage, reason string, err error) {
 	result, reason, boundExceeded, err := d.extractResult(ctx, tenantID, child, pending.ReturnSchema)
 	if err != nil {
 		return "", nil, "", fmt.Errorf("delegate: extract result for delegation %s: %w", pending.DelegationID, err)
@@ -172,7 +172,7 @@ func (d *Delegations) resumeParent(ctx context.Context, tenantID uuid.UUID, pend
 // carrying every one of them — a deliberately light check (this codebase
 // carries no JSON-Schema library), honest about what it does and does not
 // verify; a failure here is what makes boundExceeded=true.
-func (d *Delegations) extractResult(ctx context.Context, tenantID uuid.UUID, child store.Session, schema json.RawMessage) (result json.RawMessage, reason string, boundExceeded bool, err error) {
+func (d *Delegations) extractResult(ctx context.Context, tenantID uuid.UUID, child eventlog.Session, schema json.RawMessage) (result json.RawMessage, reason string, boundExceeded bool, err error) {
 	text, err := d.lastContentText(ctx, tenantID, child.SessionID)
 	if err != nil {
 		return nil, "", false, err
@@ -200,7 +200,7 @@ func (d *Delegations) extractResult(ctx context.Context, tenantID uuid.UUID, chi
 }
 
 // lastContentText decrypts the child's own final EventContent — the same
-// selective-decrypt idiom store.ReplayFullProjection already uses for a
+// selective-decrypt idiom eventlog.ReplayFullProjection already uses for a
 // terminal event's exact reason, applied here to a content event instead.
 func (d *Delegations) lastContentText(ctx context.Context, tenantID, sessionID uuid.UUID) (string, error) {
 	var history []eventlog.Event
@@ -249,8 +249,8 @@ func (d *Delegations) lastContentText(ctx context.Context, tenantID, sessionID u
 // field (that file's own doc comment explains why this can't be shared:
 // each out-of-band driver rehydrates independently, with no live
 // RunState.Seal to reuse).
-func (d *Delegations) loadRunState(ctx context.Context, tenantID, sessionID uuid.UUID) (*kernel.RunState, store.Session, error) {
-	var sess store.Session
+func (d *Delegations) loadRunState(ctx context.Context, tenantID, sessionID uuid.UUID) (*kernel.RunState, eventlog.Session, error) {
+	var sess eventlog.Session
 	var history []eventlog.Event
 	err := d.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
@@ -262,7 +262,7 @@ func (d *Delegations) loadRunState(ctx context.Context, tenantID, sessionID uuid
 		return err
 	})
 	if err != nil {
-		return nil, store.Session{}, err
+		return nil, eventlog.Session{}, err
 	}
 
 	dekCache := map[string]crypto.DEK{}
@@ -287,7 +287,7 @@ func (d *Delegations) loadRunState(ctx context.Context, tenantID, sessionID uuid
 
 	transcript, toolUseIDs, err := kernel.Rehydrate(ctx, history, decrypt)
 	if err != nil {
-		return nil, store.Session{}, err
+		return nil, eventlog.Session{}, err
 	}
 
 	// Restore this session's Rule-of-Two taint state before
@@ -299,7 +299,7 @@ func (d *Delegations) loadRunState(ctx context.Context, tenantID, sessionID uuid
 	// used by TaintStateFor/FoldTaint above) rather than going through the
 	// interface indirection those two need.
 	if engaged, terr := kernel.RehydrateTaint(ctx, history, decrypt); terr != nil {
-		return nil, store.Session{}, terr
+		return nil, eventlog.Session{}, terr
 	} else if d.cfg.Pipeline != nil {
 		d.cfg.Pipeline.SeedTaint(sessionID, sess.AutonomyLevel, engaged)
 	}
@@ -312,7 +312,7 @@ func (d *Delegations) loadRunState(ctx context.Context, tenantID, sessionID uuid
 		}
 	}
 	if keyID == "" {
-		return nil, store.Session{}, fmt.Errorf("delegate: session %s has no active key in its history", sessionID)
+		return nil, eventlog.Session{}, fmt.Errorf("delegate: session %s has no active key in its history", sessionID)
 	}
 	var dek crypto.DEK
 	if err := d.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
@@ -320,7 +320,7 @@ func (d *Delegations) loadRunState(ctx context.Context, tenantID, sessionID uuid
 		dek, uerr = d.Keys.Unwrap(ctx, tx, keyID)
 		return uerr
 	}); err != nil {
-		return nil, store.Session{}, err
+		return nil, eventlog.Session{}, err
 	}
 
 	return &kernel.RunState{TenantID: tenantID, SessionID: sessionID, Seal: sealFuncFor(dek, tenantID, sessionID), History: history, Transcript: transcript, ToolUseIDs: toolUseIDs}, sess, nil

@@ -16,12 +16,12 @@ import (
 // synthetic results Hygiene would backfill (structural, no decrypt), the
 // Projection ReplayProjection derives from that same structural pass, and
 // how many stored events needed an upcast to reach the current schema
-// version — proof the path in store.Upcast is actually exercised against
+// version — proof the path in eventlog.Upcast is actually exercised against
 // this session's real history, not merely present in the registry.
 type ReplayResult struct {
 	History          []eventlog.Event
 	Synthetic        []kernel.SyntheticResult
-	Projection       store.Projection
+	Projection       eventlog.Projection
 	UpcastedPayloads int
 }
 
@@ -30,7 +30,7 @@ type ReplayResult struct {
 // Hygiene + ReplayProjection say the session's structural shape and status
 // are (never decrypting anything for that half), and does every stored
 // event's payload still upcast cleanly to the CURRENT schema version (which
-// DOES need one decrypt per event, since store.Upcast's registered
+// DOES need one decrypt per event, since eventlog.Upcast's registered
 // transforms operate on plaintext JSON shapes, never ciphertext — the same
 // selective-decrypt layering ReplayFullProjection and kernel.Rehydrate
 // already use elsewhere in this codebase).
@@ -45,7 +45,7 @@ func (c *Control) Replay(ctx context.Context, tenantID, sessionID uuid.UUID) (Re
 	}
 
 	kept, synth := kernel.Hygiene(history)
-	projection := store.ReplayProjection(kept)
+	projection := eventlog.ReplayProjection(kept)
 
 	decrypt := c.decryptFuncFor(tenantID, sessionID)
 	upcasted := 0
@@ -54,7 +54,7 @@ func (c *Control) Replay(ctx context.Context, tenantID, sessionID uuid.UUID) (Re
 		if err != nil {
 			return ReplayResult{}, fmt.Errorf("runctl: replay: decrypt event %s for upcast verification: %w", e.EventID, err)
 		}
-		_, newVersion, err := store.Upcast(e.Type, e.SchemaVersion, plaintext)
+		_, newVersion, err := eventlog.Upcast(e.Type, e.SchemaVersion, plaintext)
 		if err != nil {
 			return ReplayResult{}, fmt.Errorf("runctl: replay: verify upcast for event %s (%s): %w", e.EventID, e.Type, err)
 		}

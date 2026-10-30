@@ -98,7 +98,7 @@ func TestStore_GetSessionByKey_ReturnsMostRecentWhenKeyIsShared(t *testing.T) {
 	newer := uuid.New()
 	err := st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		for _, id := range []uuid.UUID{older, newer} {
-			if err := store.CreateSession(ctx, tx, store.Session{
+			if err := store.CreateSession(ctx, tx, eventlog.Session{
 				SessionID: id, SessionKey: sharedKey, TenantID: tenantID,
 				SurfaceID: "telegram", UserID: uuid.New(), AgentVersion: 1,
 				HarnessDigest: []byte("test-digest"), DataLabel: "internal", RouteModelID: "test-model",
@@ -122,7 +122,7 @@ func TestStore_GetSessionByKey_ReturnsMostRecentWhenKeyIsShared(t *testing.T) {
 		t.Fatalf("create sessions: %v", err)
 	}
 
-	var got store.Session
+	var got eventlog.Session
 	var found bool
 	err = st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var derr error
@@ -337,7 +337,7 @@ func TestRunCtl_ResumeConversation_RefusesWhenNotAwaitingInput(t *testing.T) {
 		if derr != nil {
 			return derr
 		}
-		return store.CreateSession(ctx, tx, store.Session{
+		return store.CreateSession(ctx, tx, eventlog.Session{
 			SessionID: sessionID, SessionKey: sessionID.String(), TenantID: tenantID,
 			SurfaceID: "test", UserID: userID, AgentVersion: 1,
 			HarnessDigest: []byte("test-digest"), DataLabel: "internal", RouteModelID: "test-model",
@@ -417,7 +417,7 @@ func TestRunCtl_ResumeConversation_Succeeds(t *testing.T) {
 		if derr != nil {
 			return derr
 		}
-		return store.CreateSession(ctx, tx, store.Session{
+		return store.CreateSession(ctx, tx, eventlog.Session{
 			SessionID: sessionID, SessionKey: sessionID.String(), TenantID: tenantID,
 			SurfaceID: "test", UserID: userID, AgentVersion: 1,
 			HarnessDigest: []byte("test-digest"), DataLabel: "internal", RouteModelID: "test-model",
@@ -531,7 +531,7 @@ func TestRunCtl_EndIdleConversation(t *testing.T) {
 		if derr != nil {
 			return derr
 		}
-		return store.CreateSession(ctx, tx, store.Session{
+		return store.CreateSession(ctx, tx, eventlog.Session{
 			SessionID: sessionID, SessionKey: sessionID.String(), TenantID: tenantID,
 			SurfaceID: "test", UserID: userID, AgentVersion: 1,
 			HarnessDigest: []byte("test-digest"), DataLabel: "internal", RouteModelID: "test-model",

@@ -362,7 +362,7 @@ func TestCreateTeam_DeniesNestedTeamCreation(t *testing.T) {
 	// A session already at teams.MaxDepth (1) — the same depth a team
 	// member itself would be created at.
 	if err := r.st.InTenantTx(context.Background(), r.tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		return store.CreateSession(ctx, tx, store.Session{
+		return store.CreateSession(ctx, tx, eventlog.Session{
 			SessionID: memberID, SessionKey: memberID.String(), TenantID: r.tenantID,
 			SurfaceID: "test", UserID: userID, AgentID: uuid.Nil, AgentVersion: 1,
 			HarnessDigest: []byte("test"), DataLabel: "internal", RouteModelID: "fake",

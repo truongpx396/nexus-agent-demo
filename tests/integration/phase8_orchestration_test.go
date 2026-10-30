@@ -104,7 +104,7 @@ func TestPlan_ZeroTokenRouting(t *testing.T) {
 	sessionID, userID := uuid.New(), uuid.New()
 	err = r.st.InTenantTx(context.Background(), r.tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		version := created.Version
-		return store.CreateSession(ctx, tx, store.Session{
+		return store.CreateSession(ctx, tx, eventlog.Session{
 			SessionID: sessionID, SessionKey: sessionID.String(), TenantID: r.tenantID,
 			SurfaceID: "test", UserID: userID, AgentID: uuid.Nil, AgentVersion: 1,
 			HarnessDigest: []byte("test"), DataLabel: "internal", RouteModelID: "fake",
@@ -224,7 +224,7 @@ func contentScript(text string) fake.Script {
 // waitForStatus polls sessionID's status (a real background goroutine drives
 // the child and the parent's resume, so the test can't just synchronously
 // drain a channel the way runToCompletion does for a foreground run).
-func waitForStatus(t *testing.T, r *oversightRig, sessionID uuid.UUID, want string) store.Session {
+func waitForStatus(t *testing.T, r *oversightRig, sessionID uuid.UUID, want string) eventlog.Session {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
@@ -235,7 +235,7 @@ func waitForStatus(t *testing.T, r *oversightRig, sessionID uuid.UUID, want stri
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("session %s did not reach status %q within the deadline (last status %q)", sessionID, want, r.getSession(t, sessionID).Status)
-	return store.Session{}
+	return eventlog.Session{}
 }
 
 // TestDelegate_RoundTrip is the demo's own core case: an ordinary tool_use
@@ -371,7 +371,7 @@ func mustMarshal(t *testing.T, v any) json.RawMessage {
 func mustCreateChildSession(t *testing.T, r *oversightRig, childID, parentID uuid.UUID, depth int) {
 	t.Helper()
 	err := r.st.InTenantTx(context.Background(), r.tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		return store.CreateSession(ctx, tx, store.Session{
+		return store.CreateSession(ctx, tx, eventlog.Session{
 			SessionID: childID, SessionKey: childID.String(), TenantID: r.tenantID,
 			SurfaceID: "test", UserID: uuid.New(), AgentID: uuid.Nil, AgentVersion: 1,
 			HarnessDigest: []byte("test"), DataLabel: "internal", RouteModelID: "fake",

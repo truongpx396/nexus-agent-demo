@@ -133,7 +133,7 @@ func TestRuleOfTwo_TaintStateSurvivesASimulatedProcessRestart(t *testing.T) {
 		if derr != nil {
 			return derr
 		}
-		return store.CreateSession(ctx, tx, store.Session{
+		return store.CreateSession(ctx, tx, eventlog.Session{
 			SessionID: sessionID, SessionKey: sessionID.String(), TenantID: tenantID,
 			SurfaceID: "test", UserID: userID, AgentVersion: 1,
 			HarnessDigest: []byte("test-digest"), DataLabel: "internal", RouteModelID: "test-model",

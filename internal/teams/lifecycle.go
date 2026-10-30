@@ -54,7 +54,7 @@ func (s *Service) CreateTeam(ctx context.Context, req CreateTeamRequest) (uuid.U
 		return uuid.Nil, fmt.Errorf("teams: roster must name at least one member")
 	}
 
-	var creator store.Session
+	var creator eventlog.Session
 	teamID := uuid.New()
 	var envelopeID uuid.UUID
 	err := s.Store.InTenantTx(ctx, req.TenantID, func(ctx context.Context, tx pgx.Tx) error {
@@ -123,7 +123,7 @@ func (s *Service) CreateTeam(ctx context.Context, req CreateTeamRequest) (uuid.U
 // Receipts/OnSuspend/...) stays identical, the same purely-budget-routing
 // clone internal/delegate.Delegations.Spawn already performs for a
 // delegate_fanout child.
-func (s *Service) spawnMember(ctx context.Context, tenantID, teamID, envelopeID uuid.UUID, creator store.Session, member MemberSpec) error {
+func (s *Service) spawnMember(ctx context.Context, tenantID, teamID, envelopeID uuid.UUID, creator eventlog.Session, member MemberSpec) error {
 	memberID := uuid.New()
 	var dek crypto.DEK
 	err := s.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
@@ -133,7 +133,7 @@ func (s *Service) spawnMember(ctx context.Context, tenantID, teamID, envelopeID 
 			return err
 		}
 		tid := teamID
-		return store.CreateSession(ctx, tx, store.Session{
+		return store.CreateSession(ctx, tx, eventlog.Session{
 			SessionID: memberID, SessionKey: memberID.String(), TenantID: tenantID,
 			SurfaceID: "team", UserID: creator.UserID, AgentID: uuid.Nil, AgentVersion: 1,
 			HarnessDigest: creator.HarnessDigest, DataLabel: creator.DataLabel,
@@ -195,7 +195,7 @@ func sealFuncFor(dek crypto.DEK, tenantID, sessionID uuid.UUID) kernel.SealFunc 
 // majority) and for a team member that hasn't reached a terminal status yet
 // (a later call site will find it).
 func (s *Service) OnMemberTerminal(ctx context.Context, tenantID, memberSessionID uuid.UUID) error {
-	var member store.Session
+	var member eventlog.Session
 	err := s.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
 		member, err = store.GetSession(ctx, tx, memberSessionID)

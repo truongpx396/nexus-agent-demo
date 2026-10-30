@@ -12,90 +12,10 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 )
 
-// Session is the subset of the sessions table (migration 0002) Phase 2
-// reads and writes. Columns this phase never touches (fork_*, plan_*,
-// delegation_role, priority, region, ...) keep their schema defaults —
-// they're seams for the phases that own them, not dead weight to model here.
-//
-// Status and TerminalReason are marked PROJECTION in the schema comment, but
-// Phase 2 writes them directly (UpdateSessionStatus, in the same transaction
-// as the EventTerminal append that changes them) rather than deriving them
-// by replaying the log on every read: the log is still the only source of
-// truth (an event log replay from empty events would be undefined, not
-// stale), but replay-on-read would need to decrypt every event's Payload
-// just to answer "is this run done yet" — these two columns exist in the
-// schema precisely so that question doesn't require a decrypt. Never written
-// independently of the event that justifies the change is what keeps this
-// from becoming a second source of truth.
-type Session struct {
-	SessionID      uuid.UUID
-	SessionKey     string
-	TenantID       uuid.UUID
-	SurfaceID      string
-	UserID         uuid.UUID
-	AgentID        uuid.UUID
-	AgentVersion   int
-	HarnessDigest  []byte
-	DataLabel      string
-	RouteModelID   string
-	RouteReason    map[string]string
-	AutonomyLevel  string
-	RootSessionID  uuid.UUID
-	Depth          int
-	DelegationRole string
-	Status         string
-	TerminalReason *string
-
-	// PlanID/PlanVersion pin which orchestration_plans row (README §8,
-	// Phase 8) this session's own event log is a run of — nil/nil for every
-	// ordinary, non-plan-driven session. Pinned at session creation, exactly
-	// like HarnessDigest, so a later plan edit can never retroactively
-	// change what an in-flight run is executing (internal/plan/lifecycle.go
-	// task 8.4's "in-flight runs finish on their version").
-	PlanID      *uuid.UUID
-	PlanVersion *int
-
-	// ForkedFromSessionID/ForkSeq/ForkOverrides are the fork lineage columns
-	// migrations/0002_sessions.sql seamed in at Phase 1, populated
-	// meaningfully starting Phase 6 (README task 6.11,
-	// internal/runctl.Fork). Nil/zero for every non-forked session — which
-	// is every session before this phase.
-	ForkedFromSessionID *uuid.UUID
-	ForkSeq             *int64
-	ForkOverrides       map[string]string
-
-	// TeamID is the peer-team seam (README §9, Phase 9): nil for every
-	// non-team session (every session before this phase, and every root/
-	// delegation session after it). Set once at creation for a
-	// delegation_role="team_member" session and never updated afterward —
-	// the roster is fixed at team creation (internal/teams task 9.1).
-	TeamID *uuid.UUID
-
-	// CreatedAt is read-only (the column's own DEFAULT now() -- CreateSession
-	// never sets it). Added for ListSessionsForUser's own sort/display need;
-	// GetSession fills it too since it's cheap to select alongside every
-	// other column already read there.
-	CreatedAt time.Time
-
-	// Conversational opts this session into kernel.RunConfig.Conversational
-	// pause-not-terminate semantics (migrations/0023_conversational_
-	// sessions.sql) -- pinned at creation, exactly like AutonomyLevel, and
-	// read back on every internal/runctl.Control.ResumeConversation call to
-	// rebuild RunConfig. False for every session before this migration.
-	Conversational bool
-
-	// UpdatedAt is written by UpdateSessionStatus on every status
-	// transition -- the idle-conversation sweep's own signal
-	// (cmd/nexusd/background.go) for how long a session has sat in
-	// SessionStatusAwaitingInput with nobody answering. Read-only here
-	// (CreateSession never sets it; the column's own DEFAULT now() does).
-	UpdatedAt time.Time
-}
-
 // CreateSession inserts a new session row. Must run inside a tenant-scoped
 // transaction (store.Store.InTenantTx) like every other write in this
 // package.
-func CreateSession(ctx context.Context, tx pgx.Tx, s Session) error {
+func CreateSession(ctx context.Context, tx pgx.Tx, s eventlog.Session) error {
 	reason, err := json.Marshal(s.RouteReason)
 	if err != nil {
 		return fmt.Errorf("marshal route_reason: %w", err)
@@ -146,8 +66,8 @@ var ErrSessionNotFound = errors.New("session not found")
 
 // GetSession loads one session row, RLS-scoped like every read in this
 // package.
-func GetSession(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) (Session, error) {
-	var s Session
+func GetSession(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) (eventlog.Session, error) {
+	var s eventlog.Session
 	var reason, overrides []byte
 	err := tx.QueryRow(ctx, `
 		SELECT session_id, session_key, tenant_id, surface_id, user_id,
@@ -169,18 +89,18 @@ func GetSession(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) (Session, e
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			return Session{}, fmt.Errorf("session %s (wrong tenant scope, or it does not exist): %w", sessionID, ErrSessionNotFound)
+			return eventlog.Session{}, fmt.Errorf("session %s (wrong tenant scope, or it does not exist): %w", sessionID, ErrSessionNotFound)
 		}
-		return Session{}, fmt.Errorf("get session %s: %w", sessionID, err)
+		return eventlog.Session{}, fmt.Errorf("get session %s: %w", sessionID, err)
 	}
 	if len(reason) > 0 {
 		if err := json.Unmarshal(reason, &s.RouteReason); err != nil {
-			return Session{}, fmt.Errorf("unmarshal route_reason: %w", err)
+			return eventlog.Session{}, fmt.Errorf("unmarshal route_reason: %w", err)
 		}
 	}
 	if len(overrides) > 0 {
 		if err := json.Unmarshal(overrides, &s.ForkOverrides); err != nil {
-			return Session{}, fmt.Errorf("unmarshal fork_overrides: %w", err)
+			return eventlog.Session{}, fmt.Errorf("unmarshal fork_overrides: %w", err)
 		}
 	}
 	return s, nil
@@ -196,8 +116,8 @@ func GetSession(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) (Session, e
 // ever a caller's concern. ok=false (not an error) is the ordinary "no
 // session for this peer yet" case, mirroring ChannelPort.WebhookSecret's
 // own (string, bool, error) convention in those same packages.
-func GetSessionByKey(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, sessionKey string) (Session, bool, error) {
-	var s Session
+func GetSessionByKey(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, sessionKey string) (eventlog.Session, bool, error) {
+	var s eventlog.Session
 	var reason, overrides []byte
 	err := tx.QueryRow(ctx, `
 		SELECT session_id, session_key, tenant_id, surface_id, user_id,
@@ -220,18 +140,18 @@ func GetSessionByKey(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, session
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			return Session{}, false, nil
+			return eventlog.Session{}, false, nil
 		}
-		return Session{}, false, fmt.Errorf("get session by key %q: %w", sessionKey, err)
+		return eventlog.Session{}, false, fmt.Errorf("get session by key %q: %w", sessionKey, err)
 	}
 	if len(reason) > 0 {
 		if err := json.Unmarshal(reason, &s.RouteReason); err != nil {
-			return Session{}, false, fmt.Errorf("unmarshal route_reason: %w", err)
+			return eventlog.Session{}, false, fmt.Errorf("unmarshal route_reason: %w", err)
 		}
 	}
 	if len(overrides) > 0 {
 		if err := json.Unmarshal(overrides, &s.ForkOverrides); err != nil {
-			return Session{}, false, fmt.Errorf("unmarshal fork_overrides: %w", err)
+			return eventlog.Session{}, false, fmt.Errorf("unmarshal fork_overrides: %w", err)
 		}
 	}
 	return s, true, nil
@@ -243,7 +163,7 @@ func GetSessionByKey(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, session
 // newest first. RLS-scoped like every read in this package. Used by the web
 // UI's session sidebar (internal/surfaces/rest's GET /v1/sessions) -- there
 // is otherwise no "list runs" capability, only GetSession's lookup-by-id.
-func ListSessionsForUser(ctx context.Context, tx pgx.Tx, userID uuid.UUID, limit int) ([]Session, error) {
+func ListSessionsForUser(ctx context.Context, tx pgx.Tx, userID uuid.UUID, limit int) ([]eventlog.Session, error) {
 	rows, err := tx.Query(ctx, `
 		SELECT session_id, session_key, tenant_id, surface_id, user_id,
 		       agent_id, agent_version, harness_digest,
@@ -262,9 +182,9 @@ func ListSessionsForUser(ctx context.Context, tx pgx.Tx, userID uuid.UUID, limit
 	}
 	defer rows.Close()
 
-	var out []Session
+	var out []eventlog.Session
 	for rows.Next() {
-		var s Session
+		var s eventlog.Session
 		var reason, overrides []byte
 		if err := rows.Scan(
 			&s.SessionID, &s.SessionKey, &s.TenantID, &s.SurfaceID, &s.UserID,

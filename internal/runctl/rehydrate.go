@@ -21,8 +21,8 @@ import (
 // live kernel.Run call, with no RunState.Seal closure already in hand to
 // reuse) — duplicated rather than shared for the same reason
 // internal/runctl/append.go's activeKeyID/appendEvent already are.
-func (c *Control) loadRunState(ctx context.Context, tenantID, sessionID uuid.UUID) (*kernel.RunState, store.Session, error) {
-	var sess store.Session
+func (c *Control) loadRunState(ctx context.Context, tenantID, sessionID uuid.UUID) (*kernel.RunState, eventlog.Session, error) {
+	var sess eventlog.Session
 	var history []eventlog.Event
 	err := c.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
@@ -34,14 +34,14 @@ func (c *Control) loadRunState(ctx context.Context, tenantID, sessionID uuid.UUI
 		return err
 	})
 	if err != nil {
-		return nil, store.Session{}, err
+		return nil, eventlog.Session{}, err
 	}
 
 	decrypt := c.decryptFuncFor(tenantID, sessionID)
 
 	transcript, toolUseIDs, err := kernel.Rehydrate(ctx, history, decrypt)
 	if err != nil {
-		return nil, store.Session{}, err
+		return nil, eventlog.Session{}, err
 	}
 
 	// Restore this session's Rule-of-Two taint state before anything else
@@ -49,14 +49,14 @@ func (c *Control) loadRunState(ctx context.Context, tenantID, sessionID uuid.UUI
 	// dispatch its next tool call — kernel.TaintSeeder's own doc comment on
 	// why this can't just happen lazily inside the tool executor itself.
 	if engaged, terr := kernel.RehydrateTaint(ctx, history, decrypt); terr != nil {
-		return nil, store.Session{}, terr
+		return nil, eventlog.Session{}, terr
 	} else if seeder, ok := c.Kernel.Tools.(kernel.TaintSeeder); ok {
 		seeder.SeedTaint(sessionID, sess.AutonomyLevel, engaged)
 	}
 
 	keyID, err := currentActiveKeyID(history)
 	if err != nil {
-		return nil, store.Session{}, err
+		return nil, eventlog.Session{}, err
 	}
 	var dek crypto.DEK
 	if err := c.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
@@ -64,7 +64,7 @@ func (c *Control) loadRunState(ctx context.Context, tenantID, sessionID uuid.UUI
 		dek, uerr = c.Keys.Unwrap(ctx, tx, keyID)
 		return uerr
 	}); err != nil {
-		return nil, store.Session{}, err
+		return nil, eventlog.Session{}, err
 	}
 
 	seal := func(plaintext []byte) (sealed, digest []byte, kid string, err error) {

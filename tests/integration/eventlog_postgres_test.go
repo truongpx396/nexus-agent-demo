@@ -37,7 +37,7 @@ func TestPostgresEventLog_SatisfiesTheEventLogContract(t *testing.T) {
 			t.Helper()
 			sessionID := uuid.New()
 			err := st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-				return store.CreateSession(ctx, tx, store.Session{
+				return store.CreateSession(ctx, tx, eventlog.Session{
 					SessionID: sessionID, SessionKey: sessionID.String(), TenantID: tenantID,
 					SurfaceID: "test", UserID: uuid.New(), AgentVersion: 1,
 					HarnessDigest: []byte("test-digest"), DataLabel: "internal", RouteModelID: "fake",
@@ -64,7 +64,7 @@ func TestPostgresEventLog_SatisfiesTheEventLogContract(t *testing.T) {
 		},
 		Status: func(t *testing.T, tenantID, sessionID uuid.UUID) (string, *string) {
 			t.Helper()
-			var sess store.Session
+			var sess eventlog.Session
 			err := st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 				var gerr error
 				sess, gerr = store.GetSession(ctx, tx, sessionID)
@@ -94,7 +94,7 @@ func TestPostgresEventLog_ReceiptFailureRollsBackTheEvent(t *testing.T) {
 		t.Fatalf("insert tenant: %v", err)
 	}
 	if err := st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		return store.CreateSession(ctx, tx, store.Session{
+		return store.CreateSession(ctx, tx, eventlog.Session{
 			SessionID: sessionID, SessionKey: sessionID.String(), TenantID: tenantID,
 			SurfaceID: "test", UserID: uuid.New(), AgentVersion: 1,
 			HarnessDigest: []byte("d"), DataLabel: "internal", RouteModelID: "fake", AutonomyLevel: "supervised",

@@ -191,7 +191,7 @@ func gateResultVar(s Step) string {
 // approval id; each entry point trusts its caller to have driven the RIGHT
 // one already.
 func (e *Executor) load(ctx context.Context, tenantID, sessionID uuid.UUID) (Plan, state, error) {
-	var sess store.Session
+	var sess eventlog.Session
 	var history []eventlog.Event
 	if err := e.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var err error

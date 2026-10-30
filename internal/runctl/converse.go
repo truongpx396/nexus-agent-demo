@@ -13,7 +13,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
 
-// ResumeConversation continues a conversational session (store.Session.
+// ResumeConversation continues a conversational session (eventlog.Session.
 // Conversational, migrations/0023_conversational_sessions.sql) that
 // kernel.Kernel.suspendForUserInput paused in eventlog.SessionStatusAwaitingInput
 // — the human's next message. It now mirrors Steer's own shape exactly

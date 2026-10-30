@@ -10,6 +10,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
@@ -110,7 +111,7 @@ func (d *Delegations) Spawn(ctx context.Context, req SpawnRequest) (uuid.UUID, e
 		return uuid.Nil, fmt.Errorf("delegate: Spawn called before Wire")
 	}
 
-	var parent store.Session
+	var parent eventlog.Session
 	var childID = uuid.New()
 	var dek crypto.DEK
 	err := d.Store.InTenantTx(ctx, req.TenantID, func(ctx context.Context, tx pgx.Tx) error {
@@ -123,7 +124,7 @@ func (d *Delegations) Spawn(ctx context.Context, req SpawnRequest) (uuid.UUID, e
 		if err != nil {
 			return err
 		}
-		if err := store.CreateSession(ctx, tx, store.Session{
+		if err := store.CreateSession(ctx, tx, eventlog.Session{
 			SessionID:      childID,
 			SessionKey:     childID.String(),
 			TenantID:       req.TenantID,

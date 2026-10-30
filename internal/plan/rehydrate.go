@@ -18,8 +18,8 @@ import (
 // internal/delegate.Delegations.loadRunState field-for-field — the same
 // out-of-band rehydration idiom, reimplemented here for the same reason
 // each of those gives: no live RunState.Seal to reuse.
-func (e *Executor) loadRunState(ctx context.Context, tenantID, sessionID uuid.UUID) (*kernel.RunState, store.Session, error) {
-	var sess store.Session
+func (e *Executor) loadRunState(ctx context.Context, tenantID, sessionID uuid.UUID) (*kernel.RunState, eventlog.Session, error) {
+	var sess eventlog.Session
 	var history []eventlog.Event
 	if err := e.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
@@ -30,13 +30,13 @@ func (e *Executor) loadRunState(ctx context.Context, tenantID, sessionID uuid.UU
 		history, err = store.ListEvents(ctx, tx, sessionID)
 		return err
 	}); err != nil {
-		return nil, store.Session{}, err
+		return nil, eventlog.Session{}, err
 	}
 
 	decrypt := e.decryptWith(tenantID, sessionID)
 	transcript, toolUseIDs, err := kernel.Rehydrate(ctx, history, decrypt)
 	if err != nil {
-		return nil, store.Session{}, err
+		return nil, eventlog.Session{}, err
 	}
 
 	var keyID string
@@ -47,7 +47,7 @@ func (e *Executor) loadRunState(ctx context.Context, tenantID, sessionID uuid.UU
 		}
 	}
 	if keyID == "" {
-		return nil, store.Session{}, fmt.Errorf("plan: session %s has no active key in its history", sessionID)
+		return nil, eventlog.Session{}, fmt.Errorf("plan: session %s has no active key in its history", sessionID)
 	}
 	var dek crypto.DEK
 	if err := e.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
@@ -55,7 +55,7 @@ func (e *Executor) loadRunState(ctx context.Context, tenantID, sessionID uuid.UU
 		dek, uerr = e.Keys.Unwrap(ctx, tx, keyID)
 		return uerr
 	}); err != nil {
-		return nil, store.Session{}, err
+		return nil, eventlog.Session{}, err
 	}
 
 	seal := func(plaintext []byte) (sealed, digest []byte, kid string, err error) {
@@ -71,7 +71,7 @@ func (e *Executor) loadRunState(ctx context.Context, tenantID, sessionID uuid.UU
 
 // lastContentText decrypts the session's own final EventContent — an
 // agent step's own return value, the same selective-decrypt idiom
-// store.ReplayFullProjection already uses for a terminal event's exact
+// eventlog.ReplayFullProjection already uses for a terminal event's exact
 // reason.
 func (e *Executor) lastContentText(ctx context.Context, tenantID, sessionID uuid.UUID) (string, error) {
 	var history []eventlog.Event

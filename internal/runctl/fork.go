@@ -64,7 +64,7 @@ type ForkResult struct {
 // text a caller needs to seed a fresh kernel.RunState.Transcript for the new
 // session's own first turn.
 func (c *Control) Fork(ctx context.Context, tenantID, parentSessionID uuid.UUID, atSeq int64, overrides ForkOverrides) (ForkResult, error) {
-	var parentSess store.Session
+	var parentSess eventlog.Session
 	var history []eventlog.Event
 	if err := c.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
@@ -121,7 +121,7 @@ func (c *Control) Fork(ctx context.Context, tenantID, parentSessionID uuid.UUID,
 			return err
 		}
 		_ = dek // the new session's DEK is minted so its own events can be sealed once a caller starts running it; Fork itself appends nothing to the child's log
-		return store.CreateSession(ctx, tx, store.Session{
+		return store.CreateSession(ctx, tx, eventlog.Session{
 			SessionID: newSessionID, SessionKey: newSessionID.String(), TenantID: tenantID,
 			SurfaceID: parentSess.SurfaceID, UserID: parentSess.UserID,
 			AgentID: parentSess.AgentID, AgentVersion: parentSess.AgentVersion,

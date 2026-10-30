@@ -65,7 +65,7 @@ func TestRunCtl_ResumeConversation_ConcurrentCallersResumeExactlyOnce(t *testing
 		if err != nil {
 			return err
 		}
-		if err := store.CreateSession(ctx, tx, store.Session{
+		if err := store.CreateSession(ctx, tx, eventlog.Session{
 			SessionID: sessionID, SessionKey: sessionID.String(), TenantID: tenantID,
 			SurfaceID: "test", UserID: uuid.New(), AgentVersion: 1,
 			HarnessDigest: []byte("test-digest"), DataLabel: "internal", RouteModelID: "test-model",

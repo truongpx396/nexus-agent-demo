@@ -181,7 +181,7 @@ func (r *phase6Rig) seal(t *testing.T, sessionID uuid.UUID) (kernel.SealFunc, cr
 func (r *phase6Rig) createSession(t *testing.T, sessionID, userID uuid.UUID, autonomy string) {
 	t.Helper()
 	err := r.st.InTenantTx(context.Background(), r.tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		return store.CreateSession(ctx, tx, store.Session{
+		return store.CreateSession(ctx, tx, eventlog.Session{
 			SessionID: sessionID, SessionKey: sessionID.String(), TenantID: r.tenantID,
 			SurfaceID: "test", UserID: userID, AgentID: uuid.Nil, AgentVersion: 1,
 			HarnessDigest: []byte("test-digest"), DataLabel: "internal", RouteModelID: "fake",
@@ -193,9 +193,9 @@ func (r *phase6Rig) createSession(t *testing.T, sessionID, userID uuid.UUID, aut
 	}
 }
 
-func (r *phase6Rig) getSession(t *testing.T, sessionID uuid.UUID) store.Session {
+func (r *phase6Rig) getSession(t *testing.T, sessionID uuid.UUID) eventlog.Session {
 	t.Helper()
-	var sess store.Session
+	var sess eventlog.Session
 	err := r.st.InTenantTx(context.Background(), r.tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
 		sess, err = store.GetSession(ctx, tx, sessionID)
@@ -585,7 +585,7 @@ func TestSnapshot_DeletingAllSnapshotsChangesNothingButHydrationTime(t *testing.
 	}
 
 	// The from-scratch answer, computed once, before any snapshot exists.
-	var beforeAny store.Projection
+	var beforeAny eventlog.Projection
 	if err := rig.st.InTenantTx(ctx, rig.tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
 		beforeAny, err = store.LoadProjection(ctx, tx, sessionID)
@@ -602,7 +602,7 @@ func TestSnapshot_DeletingAllSnapshotsChangesNothingButHydrationTime(t *testing.
 	}); err != nil {
 		t.Fatalf("SaveSnapshot: %v", err)
 	}
-	var withSnapshot store.Projection
+	var withSnapshot eventlog.Projection
 	if err := rig.st.InTenantTx(ctx, rig.tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
 		withSnapshot, err = store.LoadProjection(ctx, tx, sessionID)
@@ -621,7 +621,7 @@ func TestSnapshot_DeletingAllSnapshotsChangesNothingButHydrationTime(t *testing.
 	}); err != nil {
 		t.Fatalf("DeleteAllSnapshots: %v", err)
 	}
-	var afterDelete store.Projection
+	var afterDelete eventlog.Projection
 	if err := rig.st.InTenantTx(ctx, rig.tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
 		afterDelete, err = store.LoadProjection(ctx, tx, sessionID)
