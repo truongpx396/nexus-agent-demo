@@ -140,6 +140,21 @@ var rules = []boundaryRule{
 		direct: true,
 	},
 	{
+		// The primitives every surface shares (the delivery outbox, inbound
+		// dedup) state their policy over ports; their Postgres adapters are
+		// internal/surfaces/postgres. Transitive, unlike the per-surface rules
+		// below, because nothing it imports reaches a driver.
+		name: "the shared surfaces package must not reach the database, the key store or the cache",
+		pkg:  modulePrefix + "internal/surfaces",
+		forbidden: []string{
+			modulePrefix + "internal/store",
+			modulePrefix + "internal/crypto",
+			modulePrefix + "internal/audit",
+			"github.com/jackc/pgx",
+			"github.com/redis",
+		},
+	},
+	{
 		name: "the telegram surface must not itself import internal/store, internal/crypto or a database/cache driver",
 		pkg:  modulePrefix + "internal/surfaces/telegram",
 		forbidden: []string{
