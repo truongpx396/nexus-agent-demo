@@ -66,6 +66,7 @@ func init() {
 		{"run control", "internal/runctl"},
 		{"run-state rebuilding", "internal/runstate"},
 		{"the delegation service", "internal/delegate"},
+		{"the teams service", "internal/teams"},
 		{"the job queue port", "internal/queue"},
 		{"the oversight service", "internal/oversight"},
 	} {

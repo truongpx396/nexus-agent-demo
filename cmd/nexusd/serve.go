@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"time"
 
+	teamspg "github.com/truongpx396/nexus-agent-demo/internal/teams/postgres"
+
 	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
 	delegatepg "github.com/truongpx396/nexus-agent-demo/internal/delegate/postgres"
 
@@ -197,7 +199,7 @@ func serve(ctx context.Context) error {
 	gate := newCostGate(st, redisClient)
 
 	delegations := delegate.NewDelegations(delegatepg.New(st, keyStore, chain))
-	teamsSvc := teams.NewService(st, keyStore, chain)
+	teamsSvc := teams.NewService(teamspg.New(st, keyStore, chain))
 	pipeline, catalog, catalogManifestDigest, admittedSkillBundles, mcpPort := newToolPipeline(st, keyStore, chain, delegations, teamsSvc, vault, gate)
 	loadedTools := make([]string, len(catalog))
 	for i, c := range catalog {
@@ -264,6 +266,7 @@ func serve(ctx context.Context) error {
 	// endTeam reaps a still-active member the same way runctl.Control.Cancel
 	// already reaps anything else (README task 9.9, reusing 8.14).
 	teamsSvc.Wire(teams.Config{
+		Prices: costpg.New(st),
 		Kernel: k, Pipeline: pipeline, Canceler: ctl,
 		System: starter.system, Catalog: catalog, LoadedTools: loadedTools, MaxTurns: starter.maxTurns,
 	})

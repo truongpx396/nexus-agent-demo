@@ -1,11 +1,9 @@
-package teams
+package postgres
 
 import (
 	"testing"
 
-	"github.com/google/uuid"
-
-	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent-demo/internal/teams"
 )
 
 // TestMarshalUnmarshalRoster and TestMarshalUnmarshalTaint are README task
@@ -15,7 +13,7 @@ import (
 // pairs perform is exactly what a board_cards/teams row's roster/taint_state
 // columns depend on.
 func TestMarshalUnmarshalRoster(t *testing.T) {
-	roster := []MemberSpec{{AgentID: "agent-1", Task: "research"}, {AgentID: "agent-2", Task: "write"}}
+	roster := []teams.MemberSpec{{AgentID: "agent-1", Task: "research"}, {AgentID: "agent-2", Task: "write"}}
 	b, err := marshalRoster(roster)
 	if err != nil {
 		t.Fatalf("marshalRoster: %v", err)
@@ -67,36 +65,5 @@ func TestUnmarshalTaint_EmptyIsZeroValueNotError(t *testing.T) {
 	}
 	if got != ([3]bool{}) {
 		t.Errorf("unmarshalTaint(nil) = %v, want the zero value", got)
-	}
-}
-
-// TestSealFuncFor_RoundTrips mirrors internal/delegate's own test for the
-// identically-shaped helper in this package (service.go) — a fast, in-memory
-// seal/open round trip, no DB.
-func TestSealFuncFor_RoundTrips(t *testing.T) {
-	dek, err := crypto.GenerateDEK("team-test-key")
-	if err != nil {
-		t.Fatalf("GenerateDEK: %v", err)
-	}
-	tenantID, sessionID := uuid.New(), uuid.New()
-	seal := sealFuncFor(dek, tenantID, sessionID)
-
-	plaintext := []byte(`{"card_id":"abc"}`)
-	sealed, digest, keyID, err := seal(plaintext)
-	if err != nil {
-		t.Fatalf("seal: %v", err)
-	}
-	if keyID != dek.KeyID {
-		t.Errorf("keyID = %q, want %q", keyID, dek.KeyID)
-	}
-	if len(digest) == 0 {
-		t.Error("digest is empty")
-	}
-	opened, err := crypto.Open(dek, sealed, tenantID.String(), sessionID.String())
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	if string(opened) != string(plaintext) {
-		t.Errorf("round trip = %q, want %q", opened, plaintext)
 	}
 }

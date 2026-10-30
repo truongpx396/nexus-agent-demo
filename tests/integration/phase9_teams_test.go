@@ -13,7 +13,9 @@
 package integration
 
 import (
+	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
 	runctlpg "github.com/truongpx396/nexus-agent-demo/internal/runctl/postgres"
+	teamspg "github.com/truongpx396/nexus-agent-demo/internal/teams/postgres"
 
 	"context"
 	"strings"
@@ -51,8 +53,8 @@ func buildTeamsRig(t *testing.T, r *oversightRig, prov provider.Provider) (*team
 	approvals := oversight.NewApprovals(oversightpg.New(r.st, r.keys, r.chain))
 	ctl := &runctl.Control{Store: runctlpg.New(r.st, r.keys, r.chain), Approvals: approvals, Kernel: k, System: "test", MaxTurns: 10}
 
-	svc := teams.NewService(r.st, r.keys, r.chain)
-	svc.Wire(teams.Config{Kernel: k, Canceler: ctl, System: "test", MaxTurns: 10})
+	svc := teams.NewService(teamspg.New(r.st, r.keys, r.chain))
+	svc.Wire(teams.Config{Prices: costpg.New(r.st), Kernel: k, Canceler: ctl, System: "test", MaxTurns: 10})
 	return svc, k
 }
 
