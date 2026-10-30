@@ -14,7 +14,6 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 	"github.com/truongpx396/nexus-agent-demo/internal/queue"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
 // metricsStaleClaimAfter mirrors runDashboard's own default — how old an
@@ -33,7 +32,7 @@ const metricsStaleClaimAfter = 15 * time.Minute
 // specifically — the same "not measured here, never measured zero"
 // documented limitation.
 
-func handleMetrics(st *store.Store) http.HandlerFunc {
+func handleMetrics(reports obs.Reports) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tenantIDs, err := listTenantIDs(r.Context())
 		if err != nil {
@@ -45,7 +44,7 @@ func handleMetrics(st *store.Store) http.HandlerFunc {
 		toolCallsByTenant := make(map[uuid.UUID]obs.ToolCallCounts, len(tenantIDs))
 		modelSpendByTenant := make(map[uuid.UUID][]obs.ModelSpend, len(tenantIDs))
 		for _, tenantID := range tenantIDs {
-			signals, err := obs.ComputeGoldenSignals(r.Context(), st, tenantID, metricsStaleClaimAfter, nil, nil)
+			signals, err := obs.ComputeGoldenSignals(r.Context(), reports, tenantID, metricsStaleClaimAfter, nil, nil)
 			if err != nil {
 				log.Error().Err(err).Any("tenant_id", tenantID).Msg("nexusd: /metrics: compute golden signals")
 				continue
@@ -57,14 +56,14 @@ func handleMetrics(st *store.Store) http.HandlerFunc {
 			// a replacement: a failure here is logged and skipped, never lets
 			// a breakdown query take down the golden-signal scrape it rides
 			// alongside.
-			toolCalls, err := obs.ComputeToolCallCounts(r.Context(), st, tenantID)
+			toolCalls, err := reports.ToolCallCounts(r.Context(), tenantID)
 			if err != nil {
 				log.Error().Err(err).Any("tenant_id", tenantID).Msg("nexusd: /metrics: compute tool call counts")
 			} else {
 				toolCallsByTenant[tenantID] = toolCalls
 			}
 
-			modelSpend, err := obs.ComputeModelSpend(r.Context(), st, tenantID)
+			modelSpend, err := reports.ModelSpend(r.Context(), tenantID)
 			if err != nil {
 				log.Error().Err(err).Any("tenant_id", tenantID).Msg("nexusd: /metrics: compute model spend")
 			} else {

@@ -20,6 +20,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
+	obspg "github.com/truongpx396/nexus-agent-demo/internal/obs/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
@@ -143,7 +144,7 @@ func TestComputeGoldenSignals(t *testing.T) {
 	obs.FilterTracked(obs.Attrs{"tool.id": "x", "conversation.content": "secret"}, drops) // 1/2 dropped
 	gap := 0.05
 
-	got, err := obs.ComputeGoldenSignals(ctx, r.st, r.tenantID, 5*time.Minute, drops, &gap)
+	got, err := obs.ComputeGoldenSignals(ctx, obspg.New(r.st), r.tenantID, 5*time.Minute, drops, &gap)
 	if err != nil {
 		t.Fatalf("ComputeGoldenSignals: %v", err)
 	}

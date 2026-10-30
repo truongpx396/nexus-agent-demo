@@ -15,6 +15,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
+	obspg "github.com/truongpx396/nexus-agent-demo/internal/obs/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
@@ -93,7 +94,7 @@ func runGoLive(ctx context.Context, args []string) error {
 
 	// Items 6 and 8, from the golden-signal dashboard.
 	for _, tenantID := range tenantIDs {
-		signals, serr := obs.ComputeGoldenSignals(ctx, st, tenantID, *staleAfter, nil, nil)
+		signals, serr := obs.ComputeGoldenSignals(ctx, obspg.New(st), tenantID, *staleAfter, nil, nil)
 		if serr != nil {
 			check(false, "item 6/8 (dashboard): tenant %s: %v", tenantID, serr)
 			continue
