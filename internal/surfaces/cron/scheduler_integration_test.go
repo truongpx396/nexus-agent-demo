@@ -1,6 +1,6 @@
 //go:build integration
 
-package cron
+package cron_test
 
 import (
 	"context"
@@ -17,6 +17,8 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/runs"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
+	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/cron"
+	cronpg "github.com/truongpx396/nexus-agent-demo/internal/surfaces/cron/postgres"
 	"github.com/truongpx396/nexus-agent-demo/migrations"
 )
 
@@ -147,14 +149,13 @@ func TestScheduler_FiresDueScheduleAcrossMultipleTenants(t *testing.T) {
 		t.Fatalf("GenerateKEK: %v", err)
 	}
 	starter := &fakeStarter{}
-	sched := &Scheduler{
-		Store:    s,
-		KeyStore: crypto.NewKeyStore(kek),
-		Starter:  starter,
-		Tenants:  poolTenantLister{pool: adminPool},
+	sched := &cron.Scheduler{
+		Schedules: cronpg.New(s, crypto.NewKeyStore(kek)),
+		Starter:   starter,
+		Tenants:   poolTenantLister{pool: adminPool},
 	}
 
-	sched.runOnce(context.Background())
+	sched.RunOnce(context.Background())
 
 	if len(starter.starts) != 1 {
 		t.Fatalf("StartRun called %d times, want exactly 1 (only the due schedule)", len(starter.starts))
@@ -178,7 +179,7 @@ func TestScheduler_FiresDueScheduleAcrossMultipleTenants(t *testing.T) {
 		t.Fatalf("next_run_at = %s, want a time in the future", nextRunAt)
 	}
 
-	sched.runOnce(context.Background())
+	sched.RunOnce(context.Background())
 	if len(starter.starts) != 1 {
 		t.Fatalf("StartRun called %d times after a second poll, want still 1 (next_run_at must have advanced)", len(starter.starts))
 	}
@@ -198,9 +199,9 @@ func TestScheduler_UnparseableCronExprDisablesTheSchedule(t *testing.T) {
 		t.Fatalf("GenerateKEK: %v", err)
 	}
 	starter := &fakeStarter{}
-	sched := &Scheduler{Store: s, KeyStore: crypto.NewKeyStore(kek), Starter: starter, Tenants: poolTenantLister{pool: adminPool}}
+	sched := &cron.Scheduler{Schedules: cronpg.New(s, crypto.NewKeyStore(kek)), Starter: starter, Tenants: poolTenantLister{pool: adminPool}}
 
-	sched.runOnce(context.Background())
+	sched.RunOnce(context.Background())
 
 	if len(starter.starts) != 0 {
 		t.Fatalf("StartRun called %d times for an unparseable schedule, want 0", len(starter.starts))
@@ -213,5 +214,61 @@ func TestScheduler_UnparseableCronExprDisablesTheSchedule(t *testing.T) {
 	}
 	if enabled {
 		t.Fatal("an unparseable schedule was not disabled")
+	}
+}
+
+// TestSchedules_FireIsAtomic pins the property the whole adapter exists to
+// keep: the tick is exactly-once. A Fire that fails part-way (here, creating a
+// session whose id is already taken, after its key was minted) must leave the
+// schedule exactly where it was, so the next poll sees the same due schedule
+// rather than a schedule that advanced without ever running.
+func TestSchedules_FireIsAtomic(t *testing.T) {
+	appPool, adminPool := setupCronEnv(t)
+	s := store.New(appPool)
+	ctx := context.Background()
+
+	tenantID, userID := uuid.New(), uuid.New()
+	insertTenant(t, adminPool, tenantID)
+	past := time.Now().Add(-time.Hour)
+	scheduleID := insertDueSchedule(t, s, tenantID, userID, "atomic", "* * * * *", &past)
+
+	kek, err := crypto.GenerateKEK()
+	if err != nil {
+		t.Fatalf("GenerateKEK: %v", err)
+	}
+	schedules := cronpg.New(s, crypto.NewKeyStore(kek))
+	sessionID := uuid.New()
+	fire := func(next time.Time) error {
+		_, err := schedules.Fire(ctx, cron.Firing{
+			TenantID: tenantID, Schedule: cron.Schedule{ID: scheduleID, UserID: userID, CronExpr: "* * * * *"},
+			SessionID: sessionID, HarnessDigest: []byte("digest"), DataLabel: "internal", ModelID: "fake",
+			Autonomy: "supervised", RanAt: next.Add(-time.Minute), NextRunAt: next,
+		})
+		return err
+	}
+	readNext := func() time.Time {
+		var next time.Time
+		if err := s.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+			return tx.QueryRow(ctx, `SELECT next_run_at FROM cron_schedules WHERE schedule_id = $1`, scheduleID).Scan(&next)
+		}); err != nil {
+			t.Fatalf("read next_run_at: %v", err)
+		}
+		return next.UTC().Truncate(time.Second)
+	}
+
+	first := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+	if err := fire(first); err != nil {
+		t.Fatalf("first Fire: %v", err)
+	}
+	if got := readNext(); !got.Equal(first) {
+		t.Fatalf("next_run_at after the first Fire = %v, want %v", got, first)
+	}
+
+	second := first.Add(time.Hour)
+	if err := fire(second); err == nil {
+		t.Fatal("a Fire reusing an existing session id succeeded; the session creation was supposed to fail")
+	}
+	if got := readNext(); !got.Equal(first) {
+		t.Errorf("next_run_at after a failed Fire = %v, want it unchanged at %v: the schedule advanced without its session", got, first)
 	}
 }

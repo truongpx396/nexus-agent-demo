@@ -33,6 +33,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/cron"
+	cronpg "github.com/truongpx396/nexus-agent-demo/internal/surfaces/cron/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/email"
 	surfpg "github.com/truongpx396/nexus-agent-demo/internal/surfaces/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
@@ -361,7 +362,7 @@ func serve(ctx context.Context) error {
 		Lock:      sessionLock,
 	}
 	scheduler := &cron.Scheduler{
-		Store: st, KeyStore: keyStore, Starter: starter, Tenants: adminTenantLister{},
+		Schedules: cronpg.New(st, keyStore), Starter: starter, Tenants: adminTenantLister{},
 		CatalogManifestDigest: catalogManifestDigest,
 	}
 	go scheduler.Run(ctx)
