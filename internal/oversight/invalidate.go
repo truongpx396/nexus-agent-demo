@@ -2,11 +2,8 @@ package oversight
 
 import (
 	"context"
-	"errors"
-	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 )
 
@@ -58,25 +55,25 @@ type syntheticResultPayload struct {
 // suspended in the first place.
 func (a *Approvals) Invalidate(ctx context.Context, tenantID, sessionID uuid.UUID, reason InvalidationReason) (*Approval, error) {
 	var out *Approval
-	err := a.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		pending, ok, err := findPendingApproval(ctx, tx, sessionID)
+	err := a.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
+		pending, ok, err := tx.LockPendingApproval(ctx, sessionID)
 		if err != nil || !ok {
 			return err
 		}
-		if err := updateApprovalStatus(ctx, tx, pending.ApprovalID, ApprovalInvalidated, "", nil, string(reason)); err != nil {
+		if err := tx.SetApprovalStatus(ctx, pending.ApprovalID, ApprovalInvalidated, "", string(reason)); err != nil {
 			return err
 		}
 		pending.Status, pending.Reason = ApprovalInvalidated, string(reason)
 
 		toolID := pending.ToolID
-		if _, err := a.appendEvent(ctx, tx, tenantID, sessionID, eventlog.EventApprovalInvalidated, &toolID, nil,
+		if _, err := tx.Append(ctx, tenantID, sessionID, eventlog.EventApprovalInvalidated, &toolID, nil,
 			approvalDecisionPayload{ApprovalID: pending.ApprovalID, ToolID: pending.ToolID, Reason: string(reason)},
 		); err != nil {
 			return err
 		}
 
 		ref := pending.ToolUseEventID
-		if _, err := a.appendEvent(ctx, tx, tenantID, sessionID, eventlog.EventToolResult, &toolID, &ref,
+		if _, err := tx.Append(ctx, tenantID, sessionID, eventlog.EventToolResult, &toolID, &ref,
 			syntheticResultPayload{IsError: true, Synthetic: true, Reason: "approval_invalidated: " + string(reason)},
 		); err != nil {
 			return err
@@ -97,32 +94,18 @@ func (a *Approvals) Invalidate(ctx context.Context, tenantID, sessionID uuid.UUI
 // invalidates every pending one.
 func (i *Inputs) Invalidate(ctx context.Context, tenantID, sessionID uuid.UUID, reason InvalidationReason) ([]InputRequest, error) {
 	var out []InputRequest
-	err := i.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, inputRequestSelectSQL+` WHERE session_id = $1 AND status = 'pending' FOR UPDATE`, sessionID)
+	err := i.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
+		pending, err := tx.LockPendingInputRequests(ctx, sessionID)
 		if err != nil {
-			return fmt.Errorf("oversight: find pending input requests for session %s: %w", sessionID, err)
-		}
-		var pending []InputRequest
-		for rows.Next() {
-			ir, err := scanInputRequest(rows)
-			if err != nil {
-				rows.Close()
-				return err
-			}
-			pending = append(pending, ir)
-		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
 			return err
 		}
-		rows.Close()
 
 		for _, ir := range pending {
-			if err := updateInputStatus(ctx, tx, ir.InputRequestID, InputInvalidated, string(reason)); err != nil {
+			if err := tx.SetInputStatus(ctx, ir.InputRequestID, InputInvalidated, string(reason)); err != nil {
 				return err
 			}
 			ir.Status, ir.Reason = InputInvalidated, string(reason)
-			if _, err := i.appendEvent(ctx, tx, tenantID, sessionID, eventlog.EventInputInvalidated, nil, nil,
+			if _, err := tx.Append(ctx, tenantID, sessionID, eventlog.EventInputInvalidated, nil, nil,
 				inputRequestIDPayload{InputRequestID: ir.InputRequestID},
 			); err != nil {
 				return err
@@ -132,15 +115,4 @@ func (i *Inputs) Invalidate(ctx context.Context, tenantID, sessionID uuid.UUID, 
 		return nil
 	})
 	return out, err
-}
-
-func findPendingApproval(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) (Approval, bool, error) {
-	ap, err := scanApprovalRows(tx.QueryRow(ctx, approvalSelectSQL+` WHERE session_id = $1 AND status = 'pending' FOR UPDATE`, sessionID))
-	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return Approval{}, false, nil
-		}
-		return Approval{}, false, err
-	}
-	return ap, true, nil
 }
