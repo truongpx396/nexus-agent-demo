@@ -74,13 +74,26 @@ func (i *Inputs) RequestInput(ctx context.Context, p RequestInputParams) (InputR
 
 // Answer records a human's answer — carrying zero authorization value, per
 // this type's own doc comment: it never satisfies a permission-chain Ask.
+//
+// A request past its TTL that nothing has swept yet is resolved first, per its
+// own on_expiry policy (expireLocked), and that resolution is committed before
+// the late answer is refused — refusing inside the unit would roll it back, and
+// the recorded default assumption (or the typed expiry) would never happen.
 func (i *Inputs) Answer(ctx context.Context, tenantID, inputRequestID uuid.UUID, answer json.RawMessage) (InputRequest, error) {
 	var ir InputRequest
+	var lapsed bool
 	err := i.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
 		var err error
-		ir, err = i.checkPending(ctx, tx, inputRequestID)
+		ir, err = tx.LockInputRequest(ctx, inputRequestID)
 		if err != nil {
 			return err
+		}
+		if ir.Status == InputPending && time.Now().After(ir.ExpiresAt) {
+			lapsed = true
+			return i.expireLocked(ctx, tx, &ir)
+		}
+		if ir.Status != InputPending {
+			return errInputNotPending(inputRequestID, ir.Status)
 		}
 		if err := tx.SetInputAnswered(ctx, inputRequestID, answer, false); err != nil {
 			return err
@@ -89,7 +102,17 @@ func (i *Inputs) Answer(ctx context.Context, tenantID, inputRequestID uuid.UUID,
 		_, err = tx.Append(ctx, tenantID, ir.SessionID, eventlog.EventInputAnswered, nil, nil, inputAnsweredPayload{InputRequestID: inputRequestID, Answer: answer})
 		return err
 	})
-	return ir, err
+	if err != nil {
+		return ir, err
+	}
+	if lapsed {
+		return ir, errInputNotPending(inputRequestID, ir.Status)
+	}
+	return ir, nil
+}
+
+func errInputNotPending(inputRequestID uuid.UUID, status InputStatus) error {
+	return fmt.Errorf("oversight: input request %s is %s, not pending", inputRequestID, status)
 }
 
 // Expire resolves one overdue pending request per its own declared
@@ -130,25 +153,6 @@ func (i *Inputs) expireLocked(ctx context.Context, tx Tx, ir *InputRequest) erro
 	ir.Status = InputExpired
 	_, err := tx.Append(ctx, ir.TenantID, ir.SessionID, eventlog.EventInputExpired, nil, nil, inputRequestIDPayload{InputRequestID: ir.InputRequestID})
 	return err
-}
-
-// checkPending loads ir and lazily expires it (via expireLocked) if its TTL
-// has passed but nothing swept it yet, returning an error only when it's
-// left in a non-pending state Answer cannot act on.
-func (i *Inputs) checkPending(ctx context.Context, tx Tx, inputRequestID uuid.UUID) (InputRequest, error) {
-	ir, err := tx.LockInputRequest(ctx, inputRequestID)
-	if err != nil {
-		return InputRequest{}, err
-	}
-	if ir.Status == InputPending && time.Now().After(ir.ExpiresAt) {
-		if err := i.expireLocked(ctx, tx, &ir); err != nil {
-			return InputRequest{}, err
-		}
-	}
-	if ir.Status != InputPending {
-		return InputRequest{}, fmt.Errorf("oversight: input request %s is %s, not pending", inputRequestID, ir.Status)
-	}
-	return ir, nil
 }
 
 type inputRequestedPayload struct {
