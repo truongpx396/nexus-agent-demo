@@ -83,17 +83,23 @@ func (a sealedAppender) Append(ctx context.Context, tenantID, sessionID uuid.UUI
 	if err != nil {
 		return eventlog.Event{}, fmt.Errorf("eventlog: seal %s payload: %w", typ, err)
 	}
-	out, err := store.Append(ctx, a.tx, eventlog.Event{
+	return a.appendSealed(ctx, tenantID, sessionID, eventlog.Event{
 		EventID: uuid.New(), SessionID: sessionID, TenantID: tenantID, SchemaVersion: eventlog.CurrentSchemaVersion,
 		Type: typ, Payload: sealed, PayloadDigest: crypto.Digest(plaintext), KeyID: dek.KeyID,
 		Actor: eventlog.ActorSystem, ToolID: toolID, PairRef: pairRef,
 	})
+}
+
+// appendSealed appends an already-sealed event and chains its receipt — the tail
+// every append shares, whichever way its payload was sealed.
+func (a sealedAppender) appendSealed(ctx context.Context, tenantID, sessionID uuid.UUID, e eventlog.Event) (eventlog.Event, error) {
+	out, err := store.Append(ctx, a.tx, e)
 	if err != nil {
-		return eventlog.Event{}, fmt.Errorf("eventlog: append %s: %w", typ, err)
+		return eventlog.Event{}, fmt.Errorf("eventlog: append %s: %w", e.Type, err)
 	}
 	if a.s.chain != nil {
 		if _, err := a.s.chain.Append(ctx, a.tx, tenantID, sessionID, out.Seq, out.EventID, string(out.Type), out.PayloadDigest); err != nil {
-			return eventlog.Event{}, fmt.Errorf("eventlog: chain %s: %w", typ, err)
+			return eventlog.Event{}, fmt.Errorf("eventlog: chain %s: %w", e.Type, err)
 		}
 	}
 	return out, nil

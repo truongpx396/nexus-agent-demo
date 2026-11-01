@@ -13,6 +13,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/cost/costtest"
 	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
 	costredis "github.com/truongpx396/nexus-agent-demo/internal/cost/redis"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
@@ -47,7 +48,7 @@ func TestPostgresLedger_SatisfiesTheLedgerContract(t *testing.T) {
 			t.Helper()
 			sessionID := uuid.New()
 			inTenantTx(t, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-				return store.CreateSession(ctx, tx, store.Session{
+				return store.CreateSession(ctx, tx, eventlog.Session{
 					SessionID: sessionID, SessionKey: sessionID.String(), TenantID: tenantID,
 					SurfaceID: "test", UserID: uuid.New(), AgentVersion: 1,
 					HarnessDigest: []byte("test-digest"), DataLabel: "internal", RouteModelID: "fake",

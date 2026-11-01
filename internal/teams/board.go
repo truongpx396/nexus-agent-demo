@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/memory"
@@ -17,9 +16,9 @@ import (
 func (s *Service) TeamIDFor(ctx context.Context, tenantID, sessionID uuid.UUID) (uuid.UUID, bool, error) {
 	var id uuid.UUID
 	var ok bool
-	err := s.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
 		var err error
-		id, ok, err = teamIDForSession(ctx, tx, sessionID)
+		id, ok, err = tx.TeamIDForSession(ctx, sessionID)
 		return err
 	})
 	return id, ok, err
@@ -34,9 +33,9 @@ func (s *Service) TeamIDFor(ctx context.Context, tenantID, sessionID uuid.UUID) 
 // (EventTaintTransition on the reader's own log).
 func (s *Service) ReadBoard(ctx context.Context, tenantID, teamID, readerSessionID uuid.UUID) ([]Card, error) {
 	var cards []Card
-	err := s.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
 		var err error
-		cards, err = listCards(ctx, tx, teamID)
+		cards, err = tx.ListCards(ctx, teamID)
 		return err
 	})
 	if err != nil {
@@ -65,9 +64,9 @@ func (s *Service) ReadBoard(ctx context.Context, tenantID, teamID, readerSession
 func (s *Service) ClaimCard(ctx context.Context, tenantID, teamID, cardID, sessionID uuid.UUID) (Card, bool, error) {
 	var card Card
 	var claimed bool
-	err := s.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
 		var err error
-		card, claimed, err = claimCard(ctx, tx, tenantID, teamID, cardID, sessionID)
+		card, claimed, err = tx.ClaimCard(ctx, tenantID, teamID, cardID, sessionID)
 		return err
 	})
 	if err != nil || !claimed {
@@ -83,8 +82,8 @@ func (s *Service) foldCardRead(ctx context.Context, tenantID, readerSessionID uu
 	if s.cfg.Pipeline != nil {
 		s.cfg.Pipeline.FoldTaint(readerSessionID, c.TaintState)
 	}
-	return s.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		_, err := s.appendEvent(ctx, tx, tenantID, readerSessionID, eventlog.EventTaintTransition, nil, nil, cardReadTaintTransitionPayload{
+	return s.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
+		_, err := tx.Append(ctx, tenantID, readerSessionID, eventlog.EventTaintTransition, nil, nil, cardReadTaintTransitionPayload{
 			CardID: c.CardID, Engaged: c.TaintState,
 		})
 		return err
@@ -125,14 +124,14 @@ func (s *Service) WriteCard(ctx context.Context, req WriteCardRequest) (Card, er
 	}
 
 	var card Card
-	err := s.Store.InTenantTx(ctx, req.TenantID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.Store.InTenant(ctx, req.TenantID, func(ctx context.Context, tx Tx) error {
 		var err error
-		card, err = insertCard(ctx, tx, req.TenantID, req.TeamID, req.Title, req.Body, req.WrittenBySessionID, taint, cardScan, findingStrs)
+		card, err = tx.InsertCard(ctx, req.TenantID, req.TeamID, req.Title, req.Body, req.WrittenBySessionID, taint, cardScan, findingStrs)
 		if err != nil {
 			return err
 		}
 		if cardScan == ScanFlagged {
-			_, err = s.appendEvent(ctx, tx, req.TenantID, req.WrittenBySessionID, eventlog.EventBoardCardFlagged, nil, nil, boardCardFlaggedPayload{
+			_, err = tx.Append(ctx, req.TenantID, req.WrittenBySessionID, eventlog.EventBoardCardFlagged, nil, nil, boardCardFlaggedPayload{
 				CardID: card.CardID, TeamID: req.TeamID, Findings: findingStrs,
 			})
 		}
@@ -154,9 +153,9 @@ func (s *Service) WriteCard(ctx context.Context, req WriteCardRequest) (Card, er
 func (s *Service) UpdateCardStatus(ctx context.Context, tenantID, teamID, cardID, sessionID uuid.UUID, status CardStatus) (Card, bool, error) {
 	var card Card
 	var ok bool
-	err := s.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
 		var err error
-		card, ok, err = updateCardStatus(ctx, tx, teamID, cardID, sessionID, status)
+		card, ok, err = tx.UpdateCardStatus(ctx, teamID, cardID, sessionID, status)
 		return err
 	})
 	return card, ok, err
@@ -167,9 +166,9 @@ func (s *Service) UpdateCardStatus(ctx context.Context, tenantID, teamID, cardID
 // already has).
 func (s *Service) Get(ctx context.Context, tenantID, teamID uuid.UUID) (Team, error) {
 	var out Team
-	err := s.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
 		var err error
-		out, err = getTeam(ctx, tx, teamID)
+		out, err = tx.GetTeam(ctx, teamID)
 		return err
 	})
 	return out, err

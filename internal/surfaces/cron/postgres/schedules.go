@@ -10,6 +10,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/runs"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/cron"
@@ -69,7 +70,7 @@ func (s *Schedules) Fire(ctx context.Context, f cron.Firing) (runs.SealFunc, err
 		if derr != nil {
 			return derr
 		}
-		if err := store.CreateSession(ctx, tx, store.Session{
+		if err := store.CreateSession(ctx, tx, eventlog.Session{
 			SessionID:     f.SessionID,
 			SessionKey:    f.SessionID.String(),
 			TenantID:      f.TenantID,

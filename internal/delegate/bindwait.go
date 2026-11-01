@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 )
 
 // The wait is for the parent's own bookkeeping — one transaction that follows
@@ -60,22 +59,11 @@ func (d *Delegations) awaitBound(ctx context.Context, tenantID, childSessionID u
 // resolvable reports whether childSessionID's delegation, if it has one, is
 // ready to be resolved.
 func (d *Delegations) resolvable(ctx context.Context, tenantID, childSessionID uuid.UUID) (bool, error) {
-	ready := true // no delegation row at all: nothing to wait for
-	err := d.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		var bound bool
-		err := tx.QueryRow(ctx, `
-			SELECT fanout_id IS NOT NULL OR parent_tool_use_event_id IS NOT NULL
-			FROM delegations WHERE child_session_id = $1`,
-			childSessionID,
-		).Scan(&bound)
-		if err == pgx.ErrNoRows {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		ready = bound
-		return nil
+	var ready bool
+	err := d.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
+		var err error
+		ready, err = tx.Resolvable(ctx, childSessionID)
+		return err
 	})
 	return ready, err
 }

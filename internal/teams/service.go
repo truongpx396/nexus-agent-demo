@@ -5,10 +5,7 @@ import (
 
 	"github.com/google/uuid"
 
-	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
-	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
 
@@ -39,6 +36,7 @@ type Canceler interface {
 // resident catalog cover a team member exactly like they cover a root run.
 type Config struct {
 	Kernel      *kernel.Kernel
+	Prices      PriceBooks // prices a member's real usage against the team envelope
 	Pipeline    TaintFolder
 	Canceler    Canceler
 	System      string
@@ -53,13 +51,11 @@ type Config struct {
 // every other transactional component in this codebase
 // (oversight.Approvals, delegate.Delegations, cost.Gate, ...) follows.
 type Service struct {
-	deps
-	cfg Config
+	Store Store
+	cfg   Config
 }
 
-func NewService(st *store.Store, keys *cryptopg.KeyStore, chain *auditpg.Chain) *Service {
-	return &Service{deps: deps{Store: st, Keys: keys, Chain: chain}}
-}
+func NewService(st Store) *Service { return &Service{Store: st} }
 
 // Wire attaches Service's runtime collaborators — split from NewService the
 // same way internal/delegate.Delegations.Wire is, so a test can construct a

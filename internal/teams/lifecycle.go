@@ -5,14 +5,14 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/truongpx396/nexus-agent-demo/internal/runstate"
+
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
 
@@ -54,12 +54,12 @@ func (s *Service) CreateTeam(ctx context.Context, req CreateTeamRequest) (uuid.U
 		return uuid.Nil, fmt.Errorf("teams: roster must name at least one member")
 	}
 
-	var creator store.Session
+	var creator eventlog.Session
 	teamID := uuid.New()
 	var envelopeID uuid.UUID
-	err := s.Store.InTenantTx(ctx, req.TenantID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.Store.InTenant(ctx, req.TenantID, func(ctx context.Context, tx Tx) error {
 		var err error
-		creator, err = store.GetSession(ctx, tx, req.CreatorSessionID)
+		creator, err = tx.GetSession(ctx, req.CreatorSessionID)
 		if err != nil {
 			return err
 		}
@@ -67,15 +67,15 @@ func (s *Service) CreateTeam(ctx context.Context, req CreateTeamRequest) (uuid.U
 			return fmt.Errorf("teams: session %s may not create a team (depth bound exceeded — task 9.10)", req.CreatorSessionID)
 		}
 
-		if err := insertTeam(ctx, tx, teamID, req.TenantID, req.Name, req.CreatorSessionID, req.Members); err != nil {
+		if err := tx.InsertTeam(ctx, teamID, req.TenantID, req.Name, req.CreatorSessionID, req.Members); err != nil {
 			return err
 		}
 
-		envelopeID, err = createEnvelope(ctx, tx, req.TenantID, teamID, req.Ceiling, len(req.Members))
+		envelopeID, err = tx.CreateEnvelope(ctx, req.TenantID, teamID, req.Ceiling, len(req.Members))
 		if err != nil {
 			return err
 		}
-		if err := setTeamEnvelope(ctx, tx, teamID, envelopeID); err != nil {
+		if err := tx.SetTeamEnvelope(ctx, teamID, envelopeID); err != nil {
 			return err
 		}
 
@@ -89,7 +89,7 @@ func (s *Service) CreateTeam(ctx context.Context, req CreateTeamRequest) (uuid.U
 			creatorEngaged = s.cfg.Pipeline.TaintStateFor(req.CreatorSessionID)
 		}
 		for _, c := range req.Cards {
-			if _, err := insertCard(ctx, tx, req.TenantID, teamID, c.Title, c.Body, req.CreatorSessionID, creatorEngaged, ScanClean, nil); err != nil {
+			if _, err := tx.InsertCard(ctx, req.TenantID, teamID, c.Title, c.Body, req.CreatorSessionID, creatorEngaged, ScanClean, nil); err != nil {
 				return err
 			}
 		}
@@ -98,7 +98,7 @@ func (s *Service) CreateTeam(ctx context.Context, req CreateTeamRequest) (uuid.U
 		for i, m := range req.Members {
 			agentIDs[i] = m.AgentID
 		}
-		_, err = s.appendEvent(ctx, tx, req.TenantID, req.CreatorSessionID, eventlog.EventTeamCreated, nil, nil, teamCreatedPayload{
+		_, err = tx.Append(ctx, req.TenantID, req.CreatorSessionID, eventlog.EventTeamCreated, nil, nil, teamCreatedPayload{
 			TeamID: teamID, Name: req.Name, Roster: agentIDs, CardCount: len(req.Cards),
 		})
 		return err
@@ -123,17 +123,17 @@ func (s *Service) CreateTeam(ctx context.Context, req CreateTeamRequest) (uuid.U
 // Receipts/OnSuspend/...) stays identical, the same purely-budget-routing
 // clone internal/delegate.Delegations.Spawn already performs for a
 // delegate_fanout child.
-func (s *Service) spawnMember(ctx context.Context, tenantID, teamID, envelopeID uuid.UUID, creator store.Session, member MemberSpec) error {
+func (s *Service) spawnMember(ctx context.Context, tenantID, teamID, envelopeID uuid.UUID, creator eventlog.Session, member MemberSpec) error {
 	memberID := uuid.New()
 	var dek crypto.DEK
-	err := s.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
 		var err error
-		dek, err = s.Keys.NewDEK(ctx, tx, tenantID)
+		dek, err = tx.NewDEK(ctx, tenantID)
 		if err != nil {
 			return err
 		}
 		tid := teamID
-		return store.CreateSession(ctx, tx, store.Session{
+		return tx.CreateSession(ctx, eventlog.Session{
 			SessionID: memberID, SessionKey: memberID.String(), TenantID: tenantID,
 			SurfaceID: "team", UserID: creator.UserID, AgentID: uuid.Nil, AgentVersion: 1,
 			HarnessDigest: creator.HarnessDigest, DataLabel: creator.DataLabel,
@@ -151,9 +151,9 @@ func (s *Service) spawnMember(ctx context.Context, tenantID, teamID, envelopeID 
 		return fmt.Errorf("teams: size member reservation: %w", err)
 	}
 	clone := *s.cfg.Kernel
-	clone.Budget = &EnvelopeBudgetGate{Store: s.Store, EnvelopeID: envelopeID, TenantID: tenantID, PerCallEstimate: perCall, Currency: currency}
+	clone.Budget = &EnvelopeBudgetGate{Store: s.Store, Prices: s.cfg.Prices, EnvelopeID: envelopeID, TenantID: tenantID, PerCallEstimate: perCall, Currency: currency}
 
-	memberState := &kernel.RunState{TenantID: tenantID, SessionID: memberID, Seal: sealFuncFor(dek, tenantID, memberID)}
+	memberState := &kernel.RunState{TenantID: tenantID, SessionID: memberID, Seal: runstate.Seal(dek, tenantID, memberID)}
 	memberCfg := kernel.RunConfig{
 		System: s.cfg.System, Catalog: s.cfg.Catalog, LoadedTools: s.cfg.LoadedTools,
 		ModelID: creator.RouteModelID, MaxTurns: s.cfg.MaxTurns,
@@ -175,16 +175,6 @@ func (s *Service) spawnMember(ctx context.Context, tenantID, teamID, envelopeID 
 	return nil
 }
 
-func sealFuncFor(dek crypto.DEK, tenantID, sessionID uuid.UUID) kernel.SealFunc {
-	return func(plaintext []byte) (sealed, digest []byte, keyID string, err error) {
-		sealed, err = crypto.Seal(dek, plaintext, tenantID.String(), sessionID.String())
-		if err != nil {
-			return nil, nil, "", fmt.Errorf("teams: seal member event payload: %w", err)
-		}
-		return sealed, crypto.Digest(plaintext), dek.KeyID, nil
-	}
-}
-
 // OnMemberTerminal is the one entry point every place in this codebase that
 // might just have driven a team member session to completion should call,
 // unconditionally — mirrors internal/delegate.Delegations.OnChildTerminal's
@@ -195,10 +185,10 @@ func sealFuncFor(dek crypto.DEK, tenantID, sessionID uuid.UUID) kernel.SealFunc 
 // majority) and for a team member that hasn't reached a terminal status yet
 // (a later call site will find it).
 func (s *Service) OnMemberTerminal(ctx context.Context, tenantID, memberSessionID uuid.UUID) error {
-	var member store.Session
-	err := s.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+	var member eventlog.Session
+	err := s.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
 		var err error
-		member, err = store.GetSession(ctx, tx, memberSessionID)
+		member, err = tx.GetSession(ctx, memberSessionID)
 		return err
 	})
 	if err != nil {
@@ -230,9 +220,9 @@ func (s *Service) OnMemberTerminal(ctx context.Context, tenantID, memberSessionI
 // special case bolted onto this method.
 func (s *Service) maybeComplete(ctx context.Context, tenantID, teamID uuid.UUID) error {
 	var openOrClaimed, activeMembers int
-	err := s.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
 		var err error
-		openOrClaimed, activeMembers, err = boardAndMemberCounts(ctx, tx, teamID)
+		openOrClaimed, activeMembers, err = tx.BoardAndMemberCounts(ctx, teamID)
 		return err
 	})
 	if err != nil {
@@ -245,27 +235,24 @@ func (s *Service) maybeComplete(ctx context.Context, tenantID, teamID uuid.UUID)
 }
 
 // endTeam is the only path any of Complete/CeilingExhausted/Aborted ever
-// takes (README task 9.9): atomically claim the transition out of active
-// (endTeamIfActive — a second, concurrent caller for the same team is a
-// documented no-op, not an error), reap every still-active member exactly
-// like a delegation parent reaps its still-open children (task 8.14), then
-// append ONE EventTeamEnded onto the coordinator's own log.
+// takes (README task 9.9): reap every still-active member exactly like a
+// delegation parent reaps its still-open children (task 8.14), then, in ONE
+// unit of work, atomically claim the transition out of active (EndTeamIfActive
+// — a second, concurrent caller for the same team is a documented no-op, not an
+// error) and append ONE EventTeamEnded onto the coordinator's own log.
+//
+// The status change and its event commit together or not at all. This used to
+// be three separate commits — claim, reap, then the event — so a crash after
+// the first left a team marked ended with no team_ended event, and nothing could
+// repair it, because the claim only succeeds from 'active'. Reaping comes first
+// precisely so that a crash anywhere before the final unit leaves the team
+// 'active': the next member terminal, or the wall-clock backstop, ends it again,
+// and cancelling a member that is already terminal is a no-op.
 func (s *Service) endTeam(ctx context.Context, tenantID, teamID uuid.UUID, status Status, reason string) error {
-	var coordinatorSessionID uuid.UUID
-	var claimed bool
-	err := s.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		var err error
-		coordinatorSessionID, claimed, err = endTeamIfActive(ctx, tx, teamID, status, reason)
-		return err
-	})
-	if err != nil || !claimed {
-		return err
-	}
-
 	var memberIDs []uuid.UUID
-	err = s.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
 		var err error
-		memberIDs, err = listActiveMemberSessionIDs(ctx, tx, teamID)
+		memberIDs, err = tx.ListActiveMemberSessionIDs(ctx, teamID)
 		return err
 	})
 	if err != nil {
@@ -280,8 +267,12 @@ func (s *Service) endTeam(ctx context.Context, tenantID, teamID uuid.UUID, statu
 		}
 	}
 
-	return s.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		_, err := s.appendEvent(ctx, tx, tenantID, coordinatorSessionID, eventlog.EventTeamEnded, nil, nil, teamEndedPayload{
+	return s.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
+		coordinatorSessionID, claimed, err := tx.EndTeamIfActive(ctx, teamID, status, reason)
+		if err != nil || !claimed {
+			return err
+		}
+		_, err = tx.Append(ctx, tenantID, coordinatorSessionID, eventlog.EventTeamEnded, nil, nil, teamEndedPayload{
 			TeamID: teamID, Status: string(status), Reason: reason,
 		})
 		return err
@@ -294,9 +285,9 @@ func (s *Service) endTeam(ctx context.Context, tenantID, teamID uuid.UUID, statu
 // what actually schedules this; SweepBackstop itself is a single pass.
 func (s *Service) SweepBackstop(ctx context.Context, tenantID uuid.UUID, backstop time.Duration) error {
 	var stale []uuid.UUID
-	err := s.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
 		var err error
-		stale, err = listStaleActiveTeamIDs(ctx, tx, tenantID, time.Now().Add(-backstop))
+		stale, err = tx.ListStaleActiveTeamIDs(ctx, tenantID, time.Now().Add(-backstop))
 		return err
 	})
 	if err != nil {

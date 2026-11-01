@@ -17,6 +17,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/ingest"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
 	"github.com/truongpx396/nexus-agent-demo/internal/retrieval"
@@ -133,7 +134,7 @@ func insertRetrievalTenant(ctx context.Context, s *store.Store, tenantID uuid.UU
 // with no backing sessions row.
 func insertRetrievalSession(ctx context.Context, s *store.Store, tenantID, sessionID uuid.UUID) error {
 	return s.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		return store.CreateSession(ctx, tx, store.Session{
+		return store.CreateSession(ctx, tx, eventlog.Session{
 			SessionID: sessionID, SessionKey: sessionID.String(), TenantID: tenantID,
 			SurfaceID: "test", UserID: uuid.Nil, AgentID: uuid.Nil, AgentVersion: 1,
 			HarnessDigest: []byte{0},

@@ -5,15 +5,13 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/queue"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
 
-// ResumeConversation continues a conversational session (store.Session.
+// ResumeConversation continues a conversational session (eventlog.Session.
 // Conversational, migrations/0023_conversational_sessions.sql) that
 // kernel.Kernel.suspendForUserInput paused in eventlog.SessionStatusAwaitingInput
 // — the human's next message. It now mirrors Steer's own shape exactly
@@ -29,25 +27,24 @@ import (
 // carried through the queue job itself, so the job carries only ids, never
 // this method's own plaintext input.
 func (c *Control) ResumeConversation(ctx context.Context, tenantID, sessionID uuid.UUID, input string) (eventlog.Event, error) {
-	d := c.deps()
 	var ev eventlog.Event
-	err := c.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+	err := c.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
 		// Claim the session first, atomically (store.ClaimAwaitingInput):
 		// of N concurrent callers (a REST steer, a webhook delivery) exactly
 		// one gets past here, so the human's message is appended and the
 		// continuation queued once, not once per caller.
-		claimed, err := store.ClaimAwaitingInput(ctx, tx, sessionID)
+		claimed, err := tx.ClaimAwaitingInput(ctx, sessionID)
 		if err != nil {
 			return err
 		}
 		if !claimed {
-			sess, err := store.GetSession(ctx, tx, sessionID)
+			sess, err := tx.GetSession(ctx, sessionID)
 			if err != nil {
 				return err
 			}
 			return fmt.Errorf("runctl: session %s is %q, not awaiting_input; nothing to resume a conversation into", sessionID, sess.Status)
 		}
-		ev, err = d.appendEvent(ctx, tx, tenantID, sessionID, eventlog.EventUserMessage, nil, nil, userMessagePayload{Body: input})
+		ev, err = tx.Append(ctx, tenantID, sessionID, eventlog.EventUserMessage, nil, nil, userMessagePayload{Body: input})
 		return err
 	})
 	if err != nil {
@@ -75,9 +72,8 @@ func (c *Control) ResumeConversation(ctx context.Context, tenantID, sessionID uu
 // pass/cancel) is a no-op, not an error — matching Cancel's own
 // already-terminal no-op convention.
 func (c *Control) EndIdleConversation(ctx context.Context, tenantID, sessionID uuid.UUID) error {
-	d := c.deps()
-	return c.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		sess, err := store.GetSession(ctx, tx, sessionID)
+	return c.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
+		sess, err := tx.GetSession(ctx, sessionID)
 		if err != nil {
 			return err
 		}
@@ -87,11 +83,11 @@ func (c *Control) EndIdleConversation(ctx context.Context, tenantID, sessionID u
 
 		t := kernel.TerminalIdleTimeout("no reply received before the idle-conversation sweep window elapsed")
 		payload := terminalPayload{Reason: string(t.Reason), Detail: t.Detail}
-		if _, err := d.appendEvent(ctx, tx, tenantID, sessionID, eventlog.EventTerminal, nil, nil, payload); err != nil {
+		if _, err := tx.Append(ctx, tenantID, sessionID, eventlog.EventTerminal, nil, nil, payload); err != nil {
 			return fmt.Errorf("end idle conversation: append terminal event: %w", err)
 		}
 		terminalReason := string(t.Reason)
-		if err := store.UpdateSessionStatus(ctx, tx, sessionID, eventlog.SessionStatusFailed, &terminalReason); err != nil {
+		if err := tx.SetSessionStatus(ctx, sessionID, eventlog.SessionStatusFailed, &terminalReason); err != nil {
 			return fmt.Errorf("end idle conversation: update session status: %w", err)
 		}
 		return nil

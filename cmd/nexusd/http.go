@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"time"
 
+	queueredis "github.com/truongpx396/nexus-agent-demo/internal/queue/redis"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
@@ -13,7 +15,6 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
-	"github.com/truongpx396/nexus-agent-demo/internal/queue"
 )
 
 // metricsStaleClaimAfter mirrors runDashboard's own default — how old an
@@ -148,7 +149,7 @@ func handleHealthz(w http.ResponseWriter, _ *http.Request) {
 // handleReadyz reports ready only once every dependency this process
 // actually needs to serve a request is reachable: Postgres (through
 // PgBouncer, the same pool serve() itself uses), Redis (the cost gate's
-// counter store) AND its own queue consumer group (queue.CheckReady —
+// counter store) AND its own queue consumer group (queueredis.CheckReady —
 // "Redis answers a PING" isn't the same as "the job queue this process
 // enqueues into/leases from actually exists"), and signerd (the audit
 // chain's only path to a signature — runGoLive's item 2b already performs
@@ -165,7 +166,7 @@ func handleReadyz(pool *pgxpool.Pool, redisClient *redis.Client, signer *audit.S
 			http.Error(w, "redis not reachable: "+err.Error(), http.StatusServiceUnavailable)
 			return
 		}
-		if err := queue.CheckReady(ctx, redisClient); err != nil {
+		if err := queueredis.CheckReady(ctx, redisClient); err != nil {
 			http.Error(w, "queue not ready: "+err.Error(), http.StatusServiceUnavailable)
 			return
 		}

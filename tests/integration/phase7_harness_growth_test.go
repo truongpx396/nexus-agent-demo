@@ -15,6 +15,8 @@
 package integration
 
 import (
+	runctlpg "github.com/truongpx396/nexus-agent-demo/internal/runctl/postgres"
+
 	"bytes"
 	"context"
 	"encoding/json"
@@ -135,7 +137,7 @@ func TestSkills_MidSessionToolRevocation_EmitsCapabilityIgnoredAndContinues(t *t
 	activate := builtin.ActivateSkill{
 		Catalog:  catalog,
 		Registry: reg,
-		Events:   runctl.NewSkillEventRecorder(rig.st, rig.keys, rig.chain),
+		Events:   runctl.NewSkillEventRecorder(runctlpg.New(rig.st, rig.keys, rig.chain)),
 		Admitted: func(uuid.UUID) []string { return []string{"triage-report"} },
 	}
 

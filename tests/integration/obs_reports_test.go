@@ -34,7 +34,7 @@ func TestReports_ToolCallCountsAndModelSpend(t *testing.T) {
 		t.Helper()
 		sessionID := uuid.New()
 		err := r.st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-			if err := store.CreateSession(ctx, tx, store.Session{
+			if err := store.CreateSession(ctx, tx, eventlog.Session{
 				SessionID: sessionID, SessionKey: sessionID.String(), TenantID: tenantID,
 				SurfaceID: "test", UserID: uuid.New(), AgentVersion: 1,
 				HarnessDigest: []byte("test"), DataLabel: "internal", RouteModelID: "fake",

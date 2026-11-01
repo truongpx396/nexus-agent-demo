@@ -1,10 +1,8 @@
-package store
+package eventlog
 
 import (
 	"encoding/json"
 	"fmt"
-
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 )
 
 // Upcaster transforms a payload written under one schema_version into the
@@ -17,12 +15,12 @@ type Upcaster func(raw json.RawMessage) (json.RawMessage, error)
 // upcastRegistry[type][fromVersion] transforms a payload from fromVersion to
 // fromVersion+1. Registered here, not scattered at call sites, so the whole
 // upcasting path for a type is readable in one place.
-var upcastRegistry = map[eventlog.EventType]map[int]Upcaster{
+var upcastRegistry = map[EventType]map[int]Upcaster{
 	// v1 EventContent payload was {"text": "..."}. v2 renamed the field to
 	// "body" to match the field name every other content-bearing event
 	// taxonomy entry uses. A real (if small) example of the kind of shape
 	// drift an append-only log must survive without breaking old replays.
-	eventlog.EventContent: {
+	EventContent: {
 		1: upcastContentV1toV2,
 	},
 }
@@ -47,7 +45,7 @@ func upcastContentV1toV2(raw json.RawMessage) (json.RawMessage, error) {
 // further upcaster is registered, returning the resulting payload and the
 // version it now conforms to. A type/version with no registered upcaster is
 // returned unchanged — the common case, since most events never need one.
-func Upcast(t eventlog.EventType, version int, payload json.RawMessage) (json.RawMessage, int, error) {
+func Upcast(t EventType, version int, payload json.RawMessage) (json.RawMessage, int, error) {
 	for {
 		fn, ok := upcastRegistry[t][version]
 		if !ok {

@@ -15,6 +15,8 @@ import (
 	"context"
 	"testing"
 
+	planpg "github.com/truongpx396/nexus-agent-demo/internal/plan/postgres"
+
 	"github.com/truongpx396/nexus-agent-demo/evals"
 	"github.com/truongpx396/nexus-agent-demo/internal/evalgate"
 	"github.com/truongpx396/nexus-agent-demo/internal/plan"
@@ -34,7 +36,7 @@ func minimalPlan(name string) plan.Plan {
 func TestPlanEvalGate_PassesWithTaggedCasesAndAdvancesLifecycle(t *testing.T) {
 	r := setupOversightRig(t)
 	ctx := context.Background()
-	lc := &plan.Lifecycle{Store: r.st}
+	lc := &plan.Lifecycle{Store: planpg.New(r.st, r.keys, r.chain)}
 
 	created, err := lc.Create(ctx, r.tenantID, minimalPlan("eval-gate-happy-path"), "test")
 	if err != nil {
@@ -82,7 +84,7 @@ func TestPlanEvalGate_PassesWithTaggedCasesAndAdvancesLifecycle(t *testing.T) {
 func TestPlanEvalGate_NoTaggedCasesFailsClosedAndLeavesPlanValidated(t *testing.T) {
 	r := setupOversightRig(t)
 	ctx := context.Background()
-	lc := &plan.Lifecycle{Store: r.st}
+	lc := &plan.Lifecycle{Store: planpg.New(r.st, r.keys, r.chain)}
 
 	created, err := lc.Create(ctx, r.tenantID, minimalPlan("eval-gate-no-cases"), "test")
 	if err != nil {

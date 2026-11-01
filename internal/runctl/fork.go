@@ -6,12 +6,10 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/harness"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
 
@@ -64,15 +62,15 @@ type ForkResult struct {
 // text a caller needs to seed a fresh kernel.RunState.Transcript for the new
 // session's own first turn.
 func (c *Control) Fork(ctx context.Context, tenantID, parentSessionID uuid.UUID, atSeq int64, overrides ForkOverrides) (ForkResult, error) {
-	var parentSess store.Session
+	var parentSess eventlog.Session
 	var history []eventlog.Event
-	if err := c.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+	if err := c.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
 		var err error
-		parentSess, err = store.GetSession(ctx, tx, parentSessionID)
+		parentSess, err = tx.GetSession(ctx, parentSessionID)
 		if err != nil {
 			return err
 		}
-		history, err = store.ListEvents(ctx, tx, parentSessionID)
+		history, err = tx.ListEvents(ctx, parentSessionID)
 		return err
 	}); err != nil {
 		return ForkResult{}, fmt.Errorf("runctl: fork: %w", err)
@@ -115,13 +113,13 @@ func (c *Control) Fork(ctx context.Context, tenantID, parentSessionID uuid.UUID,
 	}
 
 	newSessionID := uuid.New()
-	err = c.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		dek, err := c.Keys.NewDEK(ctx, tx, tenantID)
+	err = c.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
+		dek, err := tx.NewDEK(ctx, tenantID)
 		if err != nil {
 			return err
 		}
 		_ = dek // the new session's DEK is minted so its own events can be sealed once a caller starts running it; Fork itself appends nothing to the child's log
-		return store.CreateSession(ctx, tx, store.Session{
+		return tx.CreateSession(ctx, eventlog.Session{
 			SessionID: newSessionID, SessionKey: newSessionID.String(), TenantID: tenantID,
 			SurfaceID: parentSess.SurfaceID, UserID: parentSess.UserID,
 			AgentID: parentSess.AgentID, AgentVersion: parentSess.AgentVersion,

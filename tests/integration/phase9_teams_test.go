@@ -13,6 +13,10 @@
 package integration
 
 import (
+	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
+	runctlpg "github.com/truongpx396/nexus-agent-demo/internal/runctl/postgres"
+	teamspg "github.com/truongpx396/nexus-agent-demo/internal/teams/postgres"
+
 	"context"
 	"strings"
 	"sync"
@@ -47,10 +51,10 @@ func buildTeamsRig(t *testing.T, r *oversightRig, prov provider.Provider) (*team
 		Log:      postgres.New(r.st, postgres.Hooks{Receipt: r.receiptFunc()}),
 	}
 	approvals := oversight.NewApprovals(oversightpg.New(r.st, r.keys, r.chain))
-	ctl := &runctl.Control{Store: r.st, Keys: r.keys, Chain: r.chain, Approvals: approvals, Kernel: k, System: "test", MaxTurns: 10}
+	ctl := &runctl.Control{Store: runctlpg.New(r.st, r.keys, r.chain), Approvals: approvals, Kernel: k, System: "test", MaxTurns: 10}
 
-	svc := teams.NewService(r.st, r.keys, r.chain)
-	svc.Wire(teams.Config{Kernel: k, Canceler: ctl, System: "test", MaxTurns: 10})
+	svc := teams.NewService(teamspg.New(r.st, r.keys, r.chain))
+	svc.Wire(teams.Config{Prices: costpg.New(r.st), Kernel: k, Canceler: ctl, System: "test", MaxTurns: 10})
 	return svc, k
 }
 
@@ -362,7 +366,7 @@ func TestCreateTeam_DeniesNestedTeamCreation(t *testing.T) {
 	// A session already at teams.MaxDepth (1) — the same depth a team
 	// member itself would be created at.
 	if err := r.st.InTenantTx(context.Background(), r.tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		return store.CreateSession(ctx, tx, store.Session{
+		return store.CreateSession(ctx, tx, eventlog.Session{
 			SessionID: memberID, SessionKey: memberID.String(), TenantID: r.tenantID,
 			SurfaceID: "test", UserID: userID, AgentID: uuid.Nil, AgentVersion: 1,
 			HarnessDigest: []byte("test"), DataLabel: "internal", RouteModelID: "fake",

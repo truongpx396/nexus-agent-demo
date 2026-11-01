@@ -201,7 +201,7 @@ func TestCostGate_ConcurrentSessionsRespectOneTenantCeiling(t *testing.T) {
 	for i := range sessionIDs {
 		sessionIDs[i] = uuid.New()
 		if err := st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-			return store.CreateSession(ctx, tx, store.Session{
+			return store.CreateSession(ctx, tx, eventlog.Session{
 				SessionID: sessionIDs[i], SessionKey: sessionIDs[i].String(), TenantID: tenantID,
 				SurfaceID: "test", UserID: uuid.New(), AgentID: uuid.Nil, AgentVersion: 1,
 				HarnessDigest: []byte("test-digest"), AutonomyLevel: "supervised",
@@ -370,7 +370,7 @@ func TestCostGate_UnreportedUsageReconcilesAtFullReservedCost(t *testing.T) {
 
 	sessionID := uuid.New()
 	if err := st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		return store.CreateSession(ctx, tx, store.Session{
+		return store.CreateSession(ctx, tx, eventlog.Session{
 			SessionID: sessionID, SessionKey: sessionID.String(), TenantID: tenantID,
 			SurfaceID: "test", UserID: uuid.New(), AgentID: uuid.Nil, AgentVersion: 1,
 			HarnessDigest: []byte("test-digest"), AutonomyLevel: "supervised",
@@ -405,8 +405,8 @@ func TestCostGate_UnreportedUsageReconcilesAtFullReservedCost(t *testing.T) {
 		}
 	}
 
-	sess, err := func() (store.Session, error) {
-		var s store.Session
+	sess, err := func() (eventlog.Session, error) {
+		var s eventlog.Session
 		err := st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 			var gerr error
 			s, gerr = store.GetSession(ctx, tx, sessionID)

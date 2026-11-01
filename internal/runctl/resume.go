@@ -6,10 +6,8 @@ import (
 	"iter"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
 
@@ -43,8 +41,8 @@ func (e ErrUnresolvedClaims) Error() string {
 func (c *Control) Resume(ctx context.Context, tenantID, sessionID uuid.UUID) iter.Seq2[eventlog.Event, error] {
 	return func(yield func(eventlog.Event, error) bool) {
 		var claimIDs []uuid.UUID
-		if err := c.Store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-			claims, err := store.ListInFlightClaims(ctx, tx, sessionID)
+		if err := c.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
+			claims, err := tx.ListInFlightClaims(ctx, sessionID)
 			if err != nil {
 				return err
 			}

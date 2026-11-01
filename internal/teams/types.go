@@ -14,7 +14,6 @@
 package teams
 
 import (
-	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -116,30 +115,4 @@ type Card struct {
 	ClaimedBySessionID *uuid.UUID
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
-}
-
-func marshalRoster(roster []MemberSpec) ([]byte, error) { return json.Marshal(roster) }
-
-func unmarshalRoster(b []byte) ([]MemberSpec, error) {
-	if len(b) == 0 {
-		return nil, nil
-	}
-	var out []MemberSpec
-	if err := json.Unmarshal(b, &out); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func marshalTaint(engaged [3]bool) ([]byte, error) { return json.Marshal(engaged) }
-
-func unmarshalTaint(b []byte) ([3]bool, error) {
-	var out [3]bool
-	if len(b) == 0 {
-		return out, nil
-	}
-	if err := json.Unmarshal(b, &out); err != nil {
-		return out, err
-	}
-	return out, nil
 }

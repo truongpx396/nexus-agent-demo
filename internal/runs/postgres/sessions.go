@@ -9,6 +9,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/controlplane"
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
@@ -40,7 +41,7 @@ func (s Sessions) CreateSession(ctx context.Context, req controlplane.AdmitRunV1
 		sessionKey = req.SessionID.String()
 	}
 	err := s.Store.InTenantTx(ctx, req.TenantID, func(ctx context.Context, tx pgx.Tx) error {
-		if err := store.CreateSession(ctx, tx, store.Session{
+		if err := store.CreateSession(ctx, tx, eventlog.Session{
 			SessionID: req.SessionID, SessionKey: sessionKey, TenantID: req.TenantID,
 			SurfaceID: req.SurfaceID, UserID: req.UserID, AgentID: uuid.Nil, AgentVersion: 1,
 			HarnessDigest: req.HarnessDigest, DataLabel: req.DataLabel,

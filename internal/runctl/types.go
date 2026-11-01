@@ -1,10 +1,8 @@
 // Package runctl implements README task 6.9's four named operations —
 // steer, cancel, resume, tightenAutonomy — plus replay (task 6.10) and fork
 // (task 6.11), and the durable Claims tracker (task 6.6) that bridges
-// internal/store's claims-table CRUD to internal/tools.Claims (sealing and
-// appending EventEffectClaimed/EventEffectClaimResolved needs
-// internal/crypto, which internal/store cannot import without a cycle — see
-// internal/store/claims.go's own doc comment).
+// claims-table ledger to internal/tools.Claims, appending EventEffectClaimed/
+// EventEffectClaimResolved in the same unit of work as the claim it records.
 //
 // runctl is free to import kernel and internal/oversight directly — only
 // kernel's own import allowlist is restricted (kernel/types.go); nothing
@@ -13,12 +11,9 @@
 package runctl
 
 import (
-	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
-	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/queue"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
 
@@ -29,9 +24,7 @@ import (
 // process-wide system prompt and resident catalog cover every session
 // regardless of which one this operation targets.
 type Control struct {
-	Store     *store.Store
-	Keys      *cryptopg.KeyStore
-	Chain     *auditpg.Chain
+	Store     Store
 	Approvals *oversight.Approvals
 	Inputs    *oversight.Inputs
 	Kernel    *kernel.Kernel
@@ -56,18 +49,3 @@ type Control struct {
 	// unrelated call sites computed it differently).
 	CatalogManifestDigest []byte
 }
-
-// deps is the small (store, keys, chain) subset several of Control's own
-// methods need to seal and append an out-of-band event — mirroring
-// internal/oversight's own unexported `deps` type field-for-field, so
-// claims.go's appendEvent can be a near-identical copy of oversight's own
-// (duplicated rather than shared across packages for the same reason
-// oversight/invalidate.go already duplicates kernel's toolResultPayload
-// shape: two packages with no other reason to depend on each other).
-type deps struct {
-	Store *store.Store
-	Keys  *cryptopg.KeyStore
-	Chain *auditpg.Chain
-}
-
-func (c *Control) deps() deps { return deps{Store: c.Store, Keys: c.Keys, Chain: c.Chain} }
