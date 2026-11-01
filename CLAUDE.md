@@ -23,11 +23,11 @@ go build ./... && go vet ./... && golangci-lint run --build-tags=integration ./.
 - Live-model evals are behind the `liveeval` build tag. Correctness tests never call a live model; they use `internal/provider/fake`.
 - CI also runs `govulncheck`, and `npm run lint` + `npm run build` in `web/`.
 
-Run locally: `make up && make migrate && make seed && make run`, then `NEXUS_TOKEN=$(make -s token) ./bin/nexusctl run "..."`. `make run` starts signerd + `nexusd --dev` (fake provider, auto-generated keys in `.dev/`); without `--dev`, `serve()` fails closed on any unset security-critical config. Config is `NEXUS_*` env vars; `.env` is auto-loaded by `internal/dotenv` (a real env var always wins) and `.env.example` documents every variable. Ports: Postgres 5433 (direct — admin/migrations only), PgBouncer 6432 (runtime), Redis 6380, nexusd 8080. Observability/LLM/pprof stacks have their own `make` targets (see Makefile `##` comments and `docs/`).
+Run locally: `make up && make migrate && make seed && make run`, then, in another shell, `export NEXUS_HTTP_ADDR=http://localhost:8085 NEXUS_TOKEN=$(make -s token | awk '/^token:/ {print $2}')` and `./bin/nexusctl run "..."` (`make token` prints three lines, and `NEXUS_HTTP_ADDR` is a listen address for `nexusd` but a URL for `nexusctl`). `make run` starts signerd + `nexusd --dev` (fake provider unless `.env` sets `NEXUS_PROVIDER`, auto-generated keys in `.dev/`); without `--dev`, `serve()` fails closed on any unset security-critical config. Config is `NEXUS_*` env vars; `.env` is auto-loaded by `internal/dotenv` (a real env var always wins) and `.env.example` documents every variable. Ports: Postgres 5433 (direct — admin/migrations only), PgBouncer 6432 (runtime), Redis 6380, nexusd 8085. Observability/LLM/pprof stacks have their own `make` targets (see Makefile `##` comments and `docs/`).
 
 Web: `cd web && npm ci && npm run dev | lint | build` (oxlint, `tsc -b`).
 
-**Trap:** a stray Docker container (`nexus-agent-demo-nexusd-1`) can publish :8080 and silently shadow the native `nexusd` — symptoms look like real regressions (404 on a new route, 401 on a fresh token). Check `docker ps` before assuming a code change broke something. A stack reset: `docker compose -f deploy/docker-compose.yml down -v`, regenerate `.dev/*.key`, `make up && make migrate && make seed`.
+**Trap:** a stray Docker container (`nexus-agent-demo-nexusd-1`) can publish :8085 and silently shadow the native `nexusd` — symptoms look like real regressions (404 on a new route, 401 on a fresh token). Check `docker ps` before assuming a code change broke something. A stack reset: `docker compose -f deploy/docker-compose.yml down -v`, regenerate `.dev/*.key`, `make up && make migrate && make seed`.
 
 ## Governing documents
 
