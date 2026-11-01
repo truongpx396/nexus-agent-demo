@@ -329,38 +329,52 @@ none of them changes that score.
 ```mermaid
 flowchart TB
     subgraph Surfaces["Surfaces (thin adapters — translate I/O only)"]
-        REST[REST /v1/runs]
+        REST["REST + SSE /v1/runs<br/>bearer-token AuthN (internal/authn)"]
         CLI[nexusctl]
         EXT["Phase 11: MCP client · per-user OAuth<br/>Telegram · Zalo · email · cron · React web"]
     end
 
-    subgraph CP["Control plane (package boundary, same process)"]
-        Auth[AuthN: static JWT / dev issuer] --> RBAC[RBAC scope]
-        RBAC --> Budget[BudgetGate: reserve then reconcile]
-        Budget --> Route[Router: data_label + difficulty]
+    LA["runs.Launcher: route · harness digest ·<br/>admit · mint session key · start"]
+
+    subgraph CP["Control plane (controlplane.Port, a Go interface in the same process)"]
+        Adm["AdmitRun: session row + optional ceiling"]
+        Ctl["ReserveBudget · ReportCost · EmitAuditReceipt<br/>RequestApproval · AuthorizeContentAccess"]
     end
 
     subgraph DP["Data plane"]
-        Q[(Queue port<br/>Redis Streams)]
-        W[Worker pool + session-key lock]
-        K[[Kernel loop<br/>classify · dispatch · pair · terminate]]
-        H[Harness: prompt zones - tools - memory<br/>skills - hooks - cost - reliability]
-        SB[Sandbox: docker, no net, hard limits]
+        Q[("Queue port<br/>Redis Streams")]
+        W["Worker pool + session-key lock"]
+        K[["Kernel loop<br/>classify · dispatch · pair · terminate"]]
+        BG["Budget gate: reserve before every model call,<br/>reconcile after"]
+        P["Provider port: router · failover<br/>fake · anthropic · litellm"]
+        H["Harness: prompt zones - tools - memory<br/>skills - hooks - reliability"]
+        SB["Sandbox: docker or OpenSandbox,<br/>no net, hard limits"]
     end
 
     subgraph Trust["Trust surface"]
-        PG[(Postgres: append-only events + RLS<br/>via PgBouncer transaction pooling<br/>+ pgvector, Phase 12)]
-        SD[signerd: sign-only audit key]
-        KEK[KEK file wraps per-tenant DEK]
+        EL["kernel.EventLog port<br/>eventlog/postgres · eventlog/inmem"]
+        PG[("Postgres: append-only events + RLS<br/>via PgBouncer transaction pooling<br/>+ pgvector, Phase 12")]
+        SD["signerd: sign-only audit key"]
+        KEK["KEK file wraps per-tenant DEK"]
+        RC[("Redis: epoch-marked<br/>tenant-ceiling counter")]
     end
 
-    Surfaces --> CP --> Q --> W --> K --> H
-    H --> SB
-    W --> PG
-    K --> SD
+    Surfaces --> LA
+    LA --> Adm
+    LA --> Q
+    Q --> W --> K
+    K --> BG --> P
+    K --> H --> SB
+    BG -.-> RC
+    K --> EL --> PG
+    EL -. signs receipt .-> SD
     PG --- KEK
-    EV[evals/ runner + CI gate] -.release gate.-> CP
+    EV["evals/ runner + CI gate"] -.release gate.-> CP
 ```
+
+The loop reaches durable state only through the `kernel.EventLog` port, and a surface starts a run only through
+`runs.Launcher`, which admits it through `controlplane.Port`. There is no RBAC layer: the principal comes from the verified
+token's claims, and routing (which model, and why) is decided in the data plane before admission.
 
 ### Repository layout
 
