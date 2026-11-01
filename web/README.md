@@ -27,14 +27,14 @@ surface-agnostic all along. **No Go code was changed to build this.**
 
 3. Open the app, click **Set up identity** in the header, and fill in:
    - **Base URL** — where `nexusd` is listening (default `http://localhost:8085`).
-   - **Tenant ID** / **User ID** — any UUIDs. The backend's own dev-auth
-     posture (`internal/surfaces/rest/server.go`'s doc comment) reads these
-     straight from the `X-Nexus-Tenant-ID` / `X-Nexus-User-ID` headers on
-     every request, with no real verification — there's no login flow to
-     complete. Use `make seed` output, or any UUIDs of your choosing.
+   - **Token** — a bearer token for a seeded tenant: from the repo root,
+     `make -s token | awk '/^token:/ {print $2}'` (`make token` prints the
+     tenant id, user id and token on three lines; tokens last 24 hours).
+     There is no login flow: the backend verifies the token's signature and
+     takes the principal only from its claims.
 
-   These are persisted to `localStorage` and attached as headers on every
-   request from then on.
+   These are persisted to `localStorage` and attached as an
+   `Authorization: Bearer` header on every request from then on.
 
 ## npm scripts
 

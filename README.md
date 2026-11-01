@@ -1,10 +1,260 @@
-# Nexus Agent Demo
+# 🧭 Nexus Agent Demo — A Production-Shaped Agent Platform in One Go Binary
 
-A **simplified, single-binary Go reimplementation** of
-[`truongpx396/nexus-agent`](https://github.com/truongpx396/nexus-agent) that still exercises **every core pattern** of the original design.
+### A multi-tenant, governed agent kernel with append-only state, hash-chained audit and human approval. Provider-agnostic, and deterministic to test
 
-**Target**: Go, one binary (`nexusd`) + one CLI (`nexusctl`), Postgres + PgBouncer + Redis,
-Docker-based sandbox. ~14 phases, ~8–11 weeks solo at a steady pace, every phase shippable.
+**One loop, many surfaces.** `nexusd` runs the control plane, the durable-queue workers, the kernel loop and the REST
+surface as a single Go process over Postgres + PgBouncer + Redis. Every conversation is an **append-only, envelope-encrypted
+event log** with a **hash-chained, signer-attested audit trail**. Every tool call walks a **16-step pipeline** and a
+**10-layer permission chain**, and every model call is **budget-reserved before it streams**.
+
+It is a simplified, single-binary Go reimplementation of [`truongpx396/nexus-agent`](https://github.com/truongpx396/nexus-agent)
+that keeps every architectural seam and control and collapses only deployment topology, scale-out infrastructure and the
+commercial tail ([§2](#2-the-simplification-thesis)). Around the kernel sit tools (built-ins, an MCP client, per-user OAuth
+connectors), skills, sub-agent delegation and peer teams, a declarative orchestration plane, file-first memory, a pgvector
+retrieval tier and a Docker or OpenSandbox sandbox. The model is behind one port with three adapters: a scripted `fake` (the
+default, so everything runs with no credentials), `anthropic`, and `litellm` for any OpenAI-compatible model, local Ollama
+included.
+
+> **Status:** a reference implementation, not a deployed service. The `--dev` path is zero-setup; outside it `nexusd`
+> fails closed on any unset security-critical setting. What stands between this and production is tracked in
+> [`docs/production-readiness-review.md`](docs/production-readiness-review.md) and [`docs/go-live.md`](docs/go-live.md).
+
+[![CI](https://github.com/truongpx396/nexus-agent-demo/actions/workflows/ci.yml/badge.svg)](https://github.com/truongpx396/nexus-agent-demo/actions/workflows/ci.yml)
+[![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](#-quickstart)
+[![Stack](https://img.shields.io/badge/Stack-Postgres%20%C2%B7%20PgBouncer%20%C2%B7%20Redis%20%C2%B7%20React-1f6feb)](#-highlights)
+[![Isolation](https://img.shields.io/badge/Isolation-RLS%20%2B%20transaction--local%20scope-8250df)](#-safety-and-trust)
+[![Audit](https://img.shields.io/badge/Audit-hash--chained%20%2B%20sign--only%20signerd-d1242f)](#-safety-and-trust)
+[![LLM](https://img.shields.io/badge/LLM-fake%20%C2%B7%20Anthropic%20%C2%B7%20LiteLLM-2ea44f)](#-configuration)
+[![Patterns](https://img.shields.io/badge/Patterns-57%20of%2067%20at%20full%20or%20simplified%20fidelity-e36209)](docs/build-phases.md)
+[![Eval gate](https://img.shields.io/badge/Eval%20gate-release%20gate%20in%20CI-0969da)](#4-testing-strategy)
+
+* * *
+
+## 📑 Table of Contents
+
+- [🎯 Highlights](#-highlights)
+- [🚀 Quickstart](#-quickstart)
+- [💬 Things to try](#-things-to-try)
+- [🌐 HTTP API and CLI](#-http-api-and-cli)
+- [🧩 Configuration](#-configuration)
+- [🔒 Safety and trust](#-safety-and-trust)
+- [📊 Observability](#-observability)
+- [🔧 Make targets](#-make-targets)
+- **Design narrative** (cited across the code and docs by number)
+  - [1. What the original is, in one page](#1-what-the-original-is-in-one-page)
+  - [2. The simplification thesis](#2-the-simplification-thesis)
+  - [3. Target architecture of the demo](#3-target-architecture-of-the-demo)
+  - [4. Testing strategy](#4-testing-strategy)
+  - [5. Explicitly out of scope](#5-explicitly-out-of-scope-and-the-trigger-that-would-change-that)
+  - [6. Source references](#6-source-references)
+- [🩺 Troubleshooting](#-troubleshooting)
+
+* * *
+
+## 🎯 Highlights
+
+| Layer | What it is |
+|---|---|
+| 🧠 **Kernel** | `kernel/`: one `iter.Seq2` generator (observe → think → act). Typed response classification, 8 typed terminal reasons, and a paired `tool_use`/`tool_result` invariant that is property-tested over generated histories |
+| 🔀 **Models** | `internal/provider`: one port and one normalized stream. `fake` (default) · `anthropic` · `litellm`, with a deterministic router (data label × difficulty) and failover that commits at the first emitted chunk |
+| 🛠️ **Tools** | `internal/tools` 16-step pipeline · `internal/permissions` 10-layer chain · hooks (command, HTTP, prompt) · Docker or OpenSandbox sandbox · Crawl4AI · MCP client |
+| 💾 **State** | A Postgres append-only event log (a trigger rejects UPDATE/DELETE for every role). Status, taint and terminal reason are projections rebuilt by replay; checkpoints, snapshots and write-ahead idempotency claims are three separate artifacts |
+| 🏢 **Tenancy** | Row-level security **enabled and forced** on every tenant table, scoped by a transaction-local `set_config` and proven *through* PgBouncer in transaction-pooling mode |
+| 🔐 **Trust** | Per-tenant envelope encryption (erasure is crypto-shredding), hash-chained audit receipts signed by a separate `signerd`, content-free telemetry behind a deny-by-default allowlist |
+| 💵 **Cost** | Integer money, a versioned price book, reserve → stream → reconcile on every model call, an epoch-marked Redis counter, and a typed `cost_exhausted` terminal reason |
+| 🚦 **Queue** | Redis Streams consumer group with `XAUTOCLAIM` reclaim, a per-session-key serial lock and stateless workers |
+| 🌐 **Surfaces** | REST + SSE · `nexusctl` · Telegram · Zalo · email · cron · MCP · a React web app, all thin translators over the same kernel |
+| 🧪 **Evals** | A release gate with k trials, exact confidence intervals, a three-valued verdict, a held-out gap and a baseline regression check; `make eval` is a CI job |
+
+- 🔁 **One loop, many surfaces**: no surface holds control flow, so adding one is an adapter, never a fork of the loop.
+- ✋ **Approval is a transaction**: bound to a canonical digest of the exact call, so a modified, expired or invalidated approval is a typed outcome, never a silent re-ask. A suspended run costs zero tokens.
+- 🧬 **Append-only state**: the event log is the only mutable runtime state; replay, resume and fork are three named operations.
+- 🧱 **Boundaries are tests, not conventions**: an import-graph test fails the build on a forbidden dependency, plus a 500-line file cap, no floats in money and exhaustive switches over terminal reasons.
+- 🎲 **Deterministic correctness tests**: nothing that decides pass or fail calls a live model; they run against `internal/provider/fake`.
+- 🔍 **Operable**: `nexusd verify-chain`, `dashboard` and `go-live` check the audit chain, the golden signals and the launch checklist against a live deployment.
+
+* * *
+
+## 🚀 Quickstart
+
+**Prerequisites:** 🐹 Go 1.26 (`go.mod` pins the patch release) · 🐳 Docker + Compose · 🟢 Node, only for the web app.
+No API key and no model download: the default provider is a scripted fake.
+
+```bash
+cp .env.example .env        # optional: every variable has a zero-setup default
+make up                     # postgres :5433, pgbouncer :6432, redis :6380
+make migrate                # schema + RLS, direct to Postgres (bypasses PgBouncer on purpose)
+make seed                   # tenant "acme" and its default price book
+make run                    # signerd + nexusd --dev on :8085; keys are generated into .dev/
+```
+
+Then, in a second terminal:
+
+```bash
+export NEXUS_HTTP_ADDR=http://localhost:8085      # nexusctl wants a URL; nexusd's own setting is a listen address
+export NEXUS_TOKEN=$(make -s token | awk '/^token:/ {print $2}')   # `make token` prints tenant_id, user_id and token
+
+./bin/nexusctl run "what is 21 * 2?"
+# run_id: 5f8ee7b1-8a45-4227-a891-6bc9666e4263
+# watch: http://localhost:8085/v1/runs/5f8ee7b1-8a45-4227-a891-6bc9666e4263
+
+curl -s -H "Authorization: Bearer $NEXUS_TOKEN" $NEXUS_HTTP_ADDR/v1/runs/<run_id>
+# {"run_id":"…","status":"completed","terminal_reason":"completed"}
+curl -N -H "Authorization: Bearer $NEXUS_TOKEN" $NEXUS_HTTP_ADDR/v1/runs/<run_id>/events      # the event log, as SSE
+```
+
+A run's log reads `tool_loaded` (one per resident tool, pinning what the model could see) → `user_message` →
+`budget_decision` → `content` → `terminal`. Each `make token` mints a **new user**, and `GET /v1/sessions` lists only
+the token's own runs; keep the token, or mint with `./bin/nexusd --dev token --tenant=acme --user=<uuid>` to stay the same user.
+
+**Web app:** `cd web && npm ci && npm run dev`, open http://localhost:5173, and enter the base URL and the token in the header's settings.
+
+**Another model:** `NEXUS_PROVIDER=anthropic ANTHROPIC_API_KEY=… make run`, or a local Ollama model through LiteLLM
+([`docs/local-llm.md`](docs/local-llm.md)). **Containers:** `make docker-up` runs `nexusd` and `signerd` from built images against the same infra.
+
+<details>
+<summary>🔌 Dev ports</summary>
+
+| Service | Port | Service | Port |
+|---|---|---|---|
+| nexusd (REST, `/metrics`, `/healthz`, `/readyz`) | :8085 | Postgres (direct: admin and migrations only) | :5433 |
+| PgBouncer (runtime, transaction pooling) | :6432 | Redis | :6380 |
+| pprof: nexusd / signerd (loopback) | :6060 / :6061 | Web app (Vite) | :5173 |
+| LiteLLM (`make llm-up`) | :4100 | Langfuse (`make langfuse-up`) | :3001 |
+| Crawl4AI / OpenSandbox (`make agentic-up`) | :11235 / :8090 | Grafana (`make observability-up`) | :3310 |
+| Prometheus / Alertmanager / cAdvisor | :9091 / :9094 / :8095 | Loki / Tempo / Pyroscope | :3101 / :3200 / :4040 |
+
+</details>
+
+* * *
+
+## 💬 Things to try
+
+Every example needs the quickstart stack running.
+
+| Try | What it shows |
+|---|---|
+| `curl -N …/v1/runs/<run_id>/events` after a run | 📜 The append-only log as the API sees it, decrypted only for the run's own audience |
+| `make dashboard` | 📈 The golden signals per tenant: terminal-reason mix, stuck rate, cost-ceiling breach rate, cache-read rate, approval p50/p95 |
+| `make verify-chain` | 🔗 Walks every tenant's hash-chained audit receipts and anchors, verifies each signature against the trusted public key and exits non-zero on a break or a gap |
+| `make go-live` | ✅ The launch checklist across every tenant: automated items checked against the live deployment, manual ones printed as reminders, never as a silent pass ([`docs/go-live.md`](docs/go-live.md)) |
+| `make seed TENANT=scratch` then `./bin/nexusd --dev erase --tenant=scratch` | 🧹 Crypto-shredding erasure: the DEK is destroyed and derived rows are deleted, yet the log still replays structurally and the audit chain still verifies. ⚠️ Destructive and irreversible, so use a throwaway tenant |
+| `make eval` | 🎯 The release gate over the scripted corpus. A green run ends `PASS`; the judge-graded case reports `inconclusive` (no judge is wired), which is never counted as a pass |
+| `go test ./...` | 🧪 Unit and property tests with no services, including the import-boundary and file-size contract tests |
+| `go test -tags=integration ./internal/store -run TestIsolation -v` | 🏢 Tenant isolation through PgBouncer: transaction-local scope holds under concurrency, and the session-level variant is shown to leak |
+| `go test -race -tags=integration ./...` | 🐳 The full integration suite on disposable Postgres + PgBouncer (testcontainers): Docker must run, `make up` is not needed |
+
+* * *
+
+## 🌐 HTTP API and CLI
+
+`nexusd` serves on `NEXUS_HTTP_ADDR` (default `:8085`). The run, session and approval routes need `Authorization: Bearer <token>`; a token
+is minted out of band with `nexusd token --tenant=<name> [--user=<uuid>] [--ttl=24h]` and the principal comes only from its
+verified claims (a signed-JWT dev issuer stands in for per-tenant OIDC).
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /v1/runs` | Start a run (`202` with `run_id`); body `{"input", "autonomy"?, "budget_usd"?}` |
+| `GET /v1/runs/{id}` · `GET /v1/runs/{id}/events` | Status and terminal reason · the event log as SSE |
+| `GET /v1/sessions` | The caller's runs |
+| `POST /v1/runs/{id}/cancel` · `/steer` · `/autonomy` · `/fork` | Run control. Autonomy only ever tightens; a fork replays to a sequence number and disables external effects |
+| `GET /v1/approvals` · `GET /v1/approvals/{id}` | Pending approvals with their decision-ready context |
+| `POST /v1/approvals/{id}/grant` · `/deny` | Decide an approval; a grant may carry a modified input, which re-binds the digest |
+| `POST /v1/sessions/{id}/content-access-grants` · `GET …/content-access-grants/read` | Audited, expiring access to plaintext outside the run's own audience |
+| `GET /healthz` · `GET /readyz` · `GET /metrics` | Liveness · readiness (Postgres, Redis and signerd) · Prometheus metrics |
+| `POST /v1/webhooks/{telegram,zalo,email}/…` | Inbound delivery for the conversational surfaces, deduplicated and session-locked |
+
+`nexusctl` is a thin client over the same API (`NEXUS_HTTP_ADDR` as a URL, `NEXUS_TOKEN`):
+
+```text
+nexusctl run "<input>" [--autonomy=read_only|supervised|autonomous] [--budget=<usd>]
+nexusctl approvals list | show <id> | grant <id> [--modify='{"field":"value"}'] | deny <id> --reason="…"
+nexusctl cancel <session-id> [--reason="…"]    nexusctl steer <session-id> "<input>"
+nexusctl fork <session-id> --at=<seq> [--model=<model-id>]
+```
+
+`nexusd` itself also takes `migrate`, `seed`, `token`, `verify-chain`, `dashboard`, `go-live`, `erase` and `ingest`
+(`--tenant`, `--file`, `--mime`: convert, scan, embed and index one document). A CORS layer lets the web app call it from another origin;
+that is safe because auth is a bearer token the client attaches, never a cookie.
+
+* * *
+
+## 🧩 Configuration
+
+Everything is a `NEXUS_*` environment variable. [`.env.example`](.env.example) documents each one with its default and is
+auto-loaded from the working directory; **a real environment variable always wins**, and a `.env` that sets
+`NEXUS_PROVIDER` changes what `make run` talks to. Without `--dev`, `nexusd` refuses to start unless
+`NEXUS_DATABASE_URL`, `NEXUS_REDIS_ADDR`, `NEXUS_SIGNERD_SOCKET`, `NEXUS_KEK_PATH` and `NEXUS_AUTHN_SIGNING_KEY_PATH` are set.
+
+| Concern | Setting | Notes |
+|---|---|---|
+| 🔀 Model | `NEXUS_PROVIDER=fake` (default) · `anthropic` · `litellm` | `anthropic` needs `ANTHROPIC_API_KEY` (`NEXUS_ANTHROPIC_MODEL`); `litellm` uses `NEXUS_LITELLM_BASE_URL` and `NEXUS_LITELLM_MODEL`. Local Ollama setup: [`docs/local-llm.md`](docs/local-llm.md) |
+| 📦 Sandbox | `NEXUS_SANDBOX=` (unset) · `docker` · `opensandbox` | Unset runs `platform/shell` unsandboxed. OpenSandbox and Crawl4AI: `make agentic-up`, [`docs/agentic-capabilities.md`](docs/agentic-capabilities.md) |
+| 🕸️ Egress | `NEXUS_WEB_FETCH_ALLOWLIST` | Comma-separated hosts `platform/web_fetch` may reach; empty means none |
+| 🔭 Tracing | `NEXUS_OTLP_ENDPOINT` · `NEXUS_LANGFUSE_HOST` | Either or both; nothing set prints spans to stdout. Content is attached only with `NEXUS_TRACE_CONTENT=true` |
+| 🔌 Connectors | `NEXUS_OAUTH_PROVIDERS` and a `NEXUS_OAUTH_<NAME>_*` block per name | Per-user OAuth tokens, sealed under the tenant's key |
+| 🗂️ Storage | `NEXUS_WORKSPACE_ROOT` · `NEXUS_BLOB_DIR` · `NEXUS_MEMORY_ROOT` · `NEXUS_SKILLS_ROOT` | Defaults under `.dev/` (skills under `skills/`) |
+| 🪵 Logs and profiling | `NEXUS_LOG_LEVEL` · `NEXUS_LOG_FILE` · `NEXUS_PPROF_ADDR` · `NEXUS_PYROSCOPE_ADDR` | `make run` enables log files and loopback pprof by default |
+
+* * *
+
+## 🔒 Safety and trust
+
+The trust surface is day-one and co-equal with the loop, never a retrofit. The mechanisms, each with its code and test:
+
+- 🏢 **Tenant isolation fails closed.** RLS is enabled and forced on every tenant table (`nexusd migrate` asserts it and prints the count). `Store.InTenantTx` is the only scoping call and uses `set_config('app.tenant_id', $1, true)`, which is transaction-local; a session-level `SET` is banned by lint *and* by the isolation test, because the pooler reassigns connections between tenants.
+- ⛓️ **Permissions are one total order.** Ten layers, a DENY at any layer is final, there is no bypass mode, and the per-invocation safety check and Rule of Two are always evaluated ([the chain](#3-target-architecture-of-the-demo)). Autonomy is a one-way ratchet: no widening operation exists on any interface.
+- ✋ **Approval is a transaction.** Bound to the call's canonical digest, with a named assignee and a TTL; a digest mismatch at execution is a typed `approval_mismatch`.
+- 1️⃣ **Side effects are claimed first.** A write-ahead idempotency claim goes `in_flight` before the effect leaves the process, and is resolved by a probe or a human. Nothing ever re-executes silently.
+- 🔐 **Keys have separate custody.** A KEK wraps per-tenant DEKs for AES-256-GCM sealing; the audit key lives only in `signerd`, which signs over a unix socket and never reveals it, and `cmd/nexusd` may not import the signer-key package at all.
+- 🧾 **The audit chain is verifiable.** Every appended event gets a hash-chained receipt over *digests*, so lawful redaction never breaks verification; chain heads are anchored periodically and `nexusd verify-chain` checks both.
+- 🙈 **Telemetry carries no content.** Span attributes pass a deny-by-default allowlist; reading plaintext outside a run's own audience takes an audited, expiring content-access grant.
+
+* * *
+
+## 📊 Observability
+
+`nexusd` exposes `/metrics`, writes structured zerolog JSON, and emits turn-scoped spans derived from the durable log. The
+local stack is separate from the app and optional ([`docs/observability.md`](docs/observability.md)):
+
+| Make target | Brings up |
+|---|---|
+| `make observability-up` | Prometheus + Alertmanager + cAdvisor + Loki + Promtail + Grafana, pre-wired with four dashboards (golden signals, cost and tools, infrastructure, logs) and five alert rules |
+| `make tempo-up` · `make profiling-up` | Grafana Tempo for OTLP traces · Grafana Pyroscope for continuous profiles |
+| `make langfuse-up` · `make langfuse-lite-up` | Self-hosted Langfuse (full, or the lightweight v2) for per-run agent traces ([`docs/local-llm.md`](docs/local-llm.md)) |
+| `make pprof-cpu` · `pprof-heap` · `pprof-goroutine` | On-demand profiles from the loopback pprof listener `make run` starts |
+
+* * *
+
+## 🔧 Make targets
+
+The `##` comments in the [Makefile](Makefile) are the full reference. The ones you will use:
+
+| Target | Does |
+|---|---|
+| **▶️ Run** | |
+| `make up` · `make down` | Start / stop Postgres, PgBouncer and Redis (volumes kept) |
+| `make migrate` · `make seed` | Apply migrations incl. RLS (direct to Postgres) · seed a tenant (`TENANT=name`, default `acme`) |
+| `make run` · `make signerd` | `signerd` + `nexusd --dev` in the foreground · `signerd` alone |
+| `make token` | Mint a dev bearer token for `TENANT` (prints three lines) |
+| `make docker-up` · `make docker-down` | Run `nexusd` + `signerd` from built images · stop them (`make down` does not) |
+| `make web-build` | Install and build the React app |
+| **🔍 Operate** | |
+| `make verify-chain` · `make dashboard` · `make go-live` | Audit-chain verification · golden-signal dashboard · launch checklist |
+| **✅ Gates** | |
+| `make test` · `make lint` · `make eval` | Unit + property tests · golangci-lint (CI also builds with `--build-tags=integration`) · the eval release gate |
+| `make eval-baseline` | Regenerate `evals/testdata/baseline.json`; commit the diff only after a deliberate corpus change |
+| `make pr-size` | Changed lines versus `origin/main`; CI fails a PR above 1,000 |
+| **🧰 Local services** | |
+| `make llm-up` · `make langfuse-up` · `make agentic-up` · `make observability-up` | Each in its own compose file, so `make down` never touches them; stop with `llm-down`, `agentic-down`, `observability-down` |
+
+Before calling a change done: `go build ./... && go vet ./... && golangci-lint run --build-tags=integration ./... && go test ./...`.
+
+* * *
+
+> **The design narrative (§1–§6).** What follows is the design record: what the original is, what this demo collapses and
+> why, the architecture and its enforced boundaries, the test strategy and what is deliberately out of scope. Code comments and
+> docs cite these sections by number (`README §5`), so the numbering is stable; add new topics above this line, not between sections.
 
 ---
 
@@ -64,12 +314,13 @@ the audit chain, the erasure model, the cost gate, the orchestration plane, dele
 the eval gate — ships **in full**, because each *is* the pattern.
 
 The full pattern-by-pattern fidelity scoring (67 rows) and the phase-by-phase build plan
-(Phase 0 through Phase 13) live in [`docs/build-phases.md`](docs/build-phases.md) — split out
+(Phase 0 through Phase 19) live in [`docs/build-phases.md`](docs/build-phases.md) — split out
 to keep this narrative readable. Score: 57 of 67 patterns at full or simplified fidelity, 4 as
-seams, 6 deliberately out of scope; Phase 13 (added after
-[`docs/production-readiness-review.md`](docs/production-readiness-review.md)) closes gaps
-between what several **F**-rated patterns claimed and what the shipped code did, without
-changing that score.
+seams, 6 deliberately out of scope. Phases 13–15 (added after
+[`docs/production-readiness-review.md`](docs/production-readiness-review.md)) and Phase 18 close gaps
+between what several **F**-rated patterns claimed and what the shipped code did, and Phase 19
+makes the core depend on ports rather than on Postgres (hexagonal persistence and use-case seams);
+none of them changes that score.
 
 ---
 
@@ -179,20 +430,33 @@ nexus-agent-demo/
 │   ├── harness/                # harness_digest computation
 │   ├── config/                 # tenant config and its Loader port — config, never forks
 │   │   └── postgres/           # the Loader over tenant_configs, plus the transaction-level Load/Upsert the seed command composes
-│   └── controlplane/           # the versioned CP<->DP contract as Go interfaces + local impl
+│   ├── controlplane/           # the versioned CP<->DP contract as Go interfaces + local impl
+│   ├── authn/                  # resolves a bearer token to a tenant/user principal (the signed-JWT dev issuer)
+│   ├── evalgate/               # glue between the plan lifecycle's eval hook and the release gate (evals.Gate)
+│   ├── dotenv/                 # the .env loader every binary calls first; a real env var always wins
+│   └── version/                # the build identity shared by every binary
 ├── web/                        # Phase 11: React app over the existing REST + SSE API — no backend surface change
 ├── migrations/                 # numbered SQL, expand/contract discipline, RLS policies
 ├── evals/                      # corpus/*.yaml, runner, graders, judge, digest, CI gate
+├── skills/                     # skill bundles (GUIDE.md + skill.json) loaded from NEXUS_SKILLS_ROOT
 ├── deploy/
-│   ├── docker-compose.yml      # postgres, pgbouncer(:6432, transaction pooling), redis
-│   └── sandbox/Dockerfile      # the hardened exec image
+│   ├── docker-compose.yml      # postgres, pgbouncer(:6432, transaction pooling), redis; signerd + nexusd under the `app` profile
+│   ├── docker-compose.local-llm.yml       # LiteLLM, Langfuse (docs/local-llm.md)
+│   ├── docker-compose.agentic.yml         # Crawl4AI, OpenSandbox (docs/agentic-capabilities.md)
+│   ├── docker-compose.observability.yml   # Prometheus, Alertmanager, Loki, Grafana, Tempo, Pyroscope (docs/observability.md)
+│   └── litellm/ observability/ # their configs, dashboards and alert rules
 ├── tests/
-│   ├── contract/               # kernel ABI, control/data-plane, run-API
-│   ├── integration/            # isolation-through-pooler, resume, ceiling, HITL, erasure
+│   ├── contract/               # import boundaries, file-size cap, cost and embedding metering
+│   ├── integration/            # black-box: REST run, ceiling, HITL, resume race, erasure, retrieval, surfaces dedup
 │   └── property/               # paired-result invariant over generated histories
-├── docs/                       # design notes; diagrams mirrored from the source repo
-└── PLAN.md                     # this file
+├── docs/                       # build ledger, constitution, go-live, local-LLM, observability and review docs
+├── specs/ .specify/            # Spec Kit feature specs and the constitution (the code-review checklist)
+├── CLAUDE.md                   # working rules for contributors and coding agents
+└── README.md                   # this file
 ```
+
+The tenant-isolation test that runs through PgBouncer is white-box and lives beside the code it needs, in
+`internal/store/isolation_integration_test.go`.
 
 **Import boundary rule (enforced by a test, not a convention):**
 `kernel/` is the core of the hexagon: it may import `internal/{eventlog,provider,tools,promptctx,cost,reliability,obs}`
@@ -263,7 +527,7 @@ Plus, all with `tenant_id` + RLS: `checkpoints`, `snapshots`, `idempotency_claim
 `surfaces`, `surface_identities`, `delivery_records`, `delegations`,
 `orchestration_plans`, `content_access_grants`.
 
-~31 tables. The original has ~50; the dropped set is billing, FX, connectors, integration
+33 tenant tables today (`nexusd migrate` asserts RLS on every one). The original has ~50; the dropped set is billing, FX, connectors, integration
 adapters, the eval entities (which live in `evals/` as files here, not rows), and — as of
 `migrations/0024_retire_queue_jobs.sql` — the job queue itself, now a Redis Streams
 consumer group (`internal/queue/redis/streams.go`) instead of a Postgres table.
@@ -278,13 +542,13 @@ schema, which is the whole point of adding them late.
 
 ```go
 // internal/store/tenant.go — every read/write path goes through this. No exceptions.
-func (s *Store) InTenantTx(ctx context.Context, tenantID uuid.UUID, fn func(pgx.Tx) error) error {
-    return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+func (s *Store) InTenantTx(ctx context.Context, tenantID uuid.UUID, fn func(ctx context.Context, tx pgx.Tx) error) error {
+    return pgx.BeginFunc(ctx, s.Pool, func(tx pgx.Tx) error {
         // transaction-local, parameterised. SET LOCAL cannot take a parameter; set_config(.., true) can.
         if _, err := tx.Exec(ctx, `SELECT set_config('app.tenant_id', $1, true)`, tenantID.String()); err != nil {
             return err
         }
-        return fn(tx)
+        return fn(ctx, tx)
     })
 }
 ```
@@ -296,10 +560,9 @@ reassigned between tenants between statements.
 ### Key interfaces (the kernel ABI, translated to Go)
 
 ```go
-// kernel/loop.go — the generator. This is the ONLY place control flow lives.
-type Kernel interface {
-    Run(ctx context.Context, s *Session) iter.Seq2[Event, error]
-}
+// kernel/loop.go — the generator. This is the ONLY place control flow lives. Seed, Resume,
+// ResumeDelegation, Continue and ResumeConversation enter the same loop at other points.
+func (k *Kernel) Run(ctx context.Context, st *RunState, cfg RunConfig) iter.Seq2[eventlog.Event, error]
 
 // internal/provider — one abstraction, native tool calling only, usage split by class.
 type Provider interface {
@@ -326,29 +589,31 @@ type Tool interface {
     Call(ctx context.Context, in json.RawMessage, rc RunContext) (Result, error)
 }
 
-// internal/cost — called BEFORE every Provider.Stream, including auxiliary calls.
-type BudgetGate interface {
-    Reserve(ctx context.Context, r ReserveReq) (Reservation, error) // -> cost_exhausted on refusal
-    Reconcile(ctx context.Context, id ReservationID, u Usage) error // accepts UNREPORTED
-    Record(ctx context.Context, m MeterID, qty int64, ref string) error
-}
+// internal/cost — Gate.Reserve is called BEFORE every Provider.Stream, including auxiliary calls.
+func (g *Gate) Reserve(ctx context.Context, req ReserveRequest) (Reservation, error)                       // -> cost_exhausted on refusal
+func (g *Gate) Reconcile(ctx context.Context, res Reservation, usage provider.Usage, reported bool) error  // reported=false: reconcile at the full reserved worst case
+func (g *Gate) Record(ctx context.Context, tenantID, sessionID uuid.UUID, meter MeterID, qty int64, modelID string) error
 
 // internal/oversight — approval and elicitation share suspension and nothing else.
-type Oversight interface {
-    RequestApproval(ctx context.Context, r ApprovalRequest, rc RunContext) (ApprovalOutcome, error)
-    RequestInput(ctx context.Context, r InputRequest, rc RunContext) (InputOutcome, error)
-    Invalidate(ctx context.Context, sessionID uuid.UUID, reason InvalidationReason) error
-}
+// Two services over one unit-of-work Store (Postgres adapter: internal/oversight/postgres).
+func (a *Approvals) Create(ctx context.Context, req CreateApprovalRequest) (Approval, error)
+func (a *Approvals) Grant(ctx context.Context, tenantID, approvalID uuid.UUID, decidedBy string) (Approval, error)
+func (a *Approvals) GrantModified(ctx context.Context, tenantID, approvalID uuid.UUID, decidedBy string, modifiedInput json.RawMessage) (Approval, error)
+func (a *Approvals) Deny(ctx context.Context, tenantID, approvalID uuid.UUID, decidedBy, reason string) (Approval, error)
+func (a *Approvals) Invalidate(ctx context.Context, tenantID, sessionID uuid.UUID, reason InvalidationReason) (*Approval, error)
+func (i *Inputs) RequestInput(ctx context.Context, p RequestInputParams) (InputRequest, error)
 
-// internal/store — one log, three artifacts that are never interchangeable.
-type Persistence interface {
-    Append(ctx context.Context, e Event) (Seq, error)
-    Checkpoint(ctx context.Context, sessionID uuid.UUID) (CheckpointID, error) // machine-facing resume
-    Snapshot(ctx context.Context, sessionID uuid.UUID, at Seq) (SnapshotID, error) // disposable
-    Hydrate(ctx context.Context, sessionID uuid.UUID) (SessionState, error)
-    Claim(ctx context.Context, key string, pairRef uuid.UUID) (Claim, error)  // WRITE-AHEAD
-    ResolveClaim(ctx context.Context, id ClaimID, r Resolution) error         // never re-executes
+// kernel/ports.go — the only durable surface the loop sees (Phase 19). Adapters:
+// internal/eventlog/postgres in production, internal/eventlog/inmem so the loop runs with no database.
+type EventLog interface {
+    Append(ctx context.Context, e eventlog.Event) (eventlog.Event, error)
+    SetStatus(ctx context.Context, tenantID, sessionID uuid.UUID, status string, terminalReason *string) error
+    RecordSuspension(ctx context.Context, req SuspendRequest) error         // an approval suspension
+    RecordDelegation(ctx context.Context, req DelegateSuspendRequest) error // a delegation suspension
 }
+// One log, three artifacts that are never interchangeable (internal/store, internal/runctl):
+// the condensation (model-facing), the checkpoint (machine-facing resume) and the snapshot (disposable).
+// Write-ahead idempotency claims go in_flight BEFORE an effect leaves the process and are never re-executed.
 
 // internal/controlplane — the versioned boundary. One process today, two later.
 type Port interface { // v1
@@ -422,7 +687,7 @@ none requires migrating the event log, the audit chain, or the encryption model.
 
 ## 6. Source references
 
-Read alongside this plan (all in `truongpx396/nexus-agent@2ad2a6a`):
+Read alongside this document (all in `truongpx396/nexus-agent@2ad2a6a`):
 
 | Document | Why |
 |---|---|
@@ -438,7 +703,7 @@ This repo's own supplementary docs:
 
 | Document | Why |
 |---|---|
-| [`docs/build-phases.md`](docs/build-phases.md) | The pattern coverage map, the full build plan (Phase 0 through Phase 13), the effort estimate, and the risk register — split out of this file, linked from §2. |
+| [`docs/build-phases.md`](docs/build-phases.md) | The pattern coverage map, the full build plan (Phase 0 through Phase 19), the effort estimate, and the risk register — split out of this file, linked from §2. |
 | [`docs/production-readiness-review.md`](docs/production-readiness-review.md) | The audit that found F1–F15 and drove Phase 13. |
 | [`docs/webhook-concurrency-review.md`](docs/webhook-concurrency-review.md) | The follow-up audit of Phase 11's conversational webhook surfaces that found `SessionLock` wired into only the async queue worker and no inbound delivery dedup, and drove Phase 18. |
 | [`docs/constitution.md`](docs/constitution.md) | The nine principles, copied in verbatim (Phase 0, task 0.6) as the review checklist. |
@@ -446,3 +711,22 @@ This repo's own supplementary docs:
 | [`docs/local-llm.md`](docs/local-llm.md) | Ollama + LiteLLM + Langfuse: a local model wired into `internal/provider.Provider`, and genuine per-run agent tracing (`internal/obs.Tracer`, `kernel/loop.go`) in a self-hosted Langfuse — the §5 deferred-adapters row, actually wired. |
 | [`docs/agentic-capabilities.md`](docs/agentic-capabilities.md) | Crawl4AI (`platform/web_crawl`) + OpenSandbox (`NEXUS_SANDBOX=opensandbox`) — two real backends behind seams `docs/build-phases.md`'s Phase 16 already names, plus the populated `.dev/skills/` bundles and `delegate` `agent_id`/`scope_grant` conventions that make them demonstrable end to end. |
 | [`docs/observability.md`](docs/observability.md) | Prometheus + Alertmanager + cAdvisor + Loki + Grafana (`docs/build-phases.md`'s Phase 17): the scrape target and log-aggregation stack `nexusd`'s own `/metrics` endpoint (task 13.12) was built for but never had, four pre-provisioned Grafana dashboards (golden signals from task 10.12, a per-tool/per-model cost breakdown, per-container CPU/memory/network/disk IO, and structured logs), and five alert rules over the golden-signal gauges. |
+| [`web/README.md`](web/README.md) | The React app: its pages, SSE over `fetch` (a bearer token rules out `EventSource`), and why CORS is permissive. |
+| [`.env.example`](.env.example) | Every `NEXUS_*` variable with its default and what reads it. |
+| [`CLAUDE.md`](CLAUDE.md) | Working rules for contributors and coding agents: commands, the mechanically enforced rules, and the PR conventions. |
+
+* * *
+
+## 🩺 Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `nexusctl: parse ":8085/v1/runs": missing protocol scheme` | `NEXUS_HTTP_ADDR` means two things: a listen address for `nexusd` (`:8085`) and a base URL for `nexusctl` (`http://localhost:8085`). Export the URL in the shell you run `nexusctl` from; a real env var beats `.env` |
+| `invalid or expired token` | `make token` prints three lines, so `NEXUS_TOKEN=$(make -s token)` captures all of them. Take the `token:` line: `make -s token \| awk '/^token:/ {print $2}'`. Tokens last 24 hours (`--ttl`) |
+| `make run` talks to the wrong model, or a run never finishes | `.env` is auto-loaded, so a `NEXUS_PROVIDER` there beats the `--dev` default. The startup line says which: `listening on :8085 (provider=…)`. Run `NEXUS_PROVIDER=fake make run` for the zero-setup path |
+| `GET /v1/sessions` is empty after minting a new token | Each `make token` is a new user and sessions are per user. Reuse the token, or mint with `--user=<uuid>` |
+| 404 or 401 that no code change explains | A stray container can publish the port and shadow the native `nexusd` (the compose service `nexus-agent-demo-nexusd-1`). Check `docker ps` before debugging |
+| `verify-chain` reports `signature_invalid` | The database holds receipts that the current trusted public key does not verify, typically left over from an earlier `signerd` key. To reset the local stack (this deletes all local data): `docker compose -f deploy/docker-compose.yml down -v`, regenerate the `.dev/*.key` files, then `make up && make migrate && make seed` |
+| `serve: config: missing required environment variable(s) outside --dev mode` | Intended: outside `--dev`, `nexusd` fails closed. Set the five variables listed under [Configuration](#-configuration), or pass `--dev` |
+| `obs: send langfuse ingestion batch` or `pyroscope: upload profile` errors in the log | Harmless noise: tracing or profiling is configured in `.env` but its backend is down. Start it (`make langfuse-up`, `make profiling-up`) or remove the variable from `.env` |
+| An integration test cannot start | They start their own Postgres + PgBouncer with testcontainers: Docker must be running. `make up` is neither needed nor used |
