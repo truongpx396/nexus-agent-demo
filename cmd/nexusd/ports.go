@@ -185,12 +185,12 @@ func (logSender) Send(_ context.Context, surfaceID, recipient string, payload []
 // internal/skills or internal/config directly, mirroring every other Port
 // in this file.
 type nexusdSkillSetPort struct {
-	store   *store.Store
+	config  config.Loader
 	bundles []skills.SkillBundle
 }
 
 func (p *nexusdSkillSetPort) Digest(ctx context.Context, tenantID uuid.UUID) ([]byte, error) {
-	cfg, err := config.LoadForTenant(ctx, p.store, tenantID)
+	cfg, err := p.config.Load(ctx, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("load tenant config for skill set digest: %w", err)
 	}

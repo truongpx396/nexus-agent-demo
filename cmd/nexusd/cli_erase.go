@@ -15,7 +15,7 @@ import (
 	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/retrieval"
+	retrievalpg "github.com/truongpx396/nexus-agent-demo/internal/retrieval/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
@@ -65,10 +65,10 @@ func runErase(ctx context.Context, args []string) error {
 			// Phase 12, task 12.8: the retrieval index is a second durable,
 			// tenant-owned knowledge store outside the encrypted event log
 			// (like derived_artifacts, but not session-scoped — see
-			// internal/retrieval.DeleteTenant's own doc comment) — it must
+			// internal/retrieval/postgres.DeleteTenant's own doc comment) — it must
 			// empty in the SAME erasure transaction as the DEK shred above,
 			// never on a best-effort follow-up job.
-			deletedChunks, deletedDocs, eerr = retrieval.Erase(ctx, tx, tenantID)
+			deletedChunks, deletedDocs, eerr = retrievalpg.Erase(ctx, tx, tenantID)
 			return eerr
 		})
 		if err != nil {

@@ -1,4 +1,7 @@
-package retrieval
+// Package postgres is the pgvector implementation of retrieval.Index: the SQL
+// that indexes, searches and erases a tenant's chunks, and the text encoding
+// pgx needs for the vector type (vector.go).
+package postgres
 
 import (
 	"context"
@@ -6,18 +9,61 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/truongpx396/nexus-agent-demo/internal/retrieval"
+	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
 // These take a caller-supplied tx, the same convention internal/cost's
-// price-book access and internal/cryptopg.KeyStore's methods already follow:
+// price-book access and internal/crypto/postgres.KeyStore's methods already follow:
 // every tenant-scoped read/write in this system goes through
 // store.Store.InTenantTx at the call site, never opens its own transaction
 // (README §4's "InTenantTx ... the only scoping call in the codebase").
 
+// Index is retrieval.Index over Postgres: each call is one tenant-scoped
+// transaction around the transaction-level functions below.
+type Index struct {
+	st *store.Store
+}
+
+// NewIndex returns an Index over st.
+func NewIndex(st *store.Store) *Index { return &Index{st: st} }
+
+var _ retrieval.Index = (*Index)(nil)
+
+// InsertDocument implements retrieval.Index.
+func (x *Index) InsertDocument(ctx context.Context, tenantID uuid.UUID, d retrieval.Document) (uuid.UUID, error) {
+	var docID uuid.UUID
+	err := x.st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+		var err error
+		docID, err = InsertDocument(ctx, tx, tenantID, d)
+		return err
+	})
+	return docID, err
+}
+
+// IndexChunks implements retrieval.Index.
+func (x *Index) IndexChunks(ctx context.Context, tenantID, docID uuid.UUID, chunks []retrieval.ChunkRow) error {
+	return x.st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+		return IndexChunks(ctx, tx, tenantID, docID, chunks)
+	})
+}
+
+// Search implements retrieval.Index.
+func (x *Index) Search(ctx context.Context, tenantID uuid.UUID, queryEmbedding []float32, topK int) ([]retrieval.ScoredChunk, error) {
+	var out []retrieval.ScoredChunk
+	err := x.st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+		var err error
+		out, err = Search(ctx, tx, tenantID, queryEmbedding, topK)
+		return err
+	})
+	return out, err
+}
+
 // InsertDocument writes one documents row — called once per ingested
 // source file, before any of its chunks are indexed (so a chunk's
 // doc_id foreign key always resolves).
-func InsertDocument(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, d Document) (uuid.UUID, error) {
+func InsertDocument(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, d retrieval.Document) (uuid.UUID, error) {
 	if d.DocID == uuid.Nil {
 		d.DocID = uuid.New()
 	}
@@ -44,13 +90,13 @@ func InsertDocument(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, d Docume
 // this function does not re-check InjectionScanStatus; it trusts its
 // caller the same way internal/teams.Service.WriteCard's own DB layer
 // trusts a status its own caller already computed.
-func IndexChunks(ctx context.Context, tx pgx.Tx, tenantID, docID uuid.UUID, chunks []ChunkRow) error {
+func IndexChunks(ctx context.Context, tx pgx.Tx, tenantID, docID uuid.UUID, chunks []retrieval.ChunkRow) error {
 	for _, c := range chunks {
 		if c.ChunkID == uuid.Nil {
 			c.ChunkID = uuid.New()
 		}
-		if len(c.Embedding) != EmbeddingDimensions {
-			return fmt.Errorf("retrieval: chunk %d has %d embedding dimensions, want %d", c.ChunkIndex, len(c.Embedding), EmbeddingDimensions)
+		if len(c.Embedding) != retrieval.EmbeddingDimensions {
+			return fmt.Errorf("retrieval: chunk %d has %d embedding dimensions, want %d", c.ChunkIndex, len(c.Embedding), retrieval.EmbeddingDimensions)
 		}
 		status := c.InjectionScanStatus
 		if status == "" {
@@ -75,7 +121,7 @@ func IndexChunks(ctx context.Context, tx pgx.Tx, tenantID, docID uuid.UUID, chun
 // (pgvector's `<=>` operator — task 12.3's own index), ordered closest
 // first. It selects `embedding::text` explicitly (vector.go's own doc
 // comment on why) rather than the raw vector column.
-func Search(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, queryEmbedding []float32, topK int) ([]ScoredChunk, error) {
+func Search(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, queryEmbedding []float32, topK int) ([]retrieval.ScoredChunk, error) {
 	if topK <= 0 {
 		topK = 5
 	}
@@ -93,9 +139,9 @@ func Search(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, queryEmbedding [
 	}
 	defer rows.Close()
 
-	var out []ScoredChunk
+	var out []retrieval.ScoredChunk
 	for rows.Next() {
-		var sc ScoredChunk
+		var sc retrieval.ScoredChunk
 		var embText string
 		if err := rows.Scan(&sc.ChunkID, &sc.DocID, &sc.ChunkIndex, &sc.Content, &embText,
 			&sc.SourceDigest, &sc.InjectionScanStatus, &sc.CreatedAt, &sc.Distance); err != nil {
@@ -129,7 +175,7 @@ func DeleteDocument(ctx context.Context, tx pgx.Tx, tenantID, docID uuid.UUID) e
 // tenant's DEK makes its retrieval index unrecoverable too ... indexed
 // chunks are a derived artifact, hard-deleted in the same erasure
 // transaction." Called by the SAME caller that runs
-// internal/cryptopg.EraseTenant, inside the SAME tx (cmd/nexusd's `erase
+// internal/crypto/postgres.EraseTenant, inside the SAME tx (cmd/nexusd's `erase
 // --tenant` path) — this package deliberately does not import
 // internal/crypto so the dependency runs the other way (a late,
 // feature-scoped package depending on a Phase-1 foundation one, never the
@@ -144,4 +190,12 @@ func DeleteTenant(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) (deletedCh
 		return 0, 0, fmt.Errorf("retrieval: erase tenant %s documents: %w", tenantID, err)
 	}
 	return int(chunkTag.RowsAffected()), int(docTag.RowsAffected()), nil
+}
+
+// Erase is task 12.8's own gate, called from the SAME transaction as
+// internal/crypto/postgres.EraseTenant (cmd/nexusd's `erase --tenant` path) —
+// see DeleteTenant's own doc comment for why this package never imports
+// internal/crypto to do that itself.
+func Erase(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) (deletedChunks, deletedDocs int, err error) {
+	return DeleteTenant(ctx, tx, tenantID)
 }

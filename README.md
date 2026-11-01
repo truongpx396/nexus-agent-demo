@@ -129,17 +129,25 @@ nexus-agent-demo/
 │   ├── tools/                  # identity, manifest, admission, registry, pipeline (16 steps), builtin/
 │   ├── permissions/            # the 10-layer chain, autonomy ratchet, profiles, safety/, ruleoftwo
 │   ├── hooks/                  # dispatcher + command|http|prompt handlers + bounding guards
-│   ├── oversight/              # approvals + input requests over one durable-suspend mechanism
+│   ├── oversight/              # approvals + input requests over one durable-suspend mechanism, as a unit-of-work Store
+│   │   └── postgres/           # its Store: the approval/input SQL and tenant scope
 │   ├── promptctx/              # two-zone builder, cache measurement, pruning, condensation
-│   ├── memory/                 # file-first, screening, retention
+│   ├── memory/                 # file-first, screening, retention (the window comes from config.Loader)
 │   ├── skills/                 # bundles, digests, 3-tier disclosure, capability intersection
-│   ├── cost/                   # money, meters, price book, reserve/reconcile, budget decisions
-│   ├── audit/                  # chain builder, signer client, verifier, anchor
-│   ├── crypto/                 # KEK/DEK envelope, seal/open, shred, derived-artifact reconcile
-│   ├── eventlog/               # event-log domain model: Event, type taxonomy, session statuses — no persistence
+│   ├── cost/                   # money, meters, price book, reserve/reconcile, budget decisions — Ledger and Counters ports
+│   │   ├── postgres/           # Ledger: reservations, records, price book, budget decisions
+│   │   ├── redis/              # Counters: the tenant-ceiling, epoch-marked
+│   │   ├── inmem/              # both ports in memory, so the Gate is unit-tested with no database
+│   │   └── costtest/           # the contract suite every adapter passes
+│   ├── audit/                  # receipt vocabulary, hash input, signer client, verifier report — no persistence
+│   │   └── postgres/           # the hash chain itself: Append, Anchor, Verify
+│   ├── crypto/                 # KEK/DEK envelope, seal/open — no persistence
+│   │   └── postgres/           # KeyStore, crypto-shredding, derived-artifact reconcile
+│   ├── eventlog/               # event-log domain model: Event, type taxonomy, session statuses, Appender — no persistence
 │   │   ├── postgres/           # kernel.EventLog adapter: one tenant-scoped tx per call, audit receipt in the same tx
 │   │   ├── inmem/              # kernel.EventLog adapter for tests: the loop runs with no database
-│   │   └── logtest/            # the contract suite both adapters pass
+│   │   ├── logtest/            # the contract suite both adapters pass
+│   │   └── sealed/             # eventlog.Appender over Postgres: seal under the session key, append, chain — one copy for every out-of-band writer
 │   ├── store/                  # Postgres adapter: events, projections, checkpoints, snapshots, claims, RLS scoping
 │   ├── queue/                  # Queue port + Redis Streams adapter + session-key lock
 │   ├── reliability/            # classifier, backoff, breaker, stuck detector
@@ -148,14 +156,22 @@ nexus-agent-demo/
 │   ├── plan/                   # orchestration plane: schema, validator, predicate AST, evaluator
 │   ├── delegate/               # sub-agent seam (a tool invocation, not a side channel)
 │   ├── runs/                   # application layer: the run-admission use case (Launcher/Service) and the vocabulary surfaces share
-│   │   └── postgres/           # its Postgres adapters: session admission (+ budget) and per-session key provisioning
+│   │   └── postgres/           # its Postgres adapters: session admission (+ budget), per-session key provisioning, and the Reader REST's GET endpoints use
 │   ├── surfaces/               # rest/, cli/, telegram/, zalo/, email/, cron/, mcp/ — Phase 11 adds the last five
+│   │   ├── postgres/           # the surfaces' shared adapters: inbound dedup and the delivery ledger
+│   │   ├── cron/postgres/      # the schedule store, including the atomic fire
+│   │   └── mcp/postgres/       # the MCP server directory
 │   ├── connectors/             # Phase 11: per-user OAuth token vault, sealed under crypto/
-│   ├── retrieval/              # Phase 12: pgvector index, tenant-scoped like every other table
+│   │   ├── postgres/           # Connections: the sealed tokens
+│   │   └── redis/              # StateStore: the single-use authorization-code state
+│   ├── retrieval/              # Phase 12: the embed-and-search service over an Index port
+│   │   └── postgres/           # the pgvector Index, tenant-scoped like every other table
 │   ├── ingest/                 # Phase 12: document conversion — PDF/DOCX/HTML → scanned, digested chunks
-│   ├── obs/                    # allowlisted attributes, log-derived spans, content-access grants
+│   ├── obs/                    # allowlisted attributes, log-derived spans, content-access grants, report composition
+│   │   └── postgres/           # dashboard and usage queries, the grant store
 │   ├── harness/                # harness_digest computation
-│   ├── config/                 # tenant/agent/profile/policy loading — config, never forks
+│   ├── config/                 # tenant config and its Loader port — config, never forks
+│   │   └── postgres/           # the Loader over tenant_configs, plus the transaction-level Load/Upsert the seed command composes
 │   └── controlplane/           # the versioned CP<->DP contract as Go interfaces + local impl
 ├── web/                        # Phase 11: React app over the existing REST + SSE API — no backend surface change
 ├── migrations/                 # numbered SQL, expand/contract discipline, RLS policies
@@ -174,7 +190,11 @@ nexus-agent-demo/
 **Import boundary rule (enforced by a test, not a convention):**
 `kernel/` is the core of the hexagon: it may import `internal/{eventlog,provider,tools,promptctx,cost,reliability,obs}`
 and nothing else, and reaches durable state only through the `kernel.EventLog` port — never `internal/store`,
-a database driver, or an adapter of its own ports (`internal/eventlog/{postgres,inmem}`).
+a database driver, or an adapter of its own ports (`internal/eventlog/{postgres,inmem}`). The same holds for
+everything it imports for vocabulary: `cost`, `obs`, `crypto`, `audit`, `runs`, `controlplane`, `tools`, `oversight`,
+`config`, `memory`, `retrieval`, `connectors` and every surface each have a rule of their own that none of them reaches
+`internal/store`, `pgx` or `redis` even transitively, because their storage lives in a `postgres/` (or `redis/`, `inmem/`)
+subpackage that only `cmd/nexusd`, the composition root, wires in.
 `internal/surfaces/` may not import `kernel/`. `internal/controlplane/` may not import
 `internal/{sandbox,memory,provider}`. `internal/eventlog/` (the domain model) imports nothing from this module and no
 database driver. A `tests/contract/boundaries_test.go` walks the import

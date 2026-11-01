@@ -1,6 +1,6 @@
 //go:build integration
 
-package connectors
+package connectors_test
 
 import (
 	"context"
@@ -22,6 +22,10 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/config"
+	configpg "github.com/truongpx396/nexus-agent-demo/internal/config/postgres"
+	"github.com/truongpx396/nexus-agent-demo/internal/connectors"
+	connectorspg "github.com/truongpx396/nexus-agent-demo/internal/connectors/postgres"
+	connectorsredis "github.com/truongpx396/nexus-agent-demo/internal/connectors/redis"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
@@ -138,7 +142,7 @@ func insertTenant(t *testing.T, s *store.Store, tenantID uuid.UUID) {
 func admitProvider(t *testing.T, s *store.Store, tenantID uuid.UUID, provider string) {
 	t.Helper()
 	if err := s.InTenantTx(context.Background(), tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		return config.Upsert(ctx, tx, config.TenantConfig{TenantID: tenantID, AdmittedConnectorProviders: []string{provider}})
+		return configpg.Upsert(ctx, tx, config.TenantConfig{TenantID: tenantID, AdmittedConnectorProviders: []string{provider}})
 	}); err != nil {
 		t.Fatalf("admit provider: %v", err)
 	}
@@ -155,9 +159,9 @@ func TestVault_BeginAuthRefusesUnadmittedProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateKEK: %v", err)
 	}
-	v := &Vault{
-		Store: s, Keys: cryptopg.NewKeyStore(kek), Redis: redisClient,
-		Providers: NewRegistry(Provider{Name: "acme", Endpoint: oauth2.Endpoint{AuthURL: "https://acme.example/authorize", TokenURL: "https://acme.example/token"}}), //nolint:gosec // fixture endpoints, no credential
+	v := &connectors.Vault{
+		Config: configpg.NewStore(s), Connections: connectorspg.NewConnections(s, cryptopg.NewKeyStore(kek)), States: connectorsredis.NewStates(redisClient),
+		Providers: connectors.NewRegistry(connectors.Provider{Name: "acme", Endpoint: oauth2.Endpoint{AuthURL: "https://acme.example/authorize", TokenURL: "https://acme.example/token"}}), //nolint:gosec // fixture endpoints, no credential
 	}
 	if _, err := v.BeginAuth(context.Background(), tenantID, uuid.New(), "acme"); err == nil {
 		t.Fatal("BeginAuth for an unadmitted provider succeeded, want a refusal")
@@ -178,9 +182,9 @@ func TestVault_FullRoundTrip_BeginAuthCallbackThenToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateKEK: %v", err)
 	}
-	v := &Vault{
-		Store: s, Keys: cryptopg.NewKeyStore(kek), Redis: redisClient,
-		Providers: NewRegistry(Provider{Name: "acme", Endpoint: oauth2.Endpoint{AuthURL: "https://acme.example/authorize", TokenURL: tokenSrv.URL}, ClientID: "client-1", ClientSecret: "secret-1"}),
+	v := &connectors.Vault{
+		Config: configpg.NewStore(s), Connections: connectorspg.NewConnections(s, cryptopg.NewKeyStore(kek)), States: connectorsredis.NewStates(redisClient),
+		Providers: connectors.NewRegistry(connectors.Provider{Name: "acme", Endpoint: oauth2.Endpoint{AuthURL: "https://acme.example/authorize", TokenURL: tokenSrv.URL}, ClientID: "client-1", ClientSecret: "secret-1"}),
 	}
 
 	redirectURL, err := v.BeginAuth(context.Background(), tenantID, userID, "acme")
@@ -201,7 +205,7 @@ func TestVault_FullRoundTrip_BeginAuthCallbackThenToken(t *testing.T) {
 	}
 
 	// A replay of the SAME state must fail closed — the whole point of
-	// single-use consumption (luaGetAndDelete's own doc comment).
+	// single-use consumption (internal/connectors/redis's luaGetAndDelete).
 	if err := v.HandleCallback(context.Background(), state, "auth-code-xyz"); err == nil {
 		t.Fatal("HandleCallback replayed the same state successfully, want a refusal")
 	}
@@ -261,9 +265,9 @@ func TestVault_TokenRefreshesWhenExpired(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateKEK: %v", err)
 	}
-	v := &Vault{
-		Store: s, Keys: cryptopg.NewKeyStore(kek), Redis: redisClient,
-		Providers: NewRegistry(Provider{Name: "acme", Endpoint: oauth2.Endpoint{AuthURL: "https://acme.example/authorize", TokenURL: tokenSrv.URL}, ClientID: "client-1", ClientSecret: "secret-1"}),
+	v := &connectors.Vault{
+		Config: configpg.NewStore(s), Connections: connectorspg.NewConnections(s, cryptopg.NewKeyStore(kek)), States: connectorsredis.NewStates(redisClient),
+		Providers: connectors.NewRegistry(connectors.Provider{Name: "acme", Endpoint: oauth2.Endpoint{AuthURL: "https://acme.example/authorize", TokenURL: tokenSrv.URL}, ClientID: "client-1", ClientSecret: "secret-1"}),
 	}
 
 	redirectURL, err := v.BeginAuth(context.Background(), tenantID, userID, "acme")

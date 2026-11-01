@@ -1,0 +1,27 @@
+name: govulncheck
+
+# ci.yml runs govulncheck on every push and PR, but nothing bumps go.mod's `go`
+# directive for a Go security patch (Dependabot's gomod only raises it as a side
+# effect of a dependency that needs a newer Go), and a quiet week means no push
+# to notice. setup-go installs exactly the Go that go.mod names, so this weekly
+# run goes red the week a patch ships for a standard-library vulnerability, and
+# the fix is to raise that line to the patched release. If golangci-lint then
+# refuses to run (it must be built with a Go at least as new as go.mod's), raise
+# its pin in ci.yml too.
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  govulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...

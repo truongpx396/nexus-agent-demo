@@ -64,6 +64,10 @@ func init() {
 		{"the control plane port", "internal/controlplane"},
 		{"the tool pipeline", "internal/tools"},
 		{"the oversight service", "internal/oversight"},
+		{"tenant config", "internal/config"},
+		{"file-first memory", "internal/memory"},
+		{"the retrieval service", "internal/retrieval"},
+		{"the connectors vault", "internal/connectors"},
 	} {
 		rules = append(rules, noStorage(s.subject, s.pkg))
 	}
