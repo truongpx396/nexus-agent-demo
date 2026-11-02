@@ -7,7 +7,13 @@
 #   docker build --target nexusd  -t nexus-agent-demo/nexusd  .
 #   docker build --target signerd -t nexus-agent-demo/signerd .
 
-FROM golang:1.25 AS builder
+# The golang image sets GOTOOLCHAIN=local, so an image older than go.mod's `go`
+# directive (which is bumped by hand to stay on a patched release) cannot build
+# the module: `go mod download` fails with "go.mod requires go >= ...". auto
+# lets the builder fetch exactly the toolchain go.mod names, so a patch bump
+# there no longer breaks the image; the tag only needs to be a recent Go.
+FROM golang:1.26 AS builder
+ENV GOTOOLCHAIN=auto
 WORKDIR /src
 
 COPY go.mod go.sum ./
