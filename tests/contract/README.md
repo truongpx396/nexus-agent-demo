@@ -17,7 +17,7 @@ fixture test proving the scanner can actually flag an oversized file.
 `lineCapExempt` is empty on purpose: split the file by responsibility within
 its package instead of listing it.
 
-`cost_metering_test.go` (Phase 4) pins `docs/build-phases.md` §4's own mitigation for
+`cost_metering_test.go` (Phase 4) pins the risk register's own mitigation (the end of `specs/001-agent-platform/plan.md`) for
 "cost metering gets bolted onto foreground turns only": an AST check, using
 `go/packages` with full type information, that finds every call resolving
 to `internal/provider.Provider.Stream` and requires a `Reserve` call

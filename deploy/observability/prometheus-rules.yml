@@ -1,5 +1,5 @@
 # Alerting rules over the golden-signal gauges nexusd's own /metrics
-# exposes (README task 10.12/13.12) — docs/build-phases.md's Phase 17, task
+# exposes (README task 10.12/13.12) — specs/README.md's Phase 17, task
 # 17.11. Every threshold below is a starting point for a demo tenant's
 # traffic, not a calibrated production SLO; tune per-tenant once real
 # traffic exists, the same "config, not a fork" rule this whole plan applies

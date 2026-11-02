@@ -33,7 +33,7 @@ Web: `cd web && npm ci && npm run dev | lint | build` (oxlint, `tsc -b`).
 
 `.specify/memory/constitution.md` holds the nine principles and is the code-review checklist; where a plan or design conflicts with it, the constitution wins. `docs/constitution.md` holds the same text (plus its amendment-history comment) and is cited by code comments — keep the two in sync. Read it before design or architecture changes. Spec Kit skills (`/speckit-specify`, `-plan`, `-tasks`, `-implement`, …) live in `.claude/skills/`.
 
-`README.md` is the architecture narrative; `docs/build-phases.md` is the build ledger. Code comments and test names cite "Phase N" / "task N.M" from those two files.
+`README.md` is the architecture narrative; `specs/` is the single source of truth for what is built and what is open (`specs/README.md` is the index). The build ledger `docs/build-phases.md` is deleted: its task ids live on as `(bp N.M)` in the specs' `tasks.md`. Code comments and test names cite "Phase N" / "task N.M"; `specs/README.md` says where each resolves, and `tests/contract/specs_test.go` fails if one does not, or if a done task names a file that no longer exists, so move a file and fix its task in the same change.
 
 ## Architecture
 

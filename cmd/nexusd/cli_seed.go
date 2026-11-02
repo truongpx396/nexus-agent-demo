@@ -63,7 +63,7 @@ func runSeed(ctx context.Context, args []string) error {
 	return nil
 }
 
-// demoSkillIDs are the two bundles under skills/ (docs/build-phases.md
+// demoSkillIDs are the two bundles under skills/ (specs/README.md
 // Phase 16, task 16.7) — admitting them at seed time is what makes
 // `nexusctl run "research ..."` reach for activate_skill("web-research") on
 // a freshly seeded tenant, without a separate manual admission step.

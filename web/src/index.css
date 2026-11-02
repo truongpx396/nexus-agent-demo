@@ -389,7 +389,7 @@ button.danger {
   border-color: var(--accent-2);
 }
 
-/* suggested-prompt chips (docs/build-phases.md Phase 16, task 16.9) */
+/* suggested-prompt chips (specs/README.md Phase 16, task 16.9) */
 
 .prompt-chips {
   display: flex;

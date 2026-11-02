@@ -33,7 +33,7 @@ type crawl4aiMDResponse struct {
 	Success  bool   `json:"success"`
 }
 
-// WebCrawl implements platform/web_crawl(url) (docs/build-phases.md Phase
+// WebCrawl implements platform/web_crawl(url) (specs/README.md Phase
 // 16, task 16.1): a sibling of platform/web_fetch that returns rendered,
 // boilerplate-stripped Markdown instead of raw HTML, by delegating the
 // actual fetch to a Crawl4AI server (https://github.com/unclecode/crawl4ai)

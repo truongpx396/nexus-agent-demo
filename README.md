@@ -41,7 +41,7 @@ OpenAI-compatible model, local Ollama included.
 [![Isolation](https://img.shields.io/badge/Isolation-RLS%20%2B%20transaction--local%20scope-8250df)](#-enterprise-readiness)
 [![Audit](https://img.shields.io/badge/Audit-hash--chained%20%2B%20sign--only%20signerd-d1242f)](#-enterprise-readiness)
 [![LLM](https://img.shields.io/badge/LLM-fake%20%C2%B7%20Anthropic%20%C2%B7%20LiteLLM-2ea44f)](#-configuration)
-[![Patterns](https://img.shields.io/badge/Patterns-57%20of%2067%20at%20full%20or%20simplified%20fidelity-e36209)](docs/build-phases.md)
+[![Patterns](https://img.shields.io/badge/Patterns-57%20of%2067%20at%20full%20or%20simplified%20fidelity-e36209)](specs/001-agent-platform/pattern-coverage.md)
 [![Eval gate](https://img.shields.io/badge/Eval%20gate-release%20gate%20in%20CI-0969da)](#4-testing-strategy)
 
 * * *
@@ -170,7 +170,7 @@ The [original design](https://github.com/truongpx396/nexus-agent#deployment-topo
 
 Where this departs from the original, so the headline is not read as more than it is:
 
-- **Composition, not configuration.** The original selects a topology by configuration. Here `cmd/nexusd` hard-wires the in-process `LocalPort`, and there is no role or mode setting. The ledger marks four-topology packaging out of scope ([`docs/build-phases.md`](docs/build-phases.md), row 66), and the original's own cut line defers "multi-topology packaging".
+- **Composition, not configuration.** The original selects a topology by configuration. Here `cmd/nexusd` hard-wires the in-process `LocalPort`, and there is no role or mode setting. The pattern map marks four-topology packaging out of scope ([`pattern-coverage.md`](specs/001-agent-platform/pattern-coverage.md), row 66), and the original's own cut line defers "multi-topology packaging".
 - **The contract has a wire encoding, but almost nothing crosses it.** The Port's v1 types carry `json` tags and `internal/controlplane/wire` is a JSON-over-HTTP `Handler` and `Client`; its tests send every operation, with every field set, through a real HTTP server and pin the wire names. Nothing deployed uses it, only `AdmitRun` has a caller outside the package, and the transport has no authentication or TLS. A hybrid split needs those and a second `main`.
 - **Several `nexusd` processes have never been run together.** The queue is a Redis Streams consumer group with a per-session lock, and events cross processes over Pub/Sub, which is the right shape. A worker now renews that lock for as long as a job runs (before, it lapsed after 30 seconds, so a long run was not serial per session even in one process), and startup recovery skips a session whose lock is held instead of resuming every `running` one. Those make two processes safe by construction, not by test: the periodic loops (audit anchor, team backstop, idle sweep) are not audited for it, and the multi-process worker pool is deferred in §5 until concurrency needs it.
 - **A slimmer control plane**, described under [Architecture](#-architecture).
@@ -351,7 +351,7 @@ Each row ends with a status (**Built**, **Partial** or **Seam only**); a **Gap**
 | `make eval` | The release gate over the scripted corpus |
 | `go test ./tests/contract/ ./tests/property/` | The import boundaries, the file cap, money as integers and the paired-result invariant |
 
-**Where the bar came from.** It is the original design's constitution. An audit of the as-built code against it ([production-readiness review](docs/production-readiness-review.md)) found fifteen gaps, for example that tenant identity was an unverified request header and sandbox containers ran as root; Phases 13–15 of the [ledger](docs/build-phases.md) were written to close them.
+**Where the bar came from.** It is the original design's constitution. An audit of the as-built code against it ([production-readiness review](docs/production-readiness-review.md)) found fifteen gaps, for example that tenant identity was an unverified request header and sandbox containers ran as root; Phases 13–15 (the production-readiness user story in [spec 001](specs/001-agent-platform/tasks.md)) were written to close them.
 
 * * *
 
@@ -456,9 +456,8 @@ Everything else — the kernel, the pipeline, the permission chain, the approval
 the audit chain, the erasure model, the cost gate, the orchestration plane, delegation,
 the eval gate — ships **in full**, because each *is* the pattern.
 
-The full pattern-by-pattern fidelity scoring (67 rows) and the phase-by-phase build plan
-(Phase 0 through Phase 20) live in [`docs/build-phases.md`](docs/build-phases.md) — split out
-to keep this narrative readable. Score: 57 of 67 patterns at full or simplified fidelity, 4 as
+The full pattern-by-pattern fidelity scoring (67 rows) is [`pattern-coverage.md`](specs/001-agent-platform/pattern-coverage.md), and the phase-by-phase
+build plan (Phase 0 through Phase 20) is now the [specs](specs/README.md), which replaced the build ledger and keep its task ids. Score: 57 of 67 patterns at full or simplified fidelity, 4 as
 seams, 6 deliberately out of scope. Phases 13–15 (added after
 [`docs/production-readiness-review.md`](docs/production-readiness-review.md)) and Phase 18 close gaps
 between what several **F**-rated patterns claimed and what the shipped code did, and Phase 19
@@ -798,30 +797,30 @@ none requires migrating the event log, the audit chain, or the encryption model.
 
 ## 6. Source references
 
-Read alongside this document (all in `truongpx396/nexus-agent@2ad2a6a`):
+Read alongside this document. These links go to `truongpx396/nexus-agent@2ad2a6a`; this repo's own [`specs/`](specs/README.md) has files with the same names, reconstructed from this code rather than copied from there:
 
 | Document | Why |
 |---|---|
-| `.specify/memory/constitution.md` | The nine principles. Every design decision here maps to one; it is also the code-review checklist. |
-| `specs/001-agent-platform/contracts/kernel-abi.md` | The interface seams translated in §3 — Provider, Tool, Delegation, Memory, Workspace, Surface, Skills, RunControl, Oversight, BudgetGate, Persistence, Telemetry. |
-| `specs/001-agent-platform/contracts/tool-contract.md` | The 16-step pipeline and the 10-layer resolution order, verbatim. |
-| `specs/001-agent-platform/contracts/orchestration-plane.md` | Plan schema, lifecycle gates, zero-token routing invariant. |
-| `specs/001-agent-platform/data-model.md` | Entity fields; the demo's schema is a subset with identical column semantics. |
-| `specs/001-agent-platform/plan.md` § MVP cut line | The seams-early/infrastructure-late rule this whole plan inherits. |
-| `specs/001-agent-platform/quickstart.md` | The nine validation scenarios; `docs/build-phases.md`'s demo commands are their simplified analogues. |
+| [`.specify/memory/constitution.md`](https://github.com/truongpx396/nexus-agent/blob/2ad2a6a/.specify/memory/constitution.md) | The nine principles. Every design decision here maps to one; it is also the code-review checklist. |
+| [`specs/001-agent-platform/contracts/kernel-abi.md`](https://github.com/truongpx396/nexus-agent/blob/2ad2a6a/specs/001-agent-platform/contracts/kernel-abi.md) | The interface seams translated in §3 — Provider, Tool, Delegation, Memory, Workspace, Surface, Skills, RunControl, Oversight, BudgetGate, Persistence, Telemetry. |
+| [`specs/001-agent-platform/contracts/tool-contract.md`](https://github.com/truongpx396/nexus-agent/blob/2ad2a6a/specs/001-agent-platform/contracts/tool-contract.md) | The 16-step pipeline and the 10-layer resolution order, verbatim. |
+| [`specs/001-agent-platform/contracts/orchestration-plane.md`](https://github.com/truongpx396/nexus-agent/blob/2ad2a6a/specs/001-agent-platform/contracts/orchestration-plane.md) | Plan schema, lifecycle gates, zero-token routing invariant. |
+| [`specs/001-agent-platform/data-model.md`](https://github.com/truongpx396/nexus-agent/blob/2ad2a6a/specs/001-agent-platform/data-model.md) | Entity fields; the demo's schema is a subset with identical column semantics. |
+| [`specs/001-agent-platform/plan.md`](https://github.com/truongpx396/nexus-agent/blob/2ad2a6a/specs/001-agent-platform/plan.md) § MVP cut line | The seams-early/infrastructure-late rule this whole plan inherits. |
+| [`specs/001-agent-platform/quickstart.md`](https://github.com/truongpx396/nexus-agent/blob/2ad2a6a/specs/001-agent-platform/quickstart.md) | The nine validation scenarios; this repo's [quickstart](specs/001-agent-platform/quickstart.md) has their simplified analogues. |
 
 This repo's own supplementary docs:
 
 | Document | Why |
 |---|---|
-| [`docs/build-phases.md`](docs/build-phases.md) | The pattern coverage map, the full build plan (Phase 0 through Phase 20), the effort estimate, and the risk register — split out of this file, linked from §2. |
+| [`specs/`](specs/README.md) | The single source of truth for what is built and what is open: the platform spec (001) and the post-baseline increments (002), task lists that keep the build ledger's ids, the pattern coverage map and the risk register. It replaced `docs/build-phases.md`; `tests/contract/specs_test.go` keeps its ids, paths and citations from drifting. |
 | [`docs/production-readiness-review.md`](docs/production-readiness-review.md) | The audit that found F1–F15 and drove Phase 13. |
 | [`docs/webhook-concurrency-review.md`](docs/webhook-concurrency-review.md) | The follow-up audit of Phase 11's conversational webhook surfaces that found `SessionLock` wired into only the async queue worker and no inbound delivery dedup, and drove Phase 18. |
 | [`docs/constitution.md`](docs/constitution.md) | The nine principles, copied in verbatim (Phase 0, task 0.6) as the review checklist. |
 | [`docs/go-live.md`](docs/go-live.md) | The go-live checklist and what `nexusd go-live` automates versus what stays a manual review. |
 | [`docs/local-llm.md`](docs/local-llm.md) | Ollama + LiteLLM + Langfuse: a local model wired into `internal/provider.Provider`, and genuine per-run agent tracing (`internal/obs.Tracer`, `kernel/loop.go`) in a self-hosted Langfuse — the §5 deferred-adapters row, actually wired. |
-| [`docs/agentic-capabilities.md`](docs/agentic-capabilities.md) | Crawl4AI (`platform/web_crawl`) + OpenSandbox (`NEXUS_SANDBOX=opensandbox`) — two real backends behind seams `docs/build-phases.md`'s Phase 16 already names, plus the populated `.dev/skills/` bundles and `delegate` `agent_id`/`scope_grant` conventions that make them demonstrable end to end. |
-| [`docs/observability.md`](docs/observability.md) | Prometheus + Alertmanager + cAdvisor + Loki + Grafana (`docs/build-phases.md`'s Phase 17): the scrape target and log-aggregation stack `nexusd`'s own `/metrics` endpoint (task 13.12) was built for but never had, four pre-provisioned Grafana dashboards (golden signals from task 10.12, a per-tool/per-model cost breakdown, per-container CPU/memory/network/disk IO, and structured logs), and five alert rules over the golden-signal gauges. |
+| [`docs/agentic-capabilities.md`](docs/agentic-capabilities.md) | Crawl4AI (`platform/web_crawl`) + OpenSandbox (`NEXUS_SANDBOX=opensandbox`) — two real backends behind seams Phase 16 of [the specs](specs/README.md) names, plus the populated `skills/` bundles and `delegate` `agent_id`/`scope_grant` conventions that make them demonstrable end to end. |
+| [`docs/observability.md`](docs/observability.md) | Prometheus + Alertmanager + cAdvisor + Loki + Grafana (Phase 17 of [the specs](specs/README.md)): the scrape target and log-aggregation stack `nexusd`'s own `/metrics` endpoint (task 13.12) was built for but never had, four pre-provisioned Grafana dashboards (golden signals from task 10.12, a per-tool/per-model cost breakdown, per-container CPU/memory/network/disk IO, and structured logs), and five alert rules over the golden-signal gauges. |
 | [`web/README.md`](web/README.md) | The React app: its pages, SSE over `fetch` (a bearer token rules out `EventSource`), and why CORS is permissive. |
 | [`.env.example`](.env.example) | Every `NEXUS_*` variable with its default and what reads it. |
 | [`CLAUDE.md`](CLAUDE.md) | Working rules for contributors and coding agents: commands, the mechanically enforced rules, and the PR conventions. |

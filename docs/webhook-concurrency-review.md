@@ -3,7 +3,7 @@
 A targeted follow-up to [`docs/production-readiness-review.md`](production-readiness-review.md),
 scoped to one question: is this binary ready for real production traffic on its conversational
 webhook surfaces (Telegram, Zalo, email) and REST's own steer/resume path? It found the gap
-[`docs/build-phases.md`](build-phases.md) Phase 18 closes.
+[spec 002](../specs/002-post-baseline-increments/spec.md) (ledger Phase 18, user story 1) closes.
 
 ## Where it fell short of "ready for real production traffic"
 
