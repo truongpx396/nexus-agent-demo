@@ -33,6 +33,7 @@ included.
 ## 📑 Table of Contents
 
 - [🎯 Highlights](#-highlights)
+- [🧭 Architecture](#-architecture)
 - [🚀 Quickstart](#-quickstart)
 - [💬 Things to try](#-things-to-try)
 - [🌐 HTTP API and CLI](#-http-api-and-cli)
@@ -63,7 +64,7 @@ included.
 | 🔐 **Trust** | Per-tenant envelope encryption (erasure is crypto-shredding), hash-chained audit receipts signed by a separate `signerd`, content-free telemetry behind a deny-by-default allowlist |
 | 💵 **Cost** | Integer money, a versioned price book, reserve → stream → reconcile on every model call, an epoch-marked Redis counter, and a typed `cost_exhausted` terminal reason |
 | 🚦 **Queue** | Redis Streams consumer group with `XAUTOCLAIM` reclaim, a per-session-key serial lock and stateless workers |
-| 🌐 **Surfaces** | REST + SSE · `nexusctl` · Telegram · Zalo · email · cron · MCP · a React web app, all thin translators over the same kernel |
+| 🌐 **Surfaces** | REST + SSE · `nexusctl` · Telegram · Zalo · email · cron · a React web app, all thin translators over the same kernel |
 | 🧪 **Evals** | A release gate with k trials, exact confidence intervals, a three-valued verdict, a held-out gap and a baseline regression check; `make eval` is a CI job |
 
 - 🔁 **One loop, many surfaces**: no surface holds control flow, so adding one is an adapter, never a fork of the loop.
@@ -72,6 +73,62 @@ included.
 - 🧱 **Boundaries are tests, not conventions**: an import-graph test fails the build on a forbidden dependency, plus a 500-line file cap, no floats in money and exhaustive switches over terminal reasons.
 - 🎲 **Deterministic correctness tests**: nothing that decides pass or fail calls a live model; they run against `internal/provider/fake`.
 - 🔍 **Operable**: `nexusd verify-chain`, `dashboard` and `go-live` check the audit chain, the golden signals and the launch checklist against a live deployment.
+
+* * *
+
+## 🧭 Architecture
+
+A run is two halves. A surface asks `runs.Launcher` to start it, which admits the session through the control-plane port; `StartRun` seeds the opening events and enqueues a job. Whichever worker leases that job, on any replica, drives the loop and publishes each event, so the process holding an SSE connection need not be the one running the turn.
+
+```mermaid
+flowchart TB
+    subgraph surfaces_sg["Surfaces"]
+        REST["REST + SSE<br/>bearer-token AuthN<br/>what nexusctl and the<br/>web app call"]
+        Chat["Telegram · Zalo · email<br/>deduplicated,<br/>session-locked webhooks"]
+        Cron["cron<br/>scheduled runs"]
+    end
+
+    Launcher["runs.Launcher<br/>route the model · harness digest ·<br/>admit · mint the session key · start"]
+    CP["controlplane.Port v1<br/>a Go interface, same process<br/>AdmitRun · ReserveBudget · ReportCost<br/>EmitAuditReceipt · RequestApproval"]
+    Starter["kernelRunStarter.StartRun<br/>Seed the opening events inline<br/>enqueue a start job"]
+
+    REST --> Launcher
+    Chat --> Launcher
+    Launcher --> CP
+    Launcher --> Starter
+    Cron --> Starter
+
+    subgraph dp_sg["Data plane"]
+        Queue[("Redis Streams<br/>consumer group<br/>XAUTOCLAIM reclaim")]
+        Worker["queue.Worker pool<br/>per-session lock<br/>runctl.Control.Resume"]
+        Kernel[["kernel.Kernel loop<br/>hygiene · reserve · stream · classify<br/>dispatch · pair · terminate"]]
+        Bus[("Redis Pub/Sub<br/>run events")]
+    end
+    Starter --> Queue --> Worker --> Kernel
+    Worker -->|every event| Bus
+    Bus -.->|SSE and chat replies| surfaces_sg
+
+    Model["cost.Gate reserves before every model call<br/>and reconciles after<br/>provider.Provider port: failover<br/>fake · anthropic · litellm"]
+    Tools["tools.Pipeline, 16 steps<br/>permissions chain, 10 layers<br/>an ASK suspends the run in oversight<br/>at zero token cost<br/>built-ins · sandbox · MCP client<br/>per-user OAuth connectors"]
+    Kernel --> Model
+    Kernel --> Tools
+
+    subgraph trust_sg["Trust surface"]
+        EL["kernel.EventLog port<br/>eventlog/postgres · eventlog/inmem"]
+        PG[("Postgres<br/>append-only events · RLS forced<br/>via PgBouncer, transaction pooling<br/>pgvector · payloads sealed under<br/>per-tenant DEKs")]
+        SD["signerd<br/>sign-only audit key<br/>unix socket"]
+    end
+    Kernel --> EL --> PG
+    EL -.->|hash-chained receipt| SD
+```
+
+- 🚪 **Surfaces only translate I/O.** REST, Telegram, Zalo and email start a run through `runs.Launcher`; cron calls the `Starter` directly. `nexusctl` and the web app are clients of the REST API, and MCP is a tool source, not a way in.
+- 🧱 **The control-plane/data-plane split is a Go interface, not a network boundary.** `controlplane.Port` is versioned (`v1`), so a physical split later is a `main.go` change. There is no RBAC layer: the principal comes from the verified token's claims, and routing (which model, and why) is decided in the launcher before admission.
+- 🔁 **Any replica can take any job.** `StartRun` seeds the run's opening events and enqueues a start job carrying only ids, never the input's plaintext. A worker leases it under the per-session-key lock and re-enters the loop through `runctl.Control.Resume`, the same path crash recovery uses.
+- 🧾 **The loop reaches durable state only through `kernel.EventLog`.** The Postgres adapter appends the event and its audit receipt in one tenant-scoped transaction, and `signerd` signs the receipt.
+- ✋ **An approval suspends the run.** An `ASK` from the permission chain records a suspension and stops the generator with no terminal event; a human decision resumes it.
+
+Layout, import boundaries, schema and interfaces are in [§3](#3-target-architecture-of-the-demo).
 
 * * *
 
@@ -326,55 +383,7 @@ none of them changes that score.
 
 ## 3. Target architecture of the demo
 
-```mermaid
-flowchart TB
-    subgraph Surfaces["Surfaces (thin adapters — translate I/O only)"]
-        REST["REST + SSE /v1/runs<br/>bearer-token AuthN (internal/authn)"]
-        CLI[nexusctl]
-        EXT["Phase 11: MCP client · per-user OAuth<br/>Telegram · Zalo · email · cron · React web"]
-    end
-
-    LA["runs.Launcher: route · harness digest ·<br/>admit · mint session key · start"]
-
-    subgraph CP["Control plane (controlplane.Port, a Go interface in the same process)"]
-        Adm["AdmitRun: session row + optional ceiling"]
-        Ctl["ReserveBudget · ReportCost · EmitAuditReceipt<br/>RequestApproval · AuthorizeContentAccess"]
-    end
-
-    subgraph DP["Data plane"]
-        Q[("Queue port<br/>Redis Streams")]
-        W["Worker pool + session-key lock"]
-        K[["Kernel loop<br/>classify · dispatch · pair · terminate"]]
-        BG["Budget gate: reserve before every model call,<br/>reconcile after"]
-        P["Provider port: router · failover<br/>fake · anthropic · litellm"]
-        H["Harness: prompt zones - tools - memory<br/>skills - hooks - reliability"]
-        SB["Sandbox: docker or OpenSandbox,<br/>no net, hard limits"]
-    end
-
-    subgraph Trust["Trust surface"]
-        EL["kernel.EventLog port<br/>eventlog/postgres · eventlog/inmem"]
-        PG[("Postgres: append-only events + RLS<br/>via PgBouncer transaction pooling<br/>+ pgvector, Phase 12")]
-        SD["signerd: sign-only audit key"]
-        KEK["KEK file wraps per-tenant DEK"]
-        RC[("Redis: epoch-marked<br/>tenant-ceiling counter")]
-    end
-
-    Surfaces --> LA
-    LA --> Adm
-    LA --> Q
-    Q --> W --> K
-    K --> BG --> P
-    K --> H --> SB
-    BG -.-> RC
-    K --> EL --> PG
-    EL -. signs receipt .-> SD
-    PG --- KEK
-    EV["evals/ runner + CI gate"] -.release gate.-> CP
-```
-
-The loop reaches durable state only through the `kernel.EventLog` port, and a surface starts a run only through
-`runs.Launcher`, which admits it through `controlplane.Port`. There is no RBAC layer: the principal comes from the verified
-token's claims, and routing (which model, and why) is decided in the data plane before admission.
+The architecture diagram lives in [🧭 Architecture](#-architecture) at the top of this README. What follows is what sits behind it: the repository layout, the import-boundary rules that keep it true, the core schema and the key interfaces.
 
 ### Repository layout
 
