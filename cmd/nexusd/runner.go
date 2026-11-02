@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"iter"
 
 	"github.com/redis/go-redis/v9"
 
@@ -44,6 +45,37 @@ type kernelRunStarter struct {
 	// though the turn loop itself now executes on a queue worker, possibly
 	// a different process, rather than a goroutine this call started.
 	redisClient *redis.Client
+}
+
+// seedHeadroom is the room drainSeed leaves in the channel beyond the seed
+// itself, for events the forwarding goroutine relays before the caller
+// starts reading.
+const seedHeadroom = 8
+
+// drainSeed collects everything a Kernel.Seed sequence yields into a channel
+// sized to hold all of it, and reports whether the sequence ended in an error
+// (that error is the last event in the channel).
+//
+// Seed runs inline, before StartRun has returned the channel to anyone, so
+// nothing is receiving yet. Seed yields one EventToolLoaded per resident
+// tool plus the memory and user-message events, so a fixed buffer smaller
+// than that blocks the send forever and hangs the HTTP request that asked
+// for the run — the default catalog seeds 15 events, and the buffer used to
+// be 8.
+func drainSeed(seq iter.Seq2[eventlog.Event, error]) (ch chan runs.Event, failed bool) {
+	var seeded []runs.Event
+	for ev, err := range seq {
+		seeded = append(seeded, runs.Event{Event: ev, Err: err})
+		if err != nil {
+			failed = true
+			break
+		}
+	}
+	ch = make(chan runs.Event, len(seeded)+seedHeadroom)
+	for _, re := range seeded {
+		ch <- re
+	}
+	return ch, failed
 }
 
 // StartRun seeds a fresh run synchronously — Kernel.Seed's own status
@@ -108,18 +140,15 @@ func (a *kernelRunStarter) StartRun(ctx context.Context, req runs.Request) (<-ch
 	// goroutine blocks forever on a message that will now never arrive.
 	busCh, cancelBus := subscribeRunEvents(ctx, a.redisClient, req.SessionID)
 
-	ch := make(chan runs.Event, 8)
 	// Seed runs on THIS goroutine, inline with the HTTP request that asked
 	// for it — unlike the old full a.kernel.Run(...), it's only a handful
 	// of durable writes, not the turn loop itself, so there is no "a run
 	// outlives the HTTP request" concern to defer it into a goroutine for.
-	for ev, err := range a.kernel.Seed(ctx, st, cfg) {
-		ch <- runs.Event{Event: ev, Err: err}
-		if err != nil {
-			cancelBus()
-			close(ch)
-			return ch, nil
-		}
+	ch, seedFailed := drainSeed(a.kernel.Seed(ctx, st, cfg))
+	if seedFailed {
+		cancelBus()
+		close(ch)
+		return ch, nil
 	}
 
 	if _, err := a.queue.Enqueue(ctx, queue.Job{
