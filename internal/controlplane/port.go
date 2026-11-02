@@ -74,25 +74,25 @@ type Port interface {
 // type a bare string here means a future non-Go control-plane client needs
 // no internal/cost import at all to construct this request.
 type AdmitRunV1 struct {
-	TenantID  uuid.UUID
-	UserID    uuid.UUID
-	SessionID uuid.UUID
+	TenantID  uuid.UUID `json:"tenant_id"`
+	UserID    uuid.UUID `json:"user_id"`
+	SessionID uuid.UUID `json:"session_id"`
 	// SessionKey is the surface's own stable handle for the conversation
 	// (a chat id, a mail thread), which a later message uses to find this
 	// session again. Empty means the session is addressed only by SessionID.
-	SessionKey    string
-	SurfaceID     string
-	DataLabel     string
-	RouteModelID  string
-	RouteReason   map[string]string
-	Autonomy      string
-	BudgetUSD     string // empty = no session-scoped ceiling
-	HarnessDigest []byte
+	SessionKey    string            `json:"session_key"`
+	SurfaceID     string            `json:"surface_id"`
+	DataLabel     string            `json:"data_label"`
+	RouteModelID  string            `json:"route_model_id"`
+	RouteReason   map[string]string `json:"route_reason"`
+	Autonomy      string            `json:"autonomy"`
+	BudgetUSD     string            `json:"budget_usd"` // empty = no session-scoped ceiling
+	HarnessDigest []byte            `json:"harness_digest"`
 	// Conversational is eventlog.Session.Conversational's own value, set once
 	// at admission and never changed — kernel.RunConfig.Conversational's
 	// doc comment explains what it does. False for every caller except the
 	// web chat UI.
-	Conversational bool
+	Conversational bool `json:"conversational"`
 }
 
 // AdmitRunResultV1 reports whether the session was admitted — Admitted
@@ -100,18 +100,18 @@ type AdmitRunV1 struct {
 // BudgetUSD) is a normal, non-error refusal; a returned error means the
 // durable write itself failed.
 type AdmitRunResultV1 struct {
-	Admitted bool
-	Reason   string
+	Admitted bool   `json:"admitted"`
+	Reason   string `json:"reason"`
 }
 
 // ReserveBudgetV1 mirrors internal/cost.ReserveRequest field-for-field —
 // Purpose travels as a bare string (internal/cost.Purpose's own underlying
 // type), so this package doesn't need to re-export that type.
 type ReserveBudgetV1 struct {
-	TenantID  uuid.UUID
-	SessionID uuid.UUID
-	ModelID   string
-	Purpose   string
+	TenantID  uuid.UUID `json:"tenant_id"`
+	SessionID uuid.UUID `json:"session_id"`
+	ModelID   string    `json:"model_id"`
+	Purpose   string    `json:"purpose"`
 }
 
 // ReserveBudgetResultV1 is internal/cost.Reservation's wire-safe
@@ -120,10 +120,10 @@ type ReserveBudgetV1 struct {
 // serialize anyway). ReservationID is the correlator a later ReportCost
 // call names.
 type ReserveBudgetResultV1 struct {
-	ReservationID uuid.UUID
-	Decision      string // internal/cost.DecisionKind as a string: "allow" | "refuse_ceiling" | "degrade" | "skip"
-	Reason        string
-	ReservedUSD   string
+	ReservationID uuid.UUID `json:"reservation_id"`
+	Decision      string    `json:"decision"` // internal/cost.DecisionKind as a string: "allow" | "refuse_ceiling" | "degrade" | "skip"
+	Reason        string    `json:"reason"`
+	ReservedUSD   string    `json:"reserved_usd"`
 }
 
 // ReportCostV1 carries the four token-class counts internal/cost.Reconcile
@@ -132,25 +132,25 @@ type ReserveBudgetResultV1 struct {
 // ReconcileUsage (README task 13.15) is the bridge that builds it
 // server-side instead.
 type ReportCostV1 struct {
-	ReservationID   uuid.UUID
-	InputUncached   int
-	InputCacheRead  int
-	InputCacheWrite int
-	OutputTokens    int
+	ReservationID   uuid.UUID `json:"reservation_id"`
+	InputUncached   int       `json:"input_uncached"`
+	InputCacheRead  int       `json:"input_cache_read"`
+	InputCacheWrite int       `json:"input_cache_write"`
+	OutputTokens    int       `json:"output_tokens"`
 	// Reported false is task 4.7's UNREPORTED case: a stream that failed
 	// after the commit point, with no trustworthy usage figures — charged
 	// at the full reserved worst case, never assumed free.
-	Reported bool
+	Reported bool `json:"reported"`
 }
 
 // EmitAuditReceiptV1 mirrors internal/auditpg.Chain.Append's own parameters.
 type EmitAuditReceiptV1 struct {
-	TenantID      uuid.UUID
-	SessionID     uuid.UUID
-	Seq           int64
-	EventID       uuid.UUID
-	EventType     string
-	PayloadDigest []byte
+	TenantID      uuid.UUID `json:"tenant_id"`
+	SessionID     uuid.UUID `json:"session_id"`
+	Seq           int64     `json:"seq"`
+	EventID       uuid.UUID `json:"event_id"`
+	EventType     string    `json:"event_type"`
+	PayloadDigest []byte    `json:"payload_digest"`
 }
 
 // RequestApprovalV1 mirrors internal/oversight.CreateApprovalRequest —
@@ -158,33 +158,33 @@ type EmitAuditReceiptV1 struct {
 // event payload; oversight's own doc comment on ContextPackage explains
 // why an approver needs to see this, not a bare digest).
 type RequestApprovalV1 struct {
-	TenantID        uuid.UUID
-	SessionID       uuid.UUID
-	ToolUseEventID  uuid.UUID
-	ToolID          string
-	AskKind         string
-	CanonicalDigest []byte
-	EffectClass     string
-	Input           json.RawMessage
+	TenantID        uuid.UUID       `json:"tenant_id"`
+	SessionID       uuid.UUID       `json:"session_id"`
+	ToolUseEventID  uuid.UUID       `json:"tool_use_event_id"`
+	ToolID          string          `json:"tool_id"`
+	AskKind         string          `json:"ask_kind"`
+	CanonicalDigest []byte          `json:"canonical_digest"`
+	EffectClass     string          `json:"effect_class"`
+	Input           json.RawMessage `json:"input"`
 }
 
 type RequestApprovalResultV1 struct {
-	ApprovalID uuid.UUID
-	ExpiresAt  time.Time
+	ApprovalID uuid.UUID `json:"approval_id"`
+	ExpiresAt  time.Time `json:"expires_at"`
 }
 
 // AuthorizeContentAccessV1 mirrors internal/obs.Grants.RequestGrant's own
 // parameters.
 type AuthorizeContentAccessV1 struct {
-	TenantID  uuid.UUID
-	SessionID uuid.UUID
-	GranteeID uuid.UUID
-	Reason    string
-	TTL       time.Duration
+	TenantID  uuid.UUID     `json:"tenant_id"`
+	SessionID uuid.UUID     `json:"session_id"`
+	GranteeID uuid.UUID     `json:"grantee_id"`
+	Reason    string        `json:"reason"`
+	TTL       time.Duration `json:"ttl_ns"` // nanoseconds on the wire, so a non-Go client never guesses the unit
 }
 
 // GrantV1 is internal/obs.Grant's wire-safe projection.
 type GrantV1 struct {
-	GrantID   uuid.UUID
-	ExpiresAt time.Time
+	GrantID   uuid.UUID `json:"grant_id"`
+	ExpiresAt time.Time `json:"expires_at"`
 }
