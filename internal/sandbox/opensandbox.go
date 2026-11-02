@@ -1,4 +1,4 @@
-// docs/build-phases.md Phase 16, task 16.3: a second Isolation backend for
+// specs/README.md Phase 16, task 16.3: a second Isolation backend for
 // platform/shell, redeeming the seam Isolation's own doc comment (sandbox.go)
 // already named — "gvisor/kata as unshipped values... a stronger isolation
 // backend is a config change later, not a schema or interface change" — with

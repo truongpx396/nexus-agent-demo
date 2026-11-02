@@ -1,6 +1,6 @@
 # Agentic capabilities: Crawl4AI, OpenSandbox, and the skill/subagent bootstrap
 
-`docs/build-phases.md`'s Phase 16 is the plan; this is the how-to. Two real, actively
+Phase 16 of [the specs](../specs/README.md) (spec 001, US13) is the plan; this is the how-to. Two real, actively
 maintained open-source projects fill two seams this codebase already left open on
 purpose, plus the previously-empty skill bundle directory and a documented
 `delegate` convention that makes both demonstrable end to end.
@@ -14,7 +14,7 @@ purpose, plus the previously-empty skill bundle directory and a documented
   `sandbox.Isolation` backend for `platform/shell`, alongside the existing `docker`
   one.
 
-Neither is a new architectural idea — see `docs/build-phases.md` Phase 16's own
+Neither is a new architectural idea — see Phase 16's own
 intro for why.
 
 ## Architecture
@@ -100,7 +100,7 @@ both without typing.
 
 There is no per-agent system prompt or persona table in this codebase, and Phase 16
 deliberately does not add one — `harness_digest` and prompt cache-stability
-(`docs/build-phases.md` patterns #7/#28) make a per-agent system-prompt fork exactly
+(patterns #7 and #28 in [`pattern-coverage.md`](../specs/001-agent-platform/pattern-coverage.md)) make a per-agent system-prompt fork exactly
 the kind of thing this project's own "seams decided early, never bolted on later"
 rule warns against. A "subagent" here is just `platform/delegate` (an ordinary tool,
 README task 8.9) called with a `scope_grant` — a provable subset of the caller's own

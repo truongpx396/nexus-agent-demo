@@ -1,6 +1,6 @@
 name: nexus-agent-demo-agentic
 
-# docs/build-phases.md Phase 16 / docs/agentic-capabilities.md — two opt-in
+# specs/README.md Phase 16 / docs/agentic-capabilities.md — two opt-in
 # third-party services behind the seams internal/tools/builtin/web_crawl.go
 # and internal/sandbox/opensandbox.go already wire: Crawl4AI
 # (https://github.com/unclecode/crawl4ai) for platform/web_crawl, and an

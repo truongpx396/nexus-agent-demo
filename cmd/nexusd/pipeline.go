@@ -114,7 +114,7 @@ func newToolPipeline(st *store.Store, cfgStore config.Loader, keyStore *cryptopg
 		builtin.Retrieve{Searcher: nexusdRetrieverAdapter{retriever: retriever}},
 		builtin.AskClarification{},
 	}
-	// platform/web_crawl (README docs/build-phases.md Phase 16, task 16.1) is
+	// platform/web_crawl (README specs/README.md Phase 16, task 16.1) is
 	// registered only when NEXUS_CRAWL4AI_URL is actually configured — the
 	// same "absent means off" convention newConnectorRegistry already uses
 	// for an unconfigured OAuth provider, rather than shipping a tool that is
@@ -230,7 +230,7 @@ func newConnectorRegistry() *connectors.Registry {
 }
 
 // devSkillsSigningPubkey is the public half of the fixed, deterministic
-// ed25519 dev key docs/build-phases.md Phase 16 (task 16.7) signed
+// ed25519 dev key specs/README.md Phase 16 (task 16.7) signed
 // skills/web-research and skills/sandboxed-code with — the same "fixed,
 // low-entropy dev-only value" spirit as deploy/docker-compose.yml's
 // postgres://nexus:nexus@... and deploy/docker-compose.local-llm.yml's
@@ -329,7 +329,7 @@ func derivedArtifactRecorder(st *store.Store, chain *auditpg.Chain) tools.Derive
 
 // newSandboxFactory wires platform/shell to run inside Docker (README task
 // 5.12) when NEXUS_SANDBOX=docker and a daemon is actually reachable, or
-// inside an OpenSandbox sandbox (docs/build-phases.md Phase 16, task 16.4)
+// inside an OpenSandbox sandbox (specs/README.md Phase 16, task 16.4)
 // when NEXUS_SANDBOX=opensandbox and NEXUS_OPENSANDBOX_URL is configured —
 // opt-in, not the default: this demo's zero-setup path (`make up && make
 // run`) must keep working on a machine with no Docker daemon and no

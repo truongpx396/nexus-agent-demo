@@ -4,7 +4,7 @@
 
 Retroactive Phase 0. The Technical Context has **no `NEEDS CLARIFICATION`** left — the choices were made while building.
 This file records each one as *Decision / Rationale / Alternatives considered*, sourced from `README.md`,
-`docs/build-phases.md`, `docs/production-readiness-review.md`, migration and code comments, and commit messages. Where a
+`09d54f8:docs/build-phases.md`, `docs/production-readiness-review.md`, migration and code comments, and commit messages. Where a
 rationale is a commit message rather than a design note, the commit is cited so it can be checked.
 
 ## Decisions
@@ -256,4 +256,4 @@ Source: `docs/production-readiness-review.md`, 2026-09-04. All fifteen are close
 
 F1–F15 are not exhaustive. The items under *Known deviations → Constitution MUSTs with no shipped evidence* in the spec
 (SBOM, backup/restore, SLOs, egress masking, webhook replay protection, quality-per-dollar, capability-floor routing) were
-not raised by the review and are tracked as Phase 19 in `tasks.md`.
+not raised by the review and are tracked in the Convergence backlog in `tasks.md`.

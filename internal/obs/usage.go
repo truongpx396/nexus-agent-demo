@@ -1,7 +1,7 @@
 package obs
 
 // ToolCallCounts is tool_id -> the number of tool_use events recorded
-// against it (docs/build-phases.md's Phase 17, task 17.9 — the per-tool
+// against it (specs/README.md's Phase 17, task 17.9 — the per-tool
 // breakdown the Golden Signals dashboard's own aggregate rates don't show).
 // Sourced from events.tool_id — a plain, structural column
 // (migrations/0003_events.sql), never the encrypted payload — the same

@@ -1,4 +1,4 @@
-// Suggested prompts (docs/build-phases.md Phase 16, task 16.9): one-click
+// Suggested prompts (specs/README.md Phase 16, task 16.9): one-click
 // starting points that exercise the agentic capabilities documented in
 // docs/agentic-capabilities.md -- platform/web_crawl (Crawl4AI),
 // NEXUS_SANDBOX=opensandbox-backed platform/shell, activate_skill, and

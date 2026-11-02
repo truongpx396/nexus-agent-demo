@@ -1,6 +1,6 @@
 # Observability stack: Prometheus, Loki, Grafana, Alertmanager, cAdvisor, Tempo, Pyroscope
 
-`docs/build-phases.md`'s Phase 17. README task 13.12 wired `nexusd`'s own
+Phase 17 of [the specs](../specs/README.md). README task 13.12 wired `nexusd`'s own
 `/metrics` endpoint and `internal/obs.ComputeGoldenSignals` (task 10.12) —
 the golden-signal dashboard's own queries — but left the actual scrape
 target, log aggregation, and dashboard unbuilt; `handleMetrics`'s own doc
@@ -439,7 +439,7 @@ bind address. Neither needs to change for this repo's own use.
   stack would want the same bearer-token gate the rest of the REST surface
   has, or a network-level restriction to the scraper only. Not built here —
   same "deployment concern, not an architectural one" scope line
-  `docs/build-phases.md`'s other production-hardening phases already draw.
+  the other production-hardening specs already draw.
 - **Loki's single-binary mode is a demo topology**, the same call
   `docker-compose.yml` already makes for PgBouncer over a full
   connection-pool mesh — fine for this stack's actual log volume, not the

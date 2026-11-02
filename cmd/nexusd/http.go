@@ -52,7 +52,7 @@ func handleMetrics(reports obs.Reports) http.HandlerFunc {
 			}
 			signalsByTenant[tenantID] = signals
 
-			// Per-tool / per-model breakdown (docs/build-phases.md Phase 17,
+			// Per-tool / per-model breakdown (specs/README.md Phase 17,
 			// task 17.9) — additive to the golden-signal aggregates above, not
 			// a replacement: a failure here is logged and skipped, never lets
 			// a breakdown query take down the golden-signal scrape it rides

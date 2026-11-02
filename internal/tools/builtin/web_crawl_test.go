@@ -11,7 +11,7 @@ import (
 )
 
 func TestWebCrawl_TaintMatchesWebFetch(t *testing.T) {
-	// docs/build-phases.md Phase 16, task 16.2's own acceptance test:
+	// specs/README.md Phase 16, task 16.2's own acceptance test:
 	// delegating the fetch to Crawl4AI must never delegate the trust
 	// decision — the taint declaration must be identical, field for field.
 	crawlTaint := WebCrawl{}.Taint()

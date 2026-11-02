@@ -212,4 +212,4 @@ are leaves (`delegation_role = 'team_member'`).
   version, catalog manifest digest, skill-set digest, **safety policy version**, **approval policy version**, MCP catalog digest
   and prompt mode — but **no non-test caller ever sets the two policy-version fields** (and the REST path hard-codes the
   system-prompt version string `"phase2-v1"`). So today the digest does not move when safety or approval policy changes, which
-  FR-010 and the constitution require. Tracked as a Phase 19 task; see spec *Known deviations* 5.
+  FR-010 and the constitution require. Tracked in the Convergence backlog; see spec *Known deviations* 5.

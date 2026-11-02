@@ -1,7 +1,7 @@
 {
   "uid": "nexus-cost-and-tools",
   "title": "Nexus / Cost and Tools",
-  "description": "Per-tool call volume and per-model token spend (docs/build-phases.md Phase 17, task 17.9) — the breakdown the Golden Signals board's own tenant-wide aggregates (cache-read rate, cost-ceiling breach rate) don't show. Tool counts come from events.tool_id (structural, never the encrypted payload); model spend comes from cost_records, the same reconciled truth internal/cost.Reconcile writes (README pattern #37).",
+  "description": "Per-tool call volume and per-model token spend (specs/README.md Phase 17, task 17.9) — the breakdown the Golden Signals board's own tenant-wide aggregates (cache-read rate, cost-ceiling breach rate) don't show. Tool counts come from events.tool_id (structural, never the encrypted payload); model spend comes from cost_records, the same reconciled truth internal/cost.Reconcile writes (README pattern #37).",
   "tags": ["nexus", "cost", "tools"],
   "timezone": "browser",
   "schemaVersion": 39,
