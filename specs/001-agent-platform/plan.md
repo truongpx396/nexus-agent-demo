@@ -5,8 +5,8 @@
 **Input**: Feature specification from `/specs/001-agent-platform/spec.md`
 
 **Note**: Retroactive. This plan documents the architecture *as built* at `8e02491` and audits it against the
-constitution; it is not a proposal. The build order it records is `docs/build-phases.md` Phases 0–17 plus the
-post-ledger increments (Phase 18 in [tasks.md](tasks.md)).
+constitution; it is not a proposal. The build order it records is `09d54f8:docs/build-phases.md` Phases 0–17 plus the
+post-ledger increments (Phase 18 in [tasks.md](tasks.md)); ledger Phases 18–20 are [spec 002](../002-post-baseline-increments/spec.md).
 
 ## Summary
 
@@ -47,7 +47,7 @@ changed lines; telemetry content-free; every model call metered; `nexusd` cannot
 
 **Scale/Scope**: 32 tables from 25 migrations (`0000`–`0024`), 60 event types, 10 terminal reasons, 16 pipeline steps,
 10 permission layers, 8 surfaces (REST, CLI, MCP, Telegram, Zalo, email, cron, web), 141 Go test files across unit,
-property, contract and integration tiers. One developer, 18 ledger phases (0–17) plus post-ledger increments.
+property, contract and integration tiers. One developer, 21 ledger phases (0–20) plus post-ledger increments; Phases 18–20 are spec 002.
 
 ## Constitution Check
 
@@ -91,7 +91,7 @@ mechanically or by test), **PASS\*** (met with a documented simplification), **G
 egress masking, webhook replay/per-identity limiting, SBOM and artifact signing, backup/restore RPO/RTO, SLO error budgets,
 configuration digest missing policy inputs, audit-chain anchor not external to the datastore).
 The plan proceeds because this is a baseline of shipped work, not a
-proposal to ship; each finding becomes a task in the Phase 19 convergence block of [tasks.md](tasks.md) rather than being
+proposal to ship; each finding becomes a task in the Convergence backlog of [tasks.md](tasks.md) rather than being
 waved through. **Re-check after Phase 1 design**: unchanged — the data model and contracts add no new finding, and
 confirm VIOLATION 1 is the only place a content-bearing channel crosses the telemetry boundary.
 
@@ -166,7 +166,7 @@ evals/                   # corpus/*.yaml, runner, graders, judge, digest, baseli
 tests/{contract,integration,property}/
 web/                     # React app over the public REST + SSE API
 deploy/                  # docker-compose{,.local-llm,.agentic,.observability}.yml, sandbox image, observability configs
-docs/                    # constitution, build-phases, go-live, local-llm, agentic-capabilities, observability, readiness review
+docs/                    # constitution, go-live, local-llm, agentic-capabilities, observability, readiness review
 ```
 
 **Structure Decision**: single Go module with one composition root (`cmd/nexusd`) and mechanically enforced import
@@ -181,3 +181,22 @@ new package, because the boundary test is package-granular.
 |---|---|---|
 | `NEXUS_TRACE_CONTENT` content-bearing span channel (Principle VI / *Observability captures structure, not content*) | Local debugging against a small local model is unusable when every span is content-free (`docs/local-llm.md`). | It cannot simply stay: the constitution says no flag may admit content and that the only path to plaintext carries a receipt. **Decision needed from a maintainer**, one of: (a) remove the flag; (b) amend the constitution (MINOR) to permit a dev-only content channel *and* require it be refused outside `--dev` and emit a receipt; (c) route it through a content-access grant. This plan does not choose. |
 | Redis-backed queue replacing the Postgres adapter (Principle: durable queue) | The Postgres adapter's lease expiry was written but never read, so it could not reclaim an abandoned job. | Retaining it would have kept a capability the platform claimed but did not have; see research.md R-10. Not a violation — recorded because it reverses a ledger row (#41). |
+
+## Risks and how the plan absorbs them
+
+Carried over from section 4 of the build ledger (`docs/build-phases.md`, deleted; frozen at `09d54f8`).
+
+| Risk | Mitigation built into the plan |
+|---|---|
+| **Phase 3 is huge and blocks everything downstream** | Split at the natural seam: 3.1–3.5 (pipeline) can ship and be tested before 3.6–3.11 (chain + hooks). The pipeline with a stub chain is still a shippable increment. |
+| **The permission chain becomes untestable combinatorics** | It is a *total order* of 10 layers with ≤4 outcomes each — a table-driven test enumerating layer × outcome is ~200 rows, and that exhaustiveness is what makes an undefined interaction impossible. |
+| **RLS + PgBouncer setup eats days** | Do it on day 1 of Phase 1 and let 1.4 be the phase's gate. Discovering the transaction-local rule in Phase 6 is the expensive version. |
+| **The eval gate feels premature in Phase 1** | Ship it with 5 cases and code graders only; grow to 20 with the judge in Phase 10. The point is that the harness and the CI wiring exist before behavior does. |
+| **A shared task board reopens the taint-laundering hole delegation just closed** | It doesn't get its own rules: 9.6 is the same fold-on-boundary-crossing idea as 8.11, just triggered by a read instead of a return, and 9.7 requires the same injection scan (7.1) before a card is ever surfaced. No board content reaches another peer's context unscanned or untainted. |
+| **Cost metering gets bolted onto foreground turns only** | 4.8 is a task, and a test asserts every `Provider.Stream` caller in the codebase passes through `BudgetGate.Reserve` — enforced by an AST check, not by review. |
+| **Scope creep back toward all 191 FRs** | README §5 has a named trigger per deferral. If the trigger has not fired, the answer is no. |
+| **"Simplified" quietly becomes "weakened"** | §1's fidelity column is the contract. Anything marked **F** that ships as **S** is a plan change requiring a note here — the same discipline the source constitution applies to itself. |
+| **Six new surfaces (Phase 11) each grow their own bespoke auth/permission logic** | They don't get any: every new surface reuses the capability descriptor (#49) and the unmodified permission chain (#17); 11.8's conformance suite is what catches a surface that quietly special-cases itself. |
+| **Retrieval (Phase 12) becomes a second, unscoped copy of tenant knowledge that erasure can't reach** | 12.8 makes this the phase's gate, the same way 1.4 gates Phase 1: erasure must empty the retrieval index in the same transaction, not on a best-effort follow-up job. |
+| **A pattern rated F on paper isn't at full fidelity in the shipped adapter** | [`docs/production-readiness-review.md`](../../docs/production-readiness-review.md) exists precisely to audit shipped code against §1's claims independently of this plan; Phase 13 closes what it found (F4/F5/F7/F8/F13/F15) before any new pattern work resumes. |
+| **A safety/reliability seam that's fully built (like `SessionLock`, task 6.2) still isn't wired into every path that needs it** | Being built and tested is not the same claim as being called — [`docs/webhook-concurrency-review.md`](../../docs/webhook-concurrency-review.md) found `SessionLock` wired into only the async queue worker, never the REST/webhook synchronous path added later in Phase 11; Phase 18 closes it — for REST with an atomic claim in `ResumeConversation` rather than a lock, since queue workers hold a session's lock for the whole run. The same review is why the taint-state durability gap (closed by PR #45) is called out explicitly: it sat unnoticed until a tangential thread surfaced it, for a mechanism billed as a safety invariant — a standing argument for auditing a new surface's own use of an EXISTING seam, not just the seam's own correctness in isolation. |

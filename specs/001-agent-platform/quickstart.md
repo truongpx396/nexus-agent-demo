@@ -2,11 +2,11 @@
 
 **Plan**: [plan.md](plan.md) | **Spec**: [spec.md](spec.md) | **Contracts**: [contracts/](contracts/) | **Data model**: [data-model.md](data-model.md)
 
-Runnable scenarios that prove each user story end to end. They are the demo/acceptance commands from `docs/build-phases.md`, reconciled with the
+Runnable scenarios that prove each user story end to end. They are the demo/acceptance commands from `09d54f8:docs/build-phases.md`, reconciled with the
 Make targets and tests that exist at `8e02491`. **Each scenario states honestly what is covered by an automated test and what is manual-only.** The
 upstream design had a nine-scenario `quickstart.md` (README §6); this one is organised by *this* spec's stories instead.
 
-Legend — **Auto**: a named test asserts it · **Manual**: you run it and look · **No check**: neither exists (a Phase 19 task).
+Legend — **Auto**: a named test asserts it · **Manual**: you run it and look · **No check**: neither exists (a Convergence-backlog task).
 
 ## 0. Prerequisites and bring-up
 
@@ -178,4 +178,4 @@ make dashboard                    # golden signals per tenant
 
 Of the 34 success criteria: most have a named automated test; **SC-007, SC-008, SC-011, SC-013, SC-017** have none or only partial automation (marked
 above), and **SC-003's ≥ 90% figure**, **SC-028's readiness**, **SC-033** and the whole observability stack are manual or go-live measurements. These are
-carried into Phase 19 of [tasks.md](tasks.md).
+carried into the Convergence backlog of [tasks.md](tasks.md).

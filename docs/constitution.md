@@ -273,7 +273,7 @@ are binding in addition to Principle V:
   MUST be handled via per-tenant rate limits, connection pooling, failover-as-
   capacity, and cached prefixes. This principle is silent on implementation by
   design — "durable" has meant a Postgres `SKIP LOCKED` table and now means a
-  Redis Streams consumer group (`internal/queue/redis_streams.go`) with AOF
+  Redis Streams consumer group (`internal/queue/redis/streams.go`) with AOF
   persistence; either satisfies it, and neither is what the principle is about.
 - **Memory is files first**: Start file-based, inject immutably at session start
   (updates take effect next session), scope per tenant with retention limits, and

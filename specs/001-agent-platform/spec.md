@@ -8,7 +8,7 @@
 
 **Input**: User description: "Nexus Agent platform baseline: a multi-tenant, production-grade AI agent platform — one kernel loop behind thin surfaces, with a governed tool/permission pipeline, pre-spend cost ceilings, a tamper-evident trust surface, durable resume/replay/fork, memory and skills, orchestration, delegation and peer teams, an eval release gate, additional surfaces, retrieval, production hardening and observability."
 
-> **How to read this document.** This project was built from `docs/build-phases.md` (a task ledger) before Spec Kit
+> **How to read this document.** This project was built from `09d54f8:docs/build-phases.md` (a task ledger) before Spec Kit
 > was adopted (#55), so this spec is reconstructed, not original. Three sources of truth were reconciled: the
 > ledger's "Proves" column, the constitution (`.specify/memory/constitution.md`), and the code at `HEAD`. Where they
 > disagree, the code wins for *what is shipped* and the constitution wins for *what is allowed*; every disagreement is
@@ -27,7 +27,7 @@ and models; **AgentOps** runs it in production.
 
 Priorities follow the build order, which is also the dependency order: P1 is "a governed, bounded agent", P2 is
 "an agent you can trust, recover, extend and safely change", P3 is "more reach". Each story is independently
-testable and maps to one phase of `docs/build-phases.md` (shown as *Ledger*).
+testable and maps to one phase of `09d54f8:docs/build-phases.md` (shown as *Ledger*).
 
 ### User Story 1 - Run an agent task and watch it happen (Priority: P1) 🎯 MVP
 
@@ -775,7 +775,7 @@ target-down alert.
 
 ## Assumptions
 
-- **Provenance.** Requirement *numbers* come from the upstream design as cited by `docs/build-phases.md`; their *text* here
+- **Provenance.** Requirement *numbers* come from the upstream design as cited by `09d54f8:docs/build-phases.md`; their *text* here
   is reconstructed. Before treating an `[orig: …]` tag as authoritative, reconcile it against
   `truongpx396/nexus-agent@2ad2a6a` (`specs/001-agent-platform/spec.md`).
 - **Single-binary topology.** The control plane and data plane run in one process behind a versioned in-process contract;
@@ -808,8 +808,7 @@ decide; this spec does not pick a side silently.
 4. **Task-number aliases.** Code comments cite tasks 13.8–13.15, which the ledger renumbered into Phases 14–15; the alias
    table is in `research.md`.
 5. **Constitution MUSTs with no shipped evidence.** An audit of the code against constitution v1.2.0 found these without
-   an implementation; the spec states the requirement (where it has one) and does not claim it is met. Each is a
-   Phase 19 task in `tasks.md`:
+   an implementation; the spec states the requirement (where it has one) and does not claim it is met. Each is a task in the Convergence backlog of `tasks.md`:
    - *Inbound webhooks* (FR-120, US11 scenario 1): authenticity is verified before parsing, but there is **no replay
      window**, and the rate limit is keyed per **tenant**, not per external identity.
    - *Egress masking*: no class-based masking of PII, secrets, PHI or card data before content leaves the boundary.

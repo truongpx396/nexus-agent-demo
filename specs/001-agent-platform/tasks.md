@@ -12,18 +12,21 @@ description: "Task list for the Nexus Agent Platform baseline (retroactive)"
 **Tests**: Included. Tests are *requested* by this project: the constitution (Principle IX) makes the eval gate and deterministic-provider tests a
 foundational deliverable, and the property test for the paired-result invariant is mandated. Test tasks name the existing test file.
 
-**Organization**: grouped by user story. Each story maps to one or more phases of `docs/build-phases.md` (the "ledger"); every task carries its
-ledger id as `(bp N.M)` and the requirements it proves.
+**Paths**: verified at HEAD (`tests/contract/specs_test.go` fails if a path named by a `[X]` task does not exist).
+
+**Organization**: grouped by user story. Each story maps to one or more phases of the build ledger (`docs/build-phases.md`, deleted; frozen at
+`09d54f8`, see [../README.md](../README.md)); every task carries its ledger id as `(bp N.M)` and the requirements it proves.
 
 > **Retroactive.** This list documents work already shipped at `8e02491`. `[X]` means **"every file this task names exists at `HEAD`"** — verified
 > mechanically (see *Verification* at the end), **not** that the story's acceptance scenario passes. Run [quickstart.md](quickstart.md) for that. `[ ]`
-> means unbuilt or not verified present. Gaps found while reconstructing the artifacts are appended by `/speckit-converge` as **Phase 19**.
+> means unbuilt or not verified present. The check is now enforced: `tests/contract/specs_test.go` fails if a path named by a `[X]` task does not exist.
+> Gaps found while reconstructing the artifacts are appended by `/speckit-converge` in the **Convergence backlog** at the end.
 
 ## Format: `- [X] T### [P?] [US#?] Description in path (bp ledger-id; FR/SC)`
 
 - **[P]**: parallelizable (different files, no dependency on an incomplete task)
 - **[US#]**: the user story in [spec.md](spec.md); omitted for Setup, Foundational and Polish
-- **(bp N.M)**: the task id in `docs/build-phases.md` §2 · **(post-ledger)**: shipped after the ledger was last updated, so it has no ledger id
+- **(bp N.M)**: the task id in the build ledger, which code comments cite as `task N.M` (resolved by [../README.md](../README.md)) · **(post-ledger)**: shipped after the ledger was last updated, so it has no ledger id
 - Spec Kit phase numbers below are **not** the ledger's phase numbers; each heading states its ledger phase
 
 | Spec Kit phase | Story | Ledger phase | | Spec Kit phase | Story | Ledger phase |
@@ -63,8 +66,8 @@ ledger id as `(bp N.M)` and the requirements it proves.
 - [X] T008 Runtime role `nexus_app` (`NOBYPASSRLS`), RLS enabled **and forced** on every tenant table, append-only trigger plus `REVOKE` on `events` in `migrations/0000_app_role.sql`, `migrations/0003_events.sql` (bp 1.2; FR-002, FR-004)
 - [X] T009 Transaction-local tenant scope — the only scoping call — in `internal/store/tenant.go` (bp 1.3; FR-003)
 - [X] T010 [P] Isolation test **through PgBouncer**, failing when scope is session-level, in `internal/store/isolation_integration_test.go` (bp 1.4; FR-003, SC-009)
-- [X] T011 Event taxonomy and the envelope upcasting registry in `internal/store/event.go`, `internal/store/upcast.go` (bp 1.5; FR-005)
-- [X] T012 [P] Envelope encryption — KEK → per-tenant DEK, AES-256-GCM, digest over plaintext — in `internal/crypto/envelope.go`, `internal/crypto/keystore.go` (bp 1.6; FR-007)
+- [X] T011 Event taxonomy and the envelope upcasting registry in `internal/eventlog/event.go`, `internal/eventlog/upcast.go` (bp 1.5; FR-005)
+- [X] T012 [P] Envelope encryption — KEK → per-tenant DEK, AES-256-GCM, digest over plaintext — in `internal/crypto/envelope.go`, `internal/crypto/postgres/keystore.go` (bp 1.6; FR-007)
 - [X] T013 [P] Deny-by-default telemetry attribute allowlist and filtering exporter in `internal/obs/allowlist.go`, `internal/obs/span.go` (bp 1.7; FR-009, SC-014)
 - [X] T014 [P] Deterministic scripted provider (truncation, stall, malformed stream, throttle, failover) in `internal/provider/fake/fake.go`, `internal/provider/fake/load.go` (bp 1.8; FR-008)
 - [X] T015 [P] Eval harness skeleton — corpus loader, runner, code graders, CI gate — in `evals/runner.go`, `evals/gate.go`, `evals/corpus/` (bp 1.9; FR-011)
@@ -165,7 +168,7 @@ ledger id as `(bp N.M)` and the requirements it proves.
 - [X] T062 [P] [US3] Exact-integer `Money` with explicit currency, rounded once, in `internal/cost/money.go` (bp 4.1; FR-043)
 - [X] T063 [P] [US3] Meter registry with a reservable flag in `internal/cost/meter.go` (bp 4.2; FR-044)
 - [X] T064 [P] [US3] Versioned price book keyed `(meter, subject, effective range)` in `internal/cost/pricebook.go` (bp 4.3; FR-045)
-- [X] T065 [US3] Reserve → stream → reconcile gate over an atomic Redis counter with an epoch marker in `internal/cost/gate.go`, `internal/cost/gate_helpers.go`, `internal/cost/reserve.go`, `internal/cost/reconcile.go`, `internal/cost/redis.go` (bp 4.4; FR-046)
+- [X] T065 [US3] Reserve → stream → reconcile gate over an atomic Redis counter with an epoch marker in `internal/cost/gate.go`, `internal/cost/gate_helpers.go`, `internal/cost/reserve.go`, `internal/cost/reconcile.go`, `internal/cost/redis/counters.go` (bp 4.4; FR-046)
 - [X] T066 [P] [US3] Worker-local synchronous per-run ceiling in `internal/cost/budget.go` (bp 4.5; FR-047)
 - [X] T067 [P] [US3] `budget_decision` for every resolution — allow, refuse, degrade, skip — in `internal/cost/decision.go` (bp 4.6; FR-048)
 - [X] T068 [P] [US3] UNREPORTED reconcile at the full reserved worst case, flagged, in `internal/cost/reconcile.go` (bp 4.7; FR-049)
@@ -193,7 +196,7 @@ ledger id as `(bp N.M)` and the requirements it proves.
 - [X] T074 [US4] Sign-only key custodian over a unix socket in `cmd/signerd/main.go`, `internal/audit/protocol.go`, `internal/audit/signer.go`, `internal/audit/signerkey/` (bp 5.1; FR-052)
 - [X] T075 [US4] Per-session hash-chained receipts over digests in `internal/audit/chain.go` (bp 5.2; FR-052)
 - [X] T076 [P] [US4] Periodic anchoring and a scheduled verifier in `internal/audit/anchor.go`, `internal/audit/verify.go`, `cmd/nexusd/background.go` (bp 5.3; FR-053)
-- [X] T077 [US4] Crypto-shredding erasure — destroy the DEK, hard-delete derived artifacts in one transaction, reconciliation job — in `internal/crypto/shred.go`, `migrations/0008_derived_artifacts.sql`, `cmd/nexusd/cli_erase.go` (bp 5.4; FR-054)
+- [X] T077 [US4] Crypto-shredding erasure — destroy the DEK, hard-delete derived artifacts in one transaction, reconciliation job — in `internal/crypto/postgres/shred.go`, `migrations/0008_derived_artifacts.sql`, `cmd/nexusd/cli_erase.go` (bp 5.4; FR-054)
 - [X] T078 [US4] Approval transaction: digest binding, decision-ready context package, assignee, TTL, five outcomes in `internal/oversight/approval.go`, `internal/oversight/types.go`, `migrations/0007_oversight.sql` (bp 5.6; FR-055)
 - [X] T079 [P] [US4] Step-9a digest re-verification yielding a typed `approval_mismatch` in `internal/tools/execute.go`, `internal/oversight/resume.go` (bp 5.7; FR-056)
 - [X] T080 [US4] Durable suspend at zero token cost, resume on the approval event in `internal/oversight/resume.go`, `kernel/loop.go` (bp 5.8; FR-057)
@@ -222,15 +225,15 @@ ledger id as `(bp N.M)` and the requirements it proves.
 
 ### Implementation for User Story 5
 
-- [X] T090 [US5] Queue port and admission, session-key serial lock in `internal/queue/types.go`, `internal/queue/admission.go`, `internal/queue/lock.go`, `internal/queue/worker.go` (bp 6.1, 6.2; FR-064)
-- [X] T091 [P] [US5] Redis Streams consumer-group adapter with `XAUTOCLAIM` reclaim, replacing the Postgres adapter, in `internal/queue/redis_streams.go`, `migrations/0024_retire_queue_jobs.sql` (post-ledger, `2efa4ff`; research R-10)
+- [X] T090 [US5] Queue port and admission, session-key serial lock in `internal/queue/types.go`, `internal/queue/admission.go`, `internal/queue/redis/lock.go`, `internal/queue/worker.go` (bp 6.1, 6.2; FR-064)
+- [X] T091 [P] [US5] Redis Streams consumer-group adapter with `XAUTOCLAIM` reclaim, replacing the Postgres adapter, in `internal/queue/redis/streams.go`, `migrations/0024_retire_queue_jobs.sql` (post-ledger, `2efa4ff`; research R-10)
 - [X] T092 [P] [US5] Checkpoint artifact in `internal/store/checkpoint.go`, `migrations/0013_checkpoints.sql` (bp 6.3; FR-065)
 - [X] T093 [P] [US5] Disposable snapshot in `internal/store/snapshot.go` (bp 6.4; FR-066)
-- [X] T094 [P] [US5] Condensation as a model-facing event in `internal/store/condensation.go` (bp 6.5; FR-067)
+- [X] T094 [P] [US5] Condensation as a model-facing event in `internal/eventlog/condensation.go` (bp 6.5; FR-067)
 - [X] T095 [US5] Write-ahead effect claims in `internal/store/claims.go`, `internal/runctl/claims.go`, `migrations/0012_claims.sql` (bp 6.6; FR-068)
 - [X] T096 [P] [US5] Failure classifier, jittered logged backoff, circuit break at three in `internal/reliability/classifier.go` (bp 6.7; FR-069)
 - [X] T097 [P] [US5] Stuck detection — `stuck_suspected` then terminate on a corroborating second trip — in `internal/reliability/stuck.go` (bp 6.8; FR-070)
-- [X] T098 [US5] Run control — steer, cancel (sole producer of `aborted`), resume, tighten autonomy — in `internal/runctl/steer.go`, `internal/runctl/cancel.go`, `internal/runctl/resume.go`, `internal/runctl/autonomy.go`, `internal/runctl/types.go`, `internal/runctl/append.go` (bp 6.9; FR-071)
+- [X] T098 [US5] Run control — steer, cancel (sole producer of `aborted`), resume, tighten autonomy — in `internal/runctl/steer.go`, `internal/runctl/cancel.go`, `internal/runctl/resume.go`, `internal/runctl/autonomy.go`, `internal/runctl/types.go`, `internal/eventlog/sealed/unit.go` (bp 6.9; FR-071)
 - [X] T099 [P] [US5] Pure replay in `internal/runctl/replay.go` (bp 6.10; FR-072)
 - [X] T100 [P] [US5] Fork — effects disabled, no inherited approvals, own budget/audit chain, digest divergence — in `internal/runctl/fork.go` (bp 6.11; FR-072)
 - [X] T101 [P] [US5] Run-control REST endpoints in `internal/surfaces/rest/runctl.go` (bp 6.9; FR-071)
@@ -293,9 +296,9 @@ ledger id as `(bp N.M)` and the requirements it proves.
 - [X] T126 [P] [US7] Closed JSON-AST predicate (`eq|ne|lt|gt|and|or|in`) in `internal/plan/predicate.go` (bp 8.2; FR-084)
 - [X] T127 [US7] Validation — schema, reachability, bounded loops, closed predicates, scope subset, structural oversight completeness — in `internal/plan/validate.go` (bp 8.3; FR-085)
 - [X] T128 [US7] Lifecycle `draft → validated → eval_passed → signed_off → enabled`, pinned and immutable, in `internal/plan/lifecycle.go`, `migrations/0016_orchestration.sql` (bp 8.4; FR-086)
-- [X] T129 [US7] Platform-evaluated execution with checkpointed step boundaries and plan events in `internal/plan/exec.go`, `internal/plan/run.go`, `internal/plan/events.go`, `internal/plan/replay.go`, `internal/plan/rehydrate.go` (bp 8.5; FR-087)
+- [X] T129 [US7] Platform-evaluated execution with checkpointed step boundaries and plan events in `internal/plan/exec.go`, `internal/plan/run.go`, `internal/plan/ports.go`, `internal/plan/replay.go`, `internal/plan/rehydrate.go` (bp 8.5; FR-087)
 - [X] T130 [P] [US7] `preauth` — enumerated, digest-bound — in `internal/plan/steps.go` (bp 8.7; FR-088)
-- [X] T131 [US7] Delegation as a tool through the same pipeline in `internal/delegate/spawn.go`, `internal/delegate/resolve.go`, `internal/delegate/delegations.go`, `internal/delegate/store.go`, `internal/delegate/types.go`, `internal/delegate/events.go` (bp 8.8; FR-089)
+- [X] T131 [US7] Delegation as a tool through the same pipeline in `internal/delegate/spawn.go`, `internal/delegate/resolve.go`, `internal/delegate/delegations.go`, `internal/delegate/postgres/store.go`, `internal/delegate/types.go` (bp 8.8; FR-089)
 - [X] T132 [P] [US7] `platform/delegate` with scope re-derived as a provable subset in `internal/tools/builtin/delegate.go` (bp 8.9; FR-089)
 - [X] T133 [P] [US7] Delegation suspends on the same durable-suspend primitive as approvals in `kernel/loop.go`, `internal/delegate/resolve.go` (bp 8.10; FR-090)
 - [X] T134 [P] [US7] Taint ascend from the child's own event-derived state in `internal/delegate/resolve.go` (bp 8.11; FR-089, SC-021)
@@ -388,13 +391,13 @@ ledger id as `(bp N.M)` and the requirements it proves.
 
 ### Implementation for User Story 10
 
-- [X] T170 [US10] Team service, fixed roster, lifecycle and backstop in `internal/teams/service.go`, `internal/teams/lifecycle.go`, `internal/teams/types.go`, `internal/teams/store.go`, `migrations/0017_teams.sql` (bp 9.1, 9.2, 9.9; FR-111, FR-116)
+- [X] T170 [US10] Team service, fixed roster, lifecycle and backstop in `internal/teams/service.go`, `internal/teams/lifecycle.go`, `internal/teams/types.go`, `internal/teams/postgres/store.go`, `migrations/0017_teams.sql` (bp 9.1, 9.2, 9.9; FR-111, FR-116)
 - [X] T171 [P] [US10] Board cards, status machine, taint copy-at-creation in `internal/teams/board.go`, `migrations/0017_teams.sql` (bp 9.3; FR-112)
 - [X] T172 [P] [US10] Atomic claim via `SELECT … FOR UPDATE SKIP LOCKED` in `internal/teams/board.go` (bp 9.4; FR-113)
 - [X] T173 [P] [US10] Four board tools through the ordinary pipeline in `internal/tools/builtin/board.go` (bp 9.5; FR-112)
 - [X] T174 [P] [US10] Read-time taint fold and injection scan before a card is surfaced in `internal/teams/board.go` (bp 9.6, 9.7; FR-112, FR-114)
 - [X] T175 [P] [US10] Shared envelope reserved once at creation in `internal/teams/envelope.go` (bp 9.8; FR-115)
-- [X] T176 [P] [US10] Team events in `internal/teams/events.go` (bp 9.9; FR-116)
+- [X] T176 [P] [US10] Team events in `internal/teams/types.go` (bp 9.9; FR-116)
 
 **Checkpoint**: peers, not just a tree.
 
@@ -416,11 +419,11 @@ ledger id as `(bp N.M)` and the requirements it proves.
 - [X] T179 [P] [US11] MCP client adapter — tools qualified `mcp/{server}/{tool}@{ver}`, per-tenant per-user resolution — in `internal/surfaces/mcp/adapter.go`, `internal/surfaces/mcp/client.go`, `internal/surfaces/mcp/resolver.go`, `internal/surfaces/mcp/port.go`, `internal/surfaces/mcp/descriptor.go`, `migrations/0019_mcp_servers.sql` (bp 11.1; FR-117)
 - [X] T180 [P] [US11] Per-user OAuth vault sealed under the tenant key in `internal/connectors/oauth.go`, `migrations/0018_oauth_connections.sql` (bp 11.2; FR-118)
 - [X] T181 [P] [US11] Connector tool with per-action taint in `internal/tools/builtin/connector_fetch.go` (bp 11.3; FR-119)
-- [X] T182 [P] [US11] Telegram webhook surface in `internal/surfaces/telegram/webhook.go`, `internal/surfaces/telegram/sender.go`, `internal/surfaces/telegram/starter.go`, `internal/surfaces/telegram/descriptor.go`, `internal/surfaces/telegram/ratelimit.go` (bp 11.4; FR-120)
-- [X] T183 [P] [US11] Zalo webhook surface in `internal/surfaces/zalo/webhook.go`, `internal/surfaces/zalo/sender.go`, `internal/surfaces/zalo/starter.go`, `internal/surfaces/zalo/descriptor.go`, `internal/surfaces/zalo/ratelimit.go` (bp 11.4; FR-120)
-- [X] T184 [P] [US11] Email webhook and SMTP surface in `internal/surfaces/email/webhook.go`, `internal/surfaces/email/sender.go`, `internal/surfaces/email/starter.go`, `internal/surfaces/email/descriptor.go`, `internal/surfaces/email/ratelimit.go` (bp 11.5; FR-120)
+- [X] T182 [P] [US11] Telegram webhook surface in `internal/surfaces/telegram/webhook.go`, `internal/surfaces/telegram/sender.go`, `internal/surfaces/telegram/descriptor.go`, `internal/surfaces/telegram/ratelimit.go` (bp 11.4; FR-120)
+- [X] T183 [P] [US11] Zalo webhook surface in `internal/surfaces/zalo/webhook.go`, `internal/surfaces/zalo/sender.go`, `internal/surfaces/zalo/descriptor.go`, `internal/surfaces/zalo/ratelimit.go` (bp 11.4; FR-120)
+- [X] T184 [P] [US11] Email webhook and SMTP surface in `internal/surfaces/email/webhook.go`, `internal/surfaces/email/sender.go`, `internal/surfaces/email/descriptor.go`, `internal/surfaces/email/ratelimit.go` (bp 11.5; FR-120)
 - [X] T185 [P] [US11] Messaging channel store in `migrations/0021_messaging_channels.sql`, `cmd/nexusd/messaging.go` (bp 11.4, 11.5; FR-121)
-- [X] T186 [P] [US11] Cron scheduler surface with a synthetic scheduler principal in `internal/surfaces/cron/scheduler.go`, `internal/surfaces/cron/starter.go`, `internal/surfaces/cron/descriptor.go`, `migrations/0020_cron_schedules.sql` (bp 11.6; FR-122)
+- [X] T186 [P] [US11] Cron scheduler surface with a synthetic scheduler principal in `internal/surfaces/cron/scheduler.go`, `internal/surfaces/cron/descriptor.go`, `migrations/0020_cron_schedules.sql` (bp 11.6; FR-122)
 - [X] T187 [US11] Web app descriptor and chat-style UI in `internal/surfaces/web/descriptor.go`, `web/src/pages/ChatPage.tsx`, `web/src/components/chat/ChatThread.tsx`, `web/src/components/chat/ApprovalCard.tsx`, `web/src/components/chat/SubAgentCard.tsx`, `web/src/components/chat/ToolCallCard.tsx`, `web/src/pages/Approvals.tsx`, `web/src/pages/ApprovalDetail.tsx` (bp 11.7; FR-123)
 - [X] T188 [P] [US11] Surface wiring in the composition root in `cmd/nexusd/surfaces_phase11.go` (bp 11.9; FR-124)
 - [X] T189 [P] [US11] Messaging session continuity — deterministic per-peer key, resume `awaiting_input`, deliver the model's reply — in `internal/surfaces/telegram/webhook.go`, `internal/surfaces/zalo/webhook.go`, `internal/surfaces/email/webhook.go` (post-ledger, `7606e15`; FR-121)
@@ -444,12 +447,12 @@ ledger id as `(bp N.M)` and the requirements it proves.
 
 - [X] T192 [P] [US12] Document conversion, digest and stable chunking in `internal/ingest/convert.go`, `internal/ingest/chunk.go`, `internal/ingest/types.go` (bp 12.1; FR-125)
 - [X] T193 [P] [US12] Admission scan before indexing (fail closed) in `internal/ingest/admit.go` (bp 12.2; FR-126)
-- [X] T194 [US12] Tenant-scoped pgvector index in `internal/retrieval/store.go`, `internal/retrieval/vector.go`, `internal/retrieval/retriever.go`, `migrations/0022_retrieval.sql` (bp 12.3; FR-127)
+- [X] T194 [US12] Tenant-scoped pgvector index in `internal/retrieval/postgres/store.go`, `internal/retrieval/postgres/vector.go`, `internal/retrieval/retriever.go`, `migrations/0022_retrieval.sql` (bp 12.3; FR-127)
 - [X] T195 [P] [US12] Embeddings through the provider port and the budget gate in `internal/provider/provider.go`, `internal/retrieval/retriever.go` (bp 12.4; FR-128)
 - [X] T196 [P] [US12] Deterministic fake embedder in `internal/provider/fake/embedder.go` (bp 12.5; FR-128)
 - [X] T197 [P] [US12] `platform/retrieve` as an ordinary tool declaring `reads_private_data` in `internal/tools/builtin/retrieve.go` (bp 12.6; FR-129)
 - [X] T198 [P] [US12] Screen retrieved chunks before they enter the prompt in `internal/retrieval/retriever.go` (bp 12.7; FR-129)
-- [X] T199 [P] [US12] Extend erasure to the retrieval index, same transaction in `internal/crypto/shred.go` (bp 12.8; FR-130)
+- [X] T199 [P] [US12] Extend erasure to the retrieval index, same transaction in `internal/crypto/postgres/shred.go` (bp 12.8; FR-130)
 - [X] T200 [P] [US12] Ingest CLI in `cmd/nexusd/cli_ingest.go` (bp 12)
 
 **Checkpoint**: durable knowledge beyond file-first memory.
@@ -474,8 +477,9 @@ ledger id as `(bp N.M)` and the requirements it proves.
 - [X] T205 [US13] `NEXUS_SANDBOX=docker|opensandbox` selection with warn-and-fall-back in `cmd/nexusd/ports.go`, `cmd/nexusd/pipeline.go` (bp 16.4; FR-132)
 - [X] T206 [P] [US13] Opt-in compose file for Crawl4AI and OpenSandbox in `deploy/docker-compose.agentic.yml` (bp 16.5; FR-133)
 - [X] T207 [P] [US13] `agentic-up` / `agentic-down` and the capabilities doc in `Makefile`, `docs/agentic-capabilities.md` (bp 16.6; FR-133)
-- [X] T208 [P] [US13] Two real skill bundles in `skills/web-research/GUIDE.md`, `skills/sandboxed-code/skill.json`, `skills/sandboxed-code/GUIDE.md`, `cmd/nexusd/cli_seed.go` (bp 16.7; FR-134) — **ledger path drift**: the ledger says `.dev/skills/`; the bundles live in `skills/`
+- [X] T208 [P] [US13] Two real skill bundles in `skills/web-research/GUIDE.md`, `skills/sandboxed-code/skill.json`, `skills/sandboxed-code/GUIDE.md`, `cmd/nexusd/cli_seed.go` (bp 16.7; FR-134) — **ledger path drift**: the ledger said `.dev/skills/`; the bundles live in `skills/`
 - [X] T209 [P] [US13] Suggested-prompt chips for crawl, sandboxed shell, skill activation, delegation in `web/src/lib/suggestedPrompts.ts` (bp 16.9; FR-134)
+- [X] T254 [P] [US13] Two named `agent_id`/`scope_grant` conventions, `web-researcher` and `sandbox-runner`, over the unmodified `platform/delegate` tool, documented in `docs/agentic-capabilities.md` and `skills/web-research/GUIDE.md` (bp 16.8; FR-134) — added 2026-11-02: the baseline missed this ledger row
 
 **Checkpoint**: seams proven by two real third-party backends.
 
@@ -504,6 +508,7 @@ ledger id as `(bp N.M)` and the requirements it proves.
 - [X] T219 [P] [US14] `observability-up` / `observability-down` / `docker-down`, and the doc, in `Makefile`, `docs/observability.md` (bp 17.8; FR-133)
 - [X] T220 [P] [US14] Native Langfuse exporter and multi-destination span fan-out, with Tempo as the generic OTLP sink, in `internal/obs/langfuse.go`, `internal/obs/multi.go`, `internal/obs/tracer.go`, `deploy/observability/tempo.yaml` (post-ledger, `1c4f02d`; FR-138)
 - [X] T221 [P] [US14] Opt-in pprof and Pyroscope continuous profiling for `nexusd` and `signerd` in `internal/obs/pprof.go`, `internal/obs/pyroscope.go`, `deploy/observability/grafana/dashboards/nexus-profiling.json` (post-ledger, `dda32cf`; FR-139)
+- [X] T255 [P] [US14] Promtail Docker service discovery, filtered to the `nexus-agent-demo` compose project, so containerized `nexusd`/`signerd` logs keep shipping, in `deploy/observability/promtail-config.yml` (bp 17.14) — added 2026-11-02: the baseline missed this ledger row
 
 **Checkpoint**: operability, strictly additive.
 
@@ -511,7 +516,7 @@ ledger id as `(bp N.M)` and the requirements it proves.
 
 ## Phase 17: Polish & cross-cutting concerns
 
-- [X] T222 [P] Architecture narrative and phase ledger in `README.md`, `docs/build-phases.md`, `docs/production-readiness-review.md`
+- [X] T222 [P] Architecture narrative in `README.md` and `docs/production-readiness-review.md`; the phase ledger was folded into these specs, with its ids preserved as `(bp N.M)`
 - [X] T223 [P] Local-model docs (Ollama + LiteLLM + Langfuse) and the LiteLLM provider adapter in `docs/local-llm.md`, `internal/provider/litellm/litellm.go`, `deploy/docker-compose.local-llm.yml`, `deploy/litellm/config.yaml` (post-ledger; FR-022)
 - [X] T224 [P] Contributor guidance, path-scoped rules and Claude Code hooks in `CLAUDE.md`, `.claude/rules/evals.md`, `.claude/rules/migrations.md`, `.claude/hooks/post-edit-go.sh`, `.claude/hooks/pr-size-check.sh`, `.claude/hooks/post-pr-create.sh` (post-ledger)
 - [X] T225 [P] Spec Kit scaffolding in `.specify/memory/constitution.md`, `.specify/templates/`, `.claude/skills/speckit-specify/SKILL.md` (post-ledger; `ae5abcb`)
@@ -522,7 +527,7 @@ ledger id as `(bp N.M)` and the requirements it proves.
 
 ## Phase 18: Post-ledger increments not attached to one story
 
-These shipped after `docs/build-phases.md` was last updated. They are tasked here for completeness; each is already cross-referenced under its story above.
+These shipped after the build ledger was last updated. They are tasked here for completeness; each is already cross-referenced under its story above.
 
 - [X] T228 [P] [US1] Live typing-style preview over SSE, decoupled from the durable log (`OnChunk` → `event: delta`), in `kernel/turns.go`, `internal/surfaces/rest/broker.go`, `web/src/lib/useRunEvents.ts` (post-ledger, `62f052b`; FR-028)
 - [X] T229 [P] [US5] Redis Pub/Sub event bus so an SSE client can be served by a different process than the worker in `cmd/nexusd/eventbus.go`, `internal/surfaces/rest/broker.go` (post-ledger, `2efa4ff`; FR-064)
@@ -575,16 +580,17 @@ MVP = Setup → Foundational → US1 → **stop and validate** (quickstart §2) 
 
 ### Closing the gaps found while writing this spec
 
-Do **Phase 19** (appended by `/speckit-converge`) in this order: the constitutional **VIOLATION** first (it changes what is allowed), then security **GAPs**, then test-coverage gaps, then documentation drift.
+Do the **Convergence backlog** (appended by `/speckit-converge`) in this order: the constitutional **VIOLATION** first (it changes what is allowed), then security **GAPs**, then test-coverage gaps, then documentation drift.
 
 ---
 
 ## Verification
 
-Task paths were checked mechanically at `8e02491`: **458 backticked repository paths** across `T001`–`T231` were tested for existence (route names
-such as `/healthz`, and Go package names, are not paths and are excluded by the checker). **Every path in a `[X]` task resolves**, with two
-deliberate exceptions that are *not* misses: `T136` names `internal/sandbox/broker.go`, which does not exist — that task is unchecked, as it
-is a deferred stretch — and `T208` cites `.dev/skills/` only to flag it as the stale ledger path (the bundles are in `skills/`).
+Task paths were first checked mechanically at `8e02491` (458 backticked repository paths across `T001`–`T231`) and are now checked on every run of the
+unit tests by `tests/contract/specs_test.go`: **every path named by a `[X]` task must exist at `HEAD`**. Route names such as `/healthz`, tool ids such as
+`platform/delegate`, and the untracked runtime directory `.dev/` are not paths and are skipped. The first run of that test found 21 paths that had moved
+since (Phase 19 split `internal/store`, `internal/crypto`, `internal/queue` and others into `postgres/` and `redis/` sub-packages), and they were
+corrected in place. `T136` is the one task naming a file that does not exist (`internal/sandbox/broker.go`); it stays unchecked, as a deferred stretch.
 
 Existence is a floor, not a proof. A claim inside a task was additionally spot-checked where the ledger and the code were most likely to differ,
 which caught and corrected `T167` (the 1 MiB SSE scanner buffer is in the Go provider adapters, not `web/`). The remaining `[X]` tasks' *behavior*
@@ -596,11 +602,28 @@ is what [quickstart.md](quickstart.md) exists to validate.
 - Each story is independently completable and testable; the Phase 3 → Phase 4 → Phase 5 order is the *dependency* order, not a coupling.
 - Commit after each task or logical group — and, per `CLAUDE.md`, keep a PR under 1,000 changed lines: **this `specs/001-agent-platform/` directory is itself over that limit** and must be stacked (see the final report).
 
-## Phase 19: Convergence
+## Convergence backlog
 
-Appended by `/speckit-converge` against `8e02491`. Ordered constitution findings first (CRITICAL), then test-coverage gaps (HIGH), then MEDIUM and LOW.
+Appended by `/speckit-converge` against `8e02491`. (This section was headed "Phase 19", which collided with the build ledger's Phase 19, now [spec 002](../002-post-baseline-increments/spec.md).) Ordered constitution findings first (CRITICAL), then test-coverage gaps (HIGH), then MEDIUM and LOW.
 Each task names its origin and gap type. Evidence for every finding is in [plan.md](plan.md) (Constitution Check), [spec.md](spec.md) (*Known deviations*) and
 [quickstart.md](quickstart.md) (the **No check** rows).
+
+### Re-triage at `09d54f8` (2026-11-02)
+
+The audit ran against `8e02491`, about seven weeks and 40 pull requests ago. This is what checking each task against `HEAD` found.
+
+| Tasks | State | Evidence |
+|---|---|---|
+| T232 | open | `NEXUS_TRACE_CONTENT` still opens `Span.SetContent`, which bypasses the allowlist (`internal/obs/otlp.go`) |
+| T233, T234 | open | the three webhook handlers call `RateLimit.Allow(tenantID.String())`, and none checks a replay window |
+| T235, T236 | open | anchors are rows in the same database (`internal/audit/postgres/anchor.go`); a chain break is only logged (`cmd/nexusd/background.go`) |
+| T237 | open | `SafetyPolicyVersion` and `ApprovalPolicyVersion` are never set outside tests; the system prompt version is a literal in `internal/surfaces/cron/scheduler.go` |
+| T238–T241 | open | no masking stage found, no SBOM or signing step in CI, no `docs/durability.md`, no SLO or burn-rate rule |
+| T242, T243 | open | no quality-per-dollar metric in `evals/`; `internal/provider/router.go` has no capability floor |
+| T244, T245, T249, T250, T251 | open | no Fork end-to-end test, no tamper-detection test, no SC-024 or SC-021 named tests, no `scripts/check-stack-isolation.sh`, and `Rebaseline` has no caller outside tests |
+| T246, T247, T248 | partly covered | `tests/integration/cost_ceiling_test.go`, `internal/cost/pricebook_test.go` and `TestKernel_AwaitingApprovalSuspendsRun` exist; the specific assertions in the tasks were not found |
+| T252 | partly done | the default port and the stale README paths are fixed; the terminal-reason count, `.dev/skills`, "RFC 8785" and the `web/src/lib/sse.ts` comment remain |
+| T253 | done | the alias table is in [../README.md](../README.md#legacy-task-number-aliases) |
 
 - [ ] T232 CRITICAL: Resolve the content-bearing trace channel — remove `NEXUS_TRACE_CONTENT` and `Span.SetContent`, or amend the constitution (MINOR) so a dev-only content channel is refused outside `--dev` and emits a receipt — then change `TestKernelTracerContentOptIn`, which currently asserts the violation, to match, in `internal/obs/tracer.go`, `kernel/loop.go`, `cmd/nexusd/serve.go`, `tests/integration/tracer_test.go`, `docs/local-llm.md`, `.specify/memory/constitution.md`, `docs/constitution.md` per Constitution VI / FR-009 (contradicts)
 - [ ] T233 CRITICAL: Reject replayed webhook deliveries outside a bounded window (a timestamp or nonce check, per provider) before the kernel sees the payload in `internal/surfaces/telegram/webhook.go`, `internal/surfaces/zalo/webhook.go`, `internal/surfaces/email/webhook.go` per FR-120 / Constitution (inbound channel authenticity) (missing)
@@ -623,4 +646,4 @@ Each task names its origin and gap type. Evidence for every finding is in [plan.
 - [ ] T250 Automate optional-stack non-interference — start and stop each opt-in compose file and assert the core services stay up and `platform/shell` degrades with a warning — in a new `scripts/check-stack-isolation.sh`, `Makefile` per SC-033 (US13, US14) (partial)
 - [ ] T251 Give an operator a way to invoke `TaintState.Rebaseline` (a run-control action and CLI command that clears only the untrusted leg, audited), since nothing outside tests calls it today, in `internal/permissions/ruleoftwo.go`, `internal/runctl/autonomy.go`, `internal/surfaces/cli/cli.go` per FR-039 (US2) (partial)
 - [ ] T252 Fix documentation drift — the default port (`:8085` in code; `:8080` in `CLAUDE.md` and `README.md`, `:8055` in `.env.example`), the README table list and its nonexistent `deploy/sandbox/Dockerfile` and `PLAN.md`, the "8 terminal reasons" wording, the `.dev/skills/` path (now `skills/`), the "RFC 8785" wording (a simplified JCS), and `web/src/lib/sse.ts`'s stale `X-Nexus-*` header comment — in `CLAUDE.md`, `README.md`, `.env.example`, `docs/build-phases.md`, `web/src/lib/sse.ts` per spec Known deviations 2, 3 (contradicts)
-- [ ] T253 Record the legacy task-number aliases (`13.8`–`13.15` → `14.1`–`15.4`) in `docs/build-phases.md` so code comments that cite them resolve, per research.md alias table (partial)
+- [X] T253 Record the legacy task-number aliases (`13.8`–`13.15` → `14.1`–`15.4`) in `specs/README.md`, so code comments that cite them resolve; `tests/contract/specs_test.go` enforces it, per research.md alias table (done)
