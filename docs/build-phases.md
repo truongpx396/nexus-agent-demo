@@ -722,6 +722,33 @@ deployed, so each task below is a straight refactor with no data migration.
 | 19.31 | `internal/teams` over a unit-of-work `Store`, **and a durability gap closed**. `endTeam` was three commits — claim the transition out of `active`, reap the members, append `team_ended` — so a crash after the first left a team marked ended with no `team_ended` event, and nothing could repair it because the claim only succeeds from `active`. Members are now reaped first and the claim and the event are one unit: a crash before it leaves the team `active`, and the next member terminal or the wall-clock backstop ends it again (cancelling an already-terminal member is a no-op). The regression test fails when the old three-commit shape is put back. Also unit tested for the first time: completion needs an empty board *and* every member terminal, budget exhaustion ends the team at once, the depth bound, a flagged card is recorded but never shown and never folds taint, only the claimant moves a card. Nine mutations caught — my first run of them reported *every* mutant as surviving because macOS has no `timeout` command and the tests never ran, which is why a "survived" result is now read as suspect until one known-bad mutant is seen to fail | A completed team could be missing the event that says so, for good |
 | 19.32 | `internal/plan` over a unit-of-work `Store`, which finishes the services: **nothing outside an adapter now imports `store` or `pgx` except `internal/store` itself**, and `runctl`, `runstate`, `delegate`, `teams`, `plan` and `queue` each have a boundary rule that they reach no storage even transitively (each shown to fire). The lifecycle had the same shape of gap as `endTeam`: sign-off and enablement changed the plan's status in one transaction and wrote who signed off, or what it was enabled with, in a second, so a crash between them left a plan signed off or enabled with no record of by whom or with what; the record now commits with the status. Unit tested for the first time: stages only in order, an enabled version is immutable, a failed gate leaves the plan fixable, a new version starts as a draft, the governance record commits with the status (a failed record leaves the old status), and the executor walks condition and loop steps to completion with no model call and fails a runaway loop at its runtime bound — which the fake store reports by panicking at 10,000 events, because the mutant that removes the bound otherwise spins for ever | The orchestration plane's governance record could be missing for a plan that was already signed off |
 
+### Phase 20 — Provable topology seam, and a session lock that holds
+
+Not part of the original 67-pattern coverage and, like Phases 13, 18 and 19, nothing here is a new
+architectural idea. Reframing the README around deployment topology and comparing it with the original's
+[Deployment topologies](https://github.com/truongpx396/nexus-agent#deployment-topologies) found three claims that
+rested on nothing that checked them: the control↔data-plane contract (#62) was Go types with no wire encoding and
+only `AdmitRun` ever crossed it; "any worker can take any job" depended on a session lock that was never renewed
+(`SessionLock.Renew` existed, and nothing outside its own test called it), so serial-per-session lapsed after the
+lock's 30 seconds even in one process; and the container images were built by nothing in CI, and had stopped
+building when `go.mod` moved past the golang image's Go. Nothing is deployed, so each task is a straight change
+with no data migration.
+
+| # | Task | Closes |
+|---|---|---|
+| 20.1 | `controlplane.Port` v1 gets a wire encoding: `json` tags (snake_case; `ttl_ns` for the one `time.Duration`) on every V1 type, and `internal/controlplane/wire`, a JSON-over-HTTP `Handler` that serves any `Port` and a `Client` that is one. The tests send every operation, with every field set, through a real HTTP server and compare what arrived; pin the wire names (a round trip through the same Go types cannot catch a wrong name); fail if a V1 field is added without the fixtures being updated; and check that a refusal (`Admitted: false`) stays data while a failure stays an error. Loopback-grade by design: no authentication, TLS or retries, which belong to the deployment. | #62's "versioned contract" was Go types only, so a hybrid split had no evidence the contract was sufficient |
+| 20.2 | `queue.Worker` renews its session lock while a job runs (`holdLock`, every `RenewEvery`, a third of the lock's TTL in `cmd/nexusd`) and cancels the run if the lock is lost; a failed renewal is retried, not treated as lost. Without it the lock lapsed mid-run, so a follow-up message or a reclaimed lease could drive the same session concurrently. | per-session serial held only for runs shorter than 30 s |
+| 20.3 | Orphan recovery is lock-aware (`SessionLock.Held`; `cmd/nexusd/orphans.go`). A session whose lock is held is live and skipped, one whose liveness cannot be read is left, and a single recheck after the lock's TTL picks up a just-dead worker's sessions. One recheck, not a loop: an orphan whose resume fails for good would be re-enqueued forever. Previously every `running` session was resumed at startup, so a second process starting would enqueue resumes for the first one's live runs. | startup recovery assumed one process |
+| 20.4 | CI job `images`: builds both images through compose's `app` profile and waits for `nexusd`'s `/readyz`, which needs Postgres, Redis and `signerd` (over the shared socket volume) all reachable. The Dockerfile had been unbuildable since 19.8 and nothing noticed. | image rot |
+
+Not done, and stated so the topology claims stay honest: the other holders of the session lock (the webhook
+surfaces, `delegate`) hold it briefly and do not renew; the periodic loops (the audit anchor, the team backstop, the
+idle-conversation sweep) have not been audited for several processes; nothing runs two `nexusd` processes together, so
+"any replica can take any job" is still a design property, not a tested one; there is no role or mode setting, so
+topology is composed in `cmd/nexusd`, not configured; and five of the Port's six operations still have no caller outside
+the package. The original's SSO/OIDC, RBAC, per-tenant rate limits, gVisor/Kata, NATS and BYOC packaging stay out of
+scope with their triggers unmet (rows 65 and 66, and [README §5](../README.md#5-explicitly-out-of-scope-and-the-trigger-that-would-change-that)).
+
 ---
 
 ## 3. Effort summary

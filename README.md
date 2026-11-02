@@ -139,7 +139,7 @@ flowchart TB
 - 🚪 **Surfaces only translate I/O.** REST, Telegram, Zalo and email start a run through `runs.Launcher`; cron calls `StartRun` directly. `nexusctl` and the web app are clients of the REST API, and MCP is a tool source, not a way in.
 - 🎛️ **The control plane is a Go interface, `controlplane.Port` (v1).** Six operations, each backed by a component the composition root wires in: `AdmitRun` (sessions), `ReserveBudget` and `ReportCost` (`cost.Gate`), `EmitAuditReceipt` (the audit chain), `RequestApproval` (`oversight`) and `AuthorizeContentAccess` (content grants). Today `runs.Launcher` is the only caller outside the package, and only for `AdmitRun`; the loop reaches the cost gate directly, in process. It is slimmer than the original's control plane, which also owns SSO/OIDC, RBAC and per-tenant rate limits: here a signed-JWT dev issuer stands in for OIDC, there is no RBAC layer or per-tenant rate limiting, the principal comes from the verified token's claims, and routing (which model, and why) is decided in the launcher before admission.
 - 🧱 **Topology is a composition decision.** `kernel/` may not import the control plane, a surface or a storage adapter, and the control plane may not import `sandbox`, `memory` or `provider` (the same data-plane set as the original); `tests/contract/boundaries_test.go` walks the import graph and fails the build on a violation. `cmd/nexusd` is the one package that wires both sides, so what a split would change is there ([Deployment topology](#-deployment-topology)).
-- 🔁 **Workers are interchangeable.** `StartRun` seeds the run's opening events and enqueues a start job carrying only ids, never the input's plaintext. A worker leases it under the per-session-key lock and re-enters the loop through `runctl.Control.Resume`, the same path crash recovery uses.
+- 🔁 **Workers are interchangeable.** `StartRun` seeds the run's opening events and enqueues a start job carrying only ids, never the input's plaintext. A worker leases it under the per-session-key lock, which it renews for as long as the job runs, and re-enters the loop through `runctl.Control.Resume`, the same path crash recovery uses.
 - 🧾 **The loop reaches durable state only through `kernel.EventLog`.** The Postgres adapter appends the event and its audit receipt in one tenant-scoped transaction, and `signerd` signs the receipt.
 - ✋ **An approval suspends the run.** An `ASK` from the permission chain records a suspension and stops the generator with no terminal event; a human decision resumes it.
 
@@ -157,13 +157,13 @@ The [original design](https://github.com/truongpx396/nexus-agent#deployment-topo
 | 🏢 **Multi-tenant SaaS** | Shared planes; isolation by RLS and per-tenant gVisor or Kata sandboxes | **Partial.** RLS through PgBouncer, per-tenant envelope encryption and tenant-scoped state are in. The sandbox is Docker or OpenSandbox (gVisor and Kata are deferred, [§5](#5-explicitly-out-of-scope-and-the-trigger-that-would-change-that)), and SSO/OIDC, RBAC and per-tenant rate limits are not built |
 | 🏠 **Single-tenant** | A dedicated stack; the tenant boundary is the deployment | **Runs, unpackaged.** `make seed` creates one tenant; there is no dedicated-stack packaging |
 | 🖥️ **Self-hosted / BYOC** | The data plane in the customer's VPC | **Seam only.** The boundary test keeps `sandbox`, `memory` and `provider` out of the control plane, as in the original; there is no transport, no NATS and no deployment |
-| 🔀 **Hybrid** | Control plane and data plane split across a versioned contract | **Seam only.** `controlplane.Port` v1 and the in-process `LocalPort`; what is missing is listed below |
+| 🔀 **Hybrid** | Control plane and data plane split across a versioned contract | **Seam only.** `controlplane.Port` v1 with a wire encoding and a loopback HTTP transport that tests prove carry every operation and field; no deployed split, and what is missing is listed below |
 
 Where this departs from the original, so the headline is not read as more than it is:
 
 - **Composition, not configuration.** The original selects a topology by configuration. Here `cmd/nexusd` hard-wires the in-process `LocalPort`, and there is no role or mode setting. The ledger marks four-topology packaging out of scope ([`docs/build-phases.md`](docs/build-phases.md), row 66), and the original's own cut line defers "multi-topology packaging".
-- **The contract is Go types, not yet a wire format.** The Port's v1 request and response structs carry no `json` tags and nothing serializes them, and only `AdmitRun` has a caller outside the package. A hybrid split needs a wire encoding and a transport for the port, plus a second `main`.
-- **Several `nexusd` processes are not supported yet.** The queue is a Redis Streams consumer group with a per-session lock, and events cross processes over Pub/Sub, which is the right shape. But startup assumes it is the only process: `recoverOrphanedSessions` enqueues a resume for every session still `running` in the database, so a second process starting would enqueue resumes for the first one's live runs. The multi-process worker pool is deferred in §5 until concurrency needs it.
+- **The contract has a wire encoding, but almost nothing crosses it.** The Port's v1 types carry `json` tags and `internal/controlplane/wire` is a JSON-over-HTTP `Handler` and `Client`; its tests send every operation, with every field set, through a real HTTP server and pin the wire names. Nothing deployed uses it, only `AdmitRun` has a caller outside the package, and the transport has no authentication or TLS. A hybrid split needs those and a second `main`.
+- **Several `nexusd` processes have never been run together.** The queue is a Redis Streams consumer group with a per-session lock, and events cross processes over Pub/Sub, which is the right shape. A worker now renews that lock for as long as a job runs (before, it lapsed after 30 seconds, so a long run was not serial per session even in one process), and startup recovery skips a session whose lock is held instead of resuming every `running` one. Those make two processes safe by construction, not by test: the periodic loops (audit anchor, team backstop, idle sweep) are not audited for it, and the multi-process worker pool is deferred in §5 until concurrency needs it.
 - **A slimmer control plane**, described under [Architecture](#-architecture).
 
 Three things hold in every topology:
@@ -413,13 +413,14 @@ the audit chain, the erasure model, the cost gate, the orchestration plane, dele
 the eval gate — ships **in full**, because each *is* the pattern.
 
 The full pattern-by-pattern fidelity scoring (67 rows) and the phase-by-phase build plan
-(Phase 0 through Phase 19) live in [`docs/build-phases.md`](docs/build-phases.md) — split out
+(Phase 0 through Phase 20) live in [`docs/build-phases.md`](docs/build-phases.md) — split out
 to keep this narrative readable. Score: 57 of 67 patterns at full or simplified fidelity, 4 as
 seams, 6 deliberately out of scope. Phases 13–15 (added after
 [`docs/production-readiness-review.md`](docs/production-readiness-review.md)) and Phase 18 close gaps
 between what several **F**-rated patterns claimed and what the shipped code did, and Phase 19
-makes the core depend on ports rather than on Postgres (hexagonal persistence and use-case seams);
-none of them changes that score.
+makes the core depend on ports rather than on Postgres (hexagonal persistence and use-case seams),
+and Phase 20 makes the topology seam provable and the session lock hold for a whole run; none of
+them changes that score.
 
 ---
 
@@ -768,7 +769,7 @@ This repo's own supplementary docs:
 
 | Document | Why |
 |---|---|
-| [`docs/build-phases.md`](docs/build-phases.md) | The pattern coverage map, the full build plan (Phase 0 through Phase 19), the effort estimate, and the risk register — split out of this file, linked from §2. |
+| [`docs/build-phases.md`](docs/build-phases.md) | The pattern coverage map, the full build plan (Phase 0 through Phase 20), the effort estimate, and the risk register — split out of this file, linked from §2. |
 | [`docs/production-readiness-review.md`](docs/production-readiness-review.md) | The audit that found F1–F15 and drove Phase 13. |
 | [`docs/webhook-concurrency-review.md`](docs/webhook-concurrency-review.md) | The follow-up audit of Phase 11's conversational webhook surfaces that found `SessionLock` wired into only the async queue worker and no inbound delivery dedup, and drove Phase 18. |
 | [`docs/constitution.md`](docs/constitution.md) | The nine principles, copied in verbatim (Phase 0, task 0.6) as the review checklist. |
