@@ -12,6 +12,8 @@ Each directory is one feature (or, like 001 and 002, a set of related stories), 
 |---|---|---|---|
 | [001](001-agent-platform/spec.md) | The Nexus Agent platform (baseline) | Implemented; backlog open ([tasks](001-agent-platform/tasks.md#convergence-backlog)) | 0–17, plus the work shipped after the ledger |
 | [002](002-post-baseline-increments/spec.md) | Post-baseline increments: webhook idempotency, hexagonal architecture, a provable topology seam | Implemented (retroactive) | 18, 19, 20 |
+| [003](003-trust-surface-conformance/spec.md) | Trust-surface conformance: webhook replay and per-sender limits, the telemetry content channel, audit anchoring and alerting, digest pinning, egress masking | Draft (proposed); open decisions marked | none (new work) |
+| [004](004-delivery-and-quality-gates/spec.md) | Delivery and quality gates: backup and restore, SLOs, SBOM and signing, release-gate metrics, a routing capability floor | Draft (proposed); open decisions marked | none (new work) |
 
 Also in [001](001-agent-platform/): [pattern-coverage.md](001-agent-platform/pattern-coverage.md), the original design's 67 patterns against this demo.
 
@@ -71,6 +73,14 @@ resolves to the right-hand `(bp)` id.
 | The phase narratives and long rows, Phases 0–17 | `git show 09d54f8:docs/build-phases.md` only; 001 keeps the one-line tasks |
 | The effort table | dropped: it was never updated past Phase 13 |
 
+## How work flows
+
+- **A new feature** starts with `/speckit-specify`, then `/speckit-plan` and `/speckit-tasks`, which create the next `specs/NNN-name/`. Open questions stay marked `[NEEDS CLARIFICATION]` until someone with the authority to decide has; do not guess a number into a spec.
+- **A change to something already specified** adds or checks off a task in that spec's `tasks.md` and names the files it touched. Related small increments share a spec as stories, as 001 and 002 do, instead of each getting a directory.
+- **A gap found by audit** (`/speckit-converge`, `/speckit-analyze`, a review) becomes a task or a story in the spec it belongs to, not a note elsewhere. Run `/speckit-converge` before a release.
+- **The gate**: `scripts/spec-gate.sh` (`make spec-gate`, and the `spec-gate` workflow in CI) fails a pull request that changes behaviour-bearing code (non-test Go under `internal/`, `cmd/`, `kernel/` and `evals/`, SQL migrations, the eval corpus, `web/src/`) without changing anything under `specs/`. A change that genuinely needs no spec carries the `no-spec` label and says why in the description.
+- **Ids**: a task that closes a ledger-era item keeps its `(bp N.M)`. New work has none and is cited by spec and task, for example `spec 003 T004`.
+
 ## What is checked
 
 `tests/contract/specs_test.go` runs with the unit tests and fails on:
@@ -82,5 +92,7 @@ resolves to the right-hand `(bp)` id.
 - a path named by a `[X]` task, in a spec whose `tasks.md` declares its paths verified, that does not exist at `HEAD`;
 - a relative Markdown link inside `specs/` that points at a file that does not exist;
 - the two copies of the constitution differing.
+
+The gate above is separate: it checks that a *change* touches a spec; the tests check that the specs' ids, paths and links still hold.
 
 None of that can tell whether a sentence is *true*. That is what `/speckit-analyze` and `/speckit-converge` are for.
