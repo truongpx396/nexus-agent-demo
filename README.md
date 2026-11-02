@@ -25,13 +25,14 @@ OpenAI-compatible model, local Ollama included.
 > **Status:** a reference implementation, not a deployed service. The `--dev` path is zero-setup; outside it `nexusd`
 > fails closed on any unset security-critical setting. What stands between this and production is tracked in
 > [`docs/production-readiness-review.md`](docs/production-readiness-review.md) and [`docs/go-live.md`](docs/go-live.md).
+> What it is held to, and which parts are built, partial or only a seam: [Enterprise readiness](#-enterprise-readiness).
 
 [![CI](https://github.com/truongpx396/nexus-agent-demo/actions/workflows/ci.yml/badge.svg)](https://github.com/truongpx396/nexus-agent-demo/actions/workflows/ci.yml)
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](#-quickstart)
 [![Topology](https://img.shields.io/badge/Topology-one%20process%20today%2C%20seams%20for%20a%20split-0a7d5a)](#-deployment-topology)
 [![Stack](https://img.shields.io/badge/Stack-Postgres%20%C2%B7%20PgBouncer%20%C2%B7%20Redis%20%C2%B7%20React-1f6feb)](#-highlights)
-[![Isolation](https://img.shields.io/badge/Isolation-RLS%20%2B%20transaction--local%20scope-8250df)](#-safety-and-trust)
-[![Audit](https://img.shields.io/badge/Audit-hash--chained%20%2B%20sign--only%20signerd-d1242f)](#-safety-and-trust)
+[![Isolation](https://img.shields.io/badge/Isolation-RLS%20%2B%20transaction--local%20scope-8250df)](#-enterprise-readiness)
+[![Audit](https://img.shields.io/badge/Audit-hash--chained%20%2B%20sign--only%20signerd-d1242f)](#-enterprise-readiness)
 [![LLM](https://img.shields.io/badge/LLM-fake%20%C2%B7%20Anthropic%20%C2%B7%20LiteLLM-2ea44f)](#-configuration)
 [![Patterns](https://img.shields.io/badge/Patterns-57%20of%2067%20at%20full%20or%20simplified%20fidelity-e36209)](docs/build-phases.md)
 [![Eval gate](https://img.shields.io/badge/Eval%20gate-release%20gate%20in%20CI-0969da)](#4-testing-strategy)
@@ -47,7 +48,7 @@ OpenAI-compatible model, local Ollama included.
 - [💬 Things to try](#-things-to-try)
 - [🌐 HTTP API and CLI](#-http-api-and-cli)
 - [🧩 Configuration](#-configuration)
-- [🔒 Safety and trust](#-safety-and-trust)
+- [🏦 Enterprise readiness](#-enterprise-readiness)
 - [📊 Observability](#-observability)
 - [🔧 Make targets](#-make-targets)
 - **Design narrative** (cited across the code and docs by number)
@@ -297,17 +298,50 @@ auto-loaded from the working directory; **a real environment variable always win
 
 * * *
 
-## 🔒 Safety and trust
+## 🏦 Enterprise readiness
 
-The trust surface is day-one and co-equal with the loop, never a retrofit. The mechanisms, each with its code and test:
+What an enterprise reviewer asks of an agent platform is the second governing equation of the original design: *enterprise-ready ≈ harness quality × trust surface* ([§1](#1-what-the-original-is-in-one-page)). The [constitution](docs/constitution.md) turns that into binding constraints (a Security & Trust Surface, Delivery & Scale constraints and Quality Gates), and this demo is held to them: each control below has a code location and, where it can, a test or lint rule that fails the build. It is a **design target, not a certification**. Nothing here claims SOC 2, ISO 27001 or GDPR conformance, nothing is deployed, and every row says what exists.
 
-- 🏢 **Tenant isolation fails closed.** RLS is enabled and forced on every tenant table (`nexusd migrate` asserts it and prints the count). `Store.InTenantTx` is the only scoping call and uses `set_config('app.tenant_id', $1, true)`, which is transaction-local; a session-level `SET` is banned by lint *and* by the isolation test, because the pooler reassigns connections between tenants.
-- ⛓️ **Permissions are one total order.** Ten layers, a DENY at any layer is final, there is no bypass mode, and the per-invocation safety check and Rule of Two are always evaluated ([the chain](#3-target-architecture-of-the-demo)). Autonomy is a one-way ratchet: no widening operation exists on any interface.
-- ✋ **Approval is a transaction.** Bound to the call's canonical digest, with a named assignee and a TTL; a digest mismatch at execution is a typed `approval_mismatch`.
-- 1️⃣ **Side effects are claimed first.** A write-ahead idempotency claim goes `in_flight` before the effect leaves the process, and is resolved by a probe or a human. Nothing ever re-executes silently.
-- 🔐 **Keys have separate custody.** A KEK wraps per-tenant DEKs for AES-256-GCM sealing; the audit key lives only in `signerd`, which signs over a unix socket and never reveals it, and `cmd/nexusd` may not import the signer-key package at all.
-- 🧾 **The audit chain is verifiable.** Every appended event gets a hash-chained receipt over *digests*, so lawful redaction never breaks verification; chain heads are anchored periodically and `nexusd verify-chain` checks both.
-- 🙈 **Telemetry carries no content.** Span attributes pass a deny-by-default allowlist; reading plaintext outside a run's own audience takes an audited, expiring content-access grant.
+Four habits run through the design:
+
+- **Fail closed.** Outside `--dev`, `nexusd` refuses to start unless five security-critical settings are set; an unknown cost-counter epoch refuses the spend rather than assuming none; a failed safety check asks rather than allows.
+- **Enforced, not documented.** The import boundaries, the 500-line file cap, money as exact integers, exhaustive switches over terminal reasons and the paired `tool_use`/`tool_result` invariant are failing tests or lint rules, not conventions.
+- **Deny by default.** Telemetry attributes pass an allowlist, a tool's taint legs default to true, and a tool descriptor is untrusted until its admission scan clears it.
+- **Deferral is recorded.** What is not built is named rather than silently claimed, following the constitution's own "build for the current stage" rule.
+
+| Expectation | How the design meets it | Status |
+|---|---|---|
+| **Tenant isolation** | RLS is enabled **and forced** on every tenant table (`nexusd migrate` asserts it and prints the count). One scoping call, `Store.InTenantTx`, sets `app.tenant_id` with a transaction-local `set_config`, because PgBouncer reassigns connections between tenants; a lint rule cannot tell a transaction-local call from a session-level one, so an integration test through the pooler is what shows the session-level variant leaks | **Built** |
+| **Data protection** | Per-tenant envelope encryption of every event payload (a KEK wraps per-tenant DEKs, AES-256-GCM); the payload digest is taken over plaintext so it outlives erasure | **Built.** The KEK is a file: KMS/HSM and customer-managed keys are seams (`key_id`) only |
+| **Erasure on an append-only log** | Crypto-shredding: `nexusd erase` destroys a tenant's or one session's key and hard-deletes derived rows; the log still replays and the audit chain still verifies | **Built**, with a test that erases and then verifies structural replay and the chain (`TestErasure_StructuralReplayAndChainSurviveShredding`) |
+| **Tamper-evident audit** | A hash-chained receipt per event, over digests so lawful redaction never breaks it, signed by `signerd`, which holds the key sign-only over a unix socket (`cmd/nexusd` may not import the signer-key package at all). Heads are anchored on a schedule, and `nexusd verify-chain` checks the chain and the anchors | **Built.** The key is a file, not KMS/HSM, and the anchors are signed rows in the same database, not an external system |
+| **Human oversight** | Approval is a transaction bound to the call's canonical digest: modified, expired and invalidated are typed outcomes, and a digest mismatch at execution is `approval_mismatch`. Autonomy only ratchets tighter (no widening operation exists on any interface), a standing scope can satisfy an ask but never suppress one, and a suspended run costs zero tokens | **Built** |
+| **Safe tool execution** | One 16-step pipeline and a 10-layer permission chain in which a DENY is final, there is no bypass mode, and the per-invocation safety check and Rule of Two are always evaluated; an egress allowlist for `web_fetch`; a Docker sandbox with no network, all capabilities dropped, a read-only root, `no-new-privileges` and CPU, memory and PID limits | **Built.** gVisor/Kata isolation for hostile multi-tenancy is deferred |
+| **Side effects happen once** | A write-ahead idempotency claim goes `in_flight` before the effect leaves the process and is resolved by a probe or a human, never re-executed and never silently discarded | **Built** |
+| **Secrets stay out of the model** | Per-user OAuth tokens are sealed under the tenant's key and injected at call time; the model sees a handle, and a test asserts a live token never appears in output or logs | **Built.** No external vault |
+| **Identity and access** | A verified bearer token carries the principal; run output is decrypted only for the run's own audience; any other read of plaintext needs an audited, expiring content-access grant, which is itself receipted | **Partial.** A signed-JWT dev issuer stands in for SSO/OIDC, and there is no RBAC, act-as scoping or per-tenant rate limit on the API |
+| **Inbound channel authenticity** | Telegram (secret token), Zalo (HMAC over the body) and email (Basic Auth) are verified per tenant, in constant time, before the payload reaches the kernel; provider redeliveries are deduplicated by delivery id; all three are rate-limited per identity (in-memory token buckets, so per process) | **Built**, except there is no timestamp-bounded replay window (redelivery is caught by delivery id instead) |
+| **Cost control** | Every model call reserves its worst case against an atomic per-tenant counter before it streams and reconciles afterwards; an unknown counter epoch fails closed; money is exact integers (a test rejects any `float` in the package); a typed `cost_exhausted` ends the run | **Built** |
+| **Reliability** | Runs are jobs on a durable queue, pulled by stateless workers that resume from checkpoints; failures are classified, with logged backoff, a circuit breaker and stuck detection; graceful shutdown with liveness and readiness probes | **Built** for one process. Backup, restore, RPO and RTO are not defined, and several processes have not been run together |
+| **Observability without a privacy leak** | Telemetry is a content-free signal class behind a deny-by-default attribute allowlist, so a span cannot carry a prompt; metrics, a golden-signals dashboard and a Prometheus, Loki and Grafana stack ([Observability](#-observability)) | **Built.** No SLOs, error budgets or burn-rate alerts (there are five alert rules) |
+| **Governed change** | Evals gate the release in CI (k trials, exact intervals, a held-out gap, a baseline regression check); a `harness_digest` pins the behavior each run used; an import-graph test guards the architecture; the event envelope is versioned with an upcasting path; migrations follow expand/contract | **Built.** The live-model gate is not run in CI, and there are no named owners (no CODEOWNERS) |
+| **Supply chain** | `govulncheck` on every PR and weekly, Dependabot, a pinned Go toolchain, static distroless non-root container images | **Partial.** No SBOM and no signed artifacts |
+| **Compliance posture** | Retention-bounded memory; erasure per tenant or session; `region` and `key_id` columns kept as seams; a go-live checklist (`make go-live`) that prints the manual items (residency, retention, no-train, an incident runbook) as reminders, never as a silent pass | **Seam only.** No residency enforcement, DSAR workflow or AI risk register |
+| **Deployment topology** | Control plane, data plane and surfaces meet only at Go interfaces | **Seam only**, see [Deployment topology](#-deployment-topology) |
+
+**Not built, on purpose.** SSO/OIDC, RBAC and act-as scoping, per-tenant rate limiting on the API, KMS/HSM and customer-managed keys, an external vault, gVisor/Kata, an SBOM with signing, residency enforcement, a rehearsed restore, and SLOs with error budgets are out of this demo's scope. Some have a recorded trigger in [§5](#5-explicitly-out-of-scope-and-the-trigger-that-would-change-that) (gVisor/Kata, multi-region residency, BYOK); the rest are named here so they are not mistaken for built.
+
+**Check it yourself:**
+
+| Command | Proves |
+|---|---|
+| `go test -tags=integration ./internal/store -run TestIsolation -v` | Tenant isolation through PgBouncer; the session-level variant leaks |
+| `make verify-chain` | The audit chain and its anchors verify (needs the stack running) |
+| `make go-live` | The launch checklist, with manual items printed as reminders |
+| `make eval` | The release gate over the scripted corpus |
+| `go test ./tests/contract/ ./tests/property/` | The import boundaries, the file cap, money as integers and the paired-result invariant |
+
+**Where the bar came from.** It is the original design's constitution. An audit of the as-built code against it ([production-readiness review](docs/production-readiness-review.md)) found fifteen gaps, for example that tenant identity was an unverified request header and sandbox containers ran as root; Phases 13–15 of the [ledger](docs/build-phases.md) were written to close them.
 
 * * *
 
@@ -618,9 +652,10 @@ func (s *Store) InTenantTx(ctx context.Context, tenantID uuid.UUID, fn func(ctx 
 }
 ```
 
-Session-level `SET` is banned by a lint rule *and* by the isolation test running through
-PgBouncer in transaction-pooling mode — the whole point being that a connection is
-reassigned between tenants between statements.
+A session-level `SET` is caught by the isolation test running through PgBouncer in
+transaction-pooling mode — the whole point being that a connection is reassigned between
+tenants between statements. (Not by a lint rule: `forbidigo` matches call sites and cannot
+tell a transaction-local `set_config` from a session-level one; `.golangci.yml` says so.)
 
 ### Key interfaces (the kernel ABI, translated to Go)
 
