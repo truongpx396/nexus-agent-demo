@@ -121,7 +121,7 @@ confirm VIOLATION 1 is the only place a content-bearing channel crosses the tele
 | US10 | 9 | `internal/teams`, `internal/tools/builtin/board.go` |
 | US11 | 11, 18 | `internal/surfaces/{mcp,telegram,zalo,email,cron,web}`, `internal/connectors`, `web/` |
 | US12 | 12 | `internal/{ingest,retrieval}`, `internal/tools/builtin/retrieve.go` |
-| US13 | 16 | `internal/tools/builtin/web_crawl.go`, `internal/sandbox/opensandbox.go`, `deploy/docker-compose.agentic.yml`, `.dev/skills/` |
+| US13 | 16 | `internal/tools/builtin/web_crawl.go`, `internal/sandbox/opensandbox.go`, `deploy/docker-compose.agentic.yml`, `skills/` |
 | US14 | 17, 18 | `internal/obs/{logging,usage,langfuse,multi,pprof,pyroscope}.go`, `deploy/observability/` |
 
 ## Project Structure
