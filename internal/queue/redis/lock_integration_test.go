@@ -47,3 +47,37 @@ func TestSessionLock_AcquireReleaseRenewAndNeverStealing(t *testing.T) {
 		t.Error("the lock was not free after its holder released it")
 	}
 }
+
+// Held is what the orphan sweep trusts to tell a live run from an abandoned one:
+// true from Acquire until Release or expiry, false otherwise.
+func TestSessionLock_HeldTracksAcquireReleaseAndExpiry(t *testing.T) {
+	_, client := newTestQueue(t)
+	lock := NewSessionLock(client, 300*time.Millisecond)
+	ctx := context.Background()
+
+	if held, err := lock.Held(ctx, "session-a"); err != nil || held {
+		t.Fatalf("Held before any Acquire = %v, %v, want false", held, err)
+	}
+	token, _, _ := lock.Acquire(ctx, "session-a")
+	if held, _ := lock.Held(ctx, "session-a"); !held {
+		t.Error("Held = false while the lock is held")
+	}
+	if held, _ := lock.Held(ctx, "session-b"); held {
+		t.Error("Held = true for a different session")
+	}
+	if err := lock.Release(ctx, "session-a", token); err != nil {
+		t.Fatal(err)
+	}
+	if held, _ := lock.Held(ctx, "session-a"); held {
+		t.Error("Held = true after Release")
+	}
+
+	// A holder that died stops renewing, so its lock expires on its own.
+	if _, ok, _ := lock.Acquire(ctx, "session-c"); !ok {
+		t.Fatal("Acquire session-c failed")
+	}
+	time.Sleep(450 * time.Millisecond)
+	if held, _ := lock.Held(ctx, "session-c"); held {
+		t.Error("Held = true after the TTL with no renewal: a dead worker's session would never be recovered")
+	}
+}

@@ -83,6 +83,35 @@ jobs:
           go-version-file: go.mod
       - run: make eval
 
+  # The container images (the Dockerfile, deploy/docker-compose.yml's `app`
+  # profile) are built by nothing else in CI, which is how the Dockerfile
+  # stopped building when go.mod moved past the golang image's Go and nobody
+  # noticed. Build both targets and check the two containers come up against
+  # real infra and report ready: /readyz needs the migrations applied and
+  # Postgres, Redis and signerd (over the shared socket volume) all reachable. No `needs:`, so a broken
+  # image fails fast without waiting on the Go jobs.
+  images:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - run: docker compose -f deploy/docker-compose.yml --profile app up -d --build
+      # A fresh database has no application role or tables, so PgBouncer refuses
+      # the app user (and /readyz stays 503) until the migrations have run.
+      - name: apply the migrations
+        run: docker compose -f deploy/docker-compose.yml --profile app run --rm nexusd migrate
+      - name: nexusd reports ready
+        run: |
+          for i in $(seq 1 60); do
+            curl -fsS http://localhost:8085/readyz && exit 0
+            sleep 2
+          done
+          docker compose -f deploy/docker-compose.yml --profile app ps
+          docker compose -f deploy/docker-compose.yml --profile app logs nexusd signerd
+          exit 1
+      - if: always()
+        run: docker compose -f deploy/docker-compose.yml --profile app down
+
   # The web app (README task 11.7, web/) is a standalone npm project that
   # talks to the existing REST API over HTTP — it needs nothing from the Go
   # build, so this job has no `needs:` on the Go jobs above.

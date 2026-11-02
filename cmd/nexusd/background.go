@@ -203,13 +203,15 @@ func listTenantIDs(ctx context.Context) ([]uuid.UUID, error) {
 // ctl.Resume call; the switch below exists purely so logs/metrics can still
 // tell them apart.
 //
-// It also sweeps for sessions this process's own PREVIOUS life left stuck
-// in "running" (session status is written synchronously at every turn
-// boundary; a row still reading "running" at startup can only mean the
-// process that was driving it never got to write anything past that point)
-// and enqueues a resume job for each — the concrete trigger behind README
-// §6's demo line: "kill -9 the worker mid-tool-call -> the job re-queues
-// and resumes from the checkpoint." This sweep needs no changes for
+// It also sweeps for sessions a worker that died left stuck in "running"
+// (startOrphanRecovery, orphans.go) and enqueues a resume job for each — the
+// concrete trigger behind README §6's demo line: "kill -9 the worker
+// mid-tool-call -> the job re-queues and resumes from the checkpoint." A row
+// still reading "running" is only an orphan if no worker is driving it, which
+// with more than one process the row alone no longer says: so a session whose
+// session lock is held (a live worker renews it every turn) is skipped, and a
+// second sweep runs after the lock's TTL for the sessions a just-dead worker's
+// lock was still covering. This sweep needs no changes for
 // KindStart/KindConverse: kernel.Kernel.Seed's own updateStatus call (the
 // same one Run always had) is what flips a session from "queued" to
 // "running" in the first place, so a session only ever reaches "running"
@@ -223,16 +225,16 @@ func startQueueWorkers(ctx context.Context, st *store.Store, redisClient *redis.
 		return func() {}
 	}
 
-	lock := queueredis.NewSessionLock(redisClient, 30*time.Second)
+	lock := queueredis.NewSessionLock(redisClient, sessionLockTTL)
 	runner := &queueRunner{st: st, ctl: ctl, delegations: delegations, teams: teamsSvc, srv: srv}
 
-	recoverOrphanedSessions(ctx, adminPool, port)
+	workerCtx, cancel := context.WithCancel(ctx)
+	startOrphanRecovery(workerCtx, func(ctx context.Context) ([]orphanCandidate, error) { return listRunningSessions(ctx, adminPool) }, lock, port, orphanRecheckAfter)
 
 	numWorkers := 2
-	workerCtx, cancel := context.WithCancel(ctx)
 	for i := 0; i < numWorkers; i++ {
 		w := queue.NewWorker(queue.WorkerConfig{
-			Port: port, Lock: lock, Runner: runner,
+			Port: port, Lock: lock, Runner: runner, RenewEvery: sessionLockTTL / 3,
 			Owner: fmt.Sprintf("nexusd-worker-%d-%d", os.Getpid(), i),
 		})
 		go w.Run(workerCtx)
@@ -240,36 +242,6 @@ func startQueueWorkers(ctx context.Context, st *store.Store, redisClient *redis.
 	return func() {
 		cancel()
 		adminPool.Close()
-	}
-}
-
-// recoverOrphanedSessions enqueues a KindResume job for every session this
-// (or a prior) process left in "running" status — an admin, genuinely
-// cross-tenant read, connected the same way cmd/nexusd's own
-// listTenantIDs/runErase already establish precedent for.
-func recoverOrphanedSessions(ctx context.Context, adminPool *pgxpool.Pool, port queue.Port) {
-	rows, err := adminPool.Query(ctx, `SELECT session_id, tenant_id, session_key FROM sessions WHERE status = 'running'`)
-	if err != nil {
-		log.Error().Err(err).Msg("nexusd: queue: list orphaned running sessions failed")
-		return
-	}
-	defer rows.Close()
-	var recovered int
-	for rows.Next() {
-		var sessionID, tenantID uuid.UUID
-		var sessionKey string
-		if err := rows.Scan(&sessionID, &tenantID, &sessionKey); err != nil {
-			log.Error().Err(err).Msg("nexusd: queue: scan orphaned session failed")
-			continue
-		}
-		if _, err := port.Enqueue(ctx, queue.Job{TenantID: tenantID, SessionID: sessionID, SessionKey: sessionKey, Kind: queue.KindResume}); err != nil {
-			log.Error().Err(err).Any("session_id", sessionID).Msg("nexusd: queue: enqueue resume for orphaned session failed")
-			continue
-		}
-		recovered++
-	}
-	if recovered > 0 {
-		log.Info().Int("count", recovered).Msg("nexusd: queue: enqueued resume jobs for orphaned running sessions")
 	}
 }
 

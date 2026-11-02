@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -105,6 +106,7 @@ type fakeLock struct{}
 
 func (fakeLock) Acquire(context.Context, string) (string, bool, error) { return "tok", true, nil }
 func (fakeLock) Release(context.Context, string, string) error         { return nil }
+func (fakeLock) Renew(context.Context, string, string) (bool, error)   { return true, nil }
 
 func TestWorker_RunsLeasedJobAndCompletesOnSuccess(t *testing.T) {
 	port := newFakePort()
@@ -229,4 +231,110 @@ func TestWorker_NothingLeasableIsANoop(t *testing.T) {
 func newTestLock(t *testing.T) Locker {
 	t.Helper()
 	return fakeLock{}
+}
+
+// renewLock is a Locker whose Renew is scripted: each call is passed to renew,
+// and the calls are counted.
+type renewLock struct {
+	renewals atomic.Int32
+	renew    func(call int32) (bool, error)
+}
+
+func (*renewLock) Acquire(context.Context, string) (string, bool, error) { return "tok", true, nil }
+func (*renewLock) Release(context.Context, string, string) error         { return nil }
+func (l *renewLock) Renew(context.Context, string, string) (bool, error) {
+	return l.renew(l.renewals.Add(1))
+}
+
+func newRenewWorker(port *fakePort, lock Locker, run func(context.Context, Job) error) *Worker {
+	return NewWorker(WorkerConfig{
+		Port: port, Lock: lock, Runner: funcRunner(run), Owner: "w1",
+		PollEvery: time.Millisecond, RenewEvery: 5 * time.Millisecond,
+	})
+}
+
+// The lock's TTL is shorter than a turn loop can run, so a worker must keep
+// renewing it for as long as the job runs, and stop once it is done.
+func TestWorker_RenewsTheSessionLockWhileAJobRuns(t *testing.T) {
+	port := newFakePort()
+	job, _ := port.Enqueue(context.Background(), Job{TenantID: uuid.New(), SessionID: uuid.New(), SessionKey: "s1", Kind: KindResume})
+	lock := &renewLock{renew: func(int32) (bool, error) { return true, nil }}
+
+	newRenewWorker(port, lock, func(ctx context.Context, _ Job) error {
+		select {
+		case <-time.After(80 * time.Millisecond): // many renew intervals
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}).pollOnce(context.Background())
+
+	during := lock.renewals.Load()
+	if during < 3 {
+		t.Errorf("renewed %d times during an 80ms run with a 5ms interval, want several", during)
+	}
+	time.Sleep(30 * time.Millisecond)
+	if after := lock.renewals.Load(); after != during {
+		t.Errorf("renewals went from %d to %d after the job finished: the heartbeat outlived the run", during, after)
+	}
+	if got := port.status(job.JobID); got != StatusDone {
+		t.Errorf("job status = %q, want done", got)
+	}
+}
+
+// A run that no longer holds its session must stop rather than race whoever
+// does, and must not be reported as a success.
+func TestWorker_CancelsARunThatLostItsLock(t *testing.T) {
+	port := newFakePort()
+	job, _ := port.Enqueue(context.Background(), Job{TenantID: uuid.New(), SessionID: uuid.New(), SessionKey: "s1", Kind: KindResume})
+	lock := &renewLock{renew: func(int32) (bool, error) { return false, nil }}
+
+	var cancelled bool
+	newRenewWorker(port, lock, func(ctx context.Context, _ Job) error {
+		select {
+		case <-ctx.Done():
+			cancelled = true
+			return ctx.Err()
+		case <-time.After(2 * time.Second):
+			return nil // only reached if the run was never cancelled
+		}
+	}).pollOnce(context.Background())
+
+	if !cancelled {
+		t.Fatal("the run was not cancelled after its lock was lost")
+	}
+	if got := port.status(job.JobID); got == StatusDone {
+		t.Errorf("job status = %q: a run that lost its lock was completed", got)
+	}
+}
+
+// A failed renewal (Redis briefly unreachable) is not a lost lock: it lives
+// until its TTL, so the run continues and the next tick tries again.
+func TestWorker_ATransientRenewErrorDoesNotCancelTheRun(t *testing.T) {
+	port := newFakePort()
+	job, _ := port.Enqueue(context.Background(), Job{TenantID: uuid.New(), SessionID: uuid.New(), SessionKey: "s1", Kind: KindResume})
+	lock := &renewLock{renew: func(call int32) (bool, error) {
+		if call <= 2 {
+			return false, errors.New("redis: connection refused")
+		}
+		return true, nil
+	}}
+
+	var cancelled bool
+	newRenewWorker(port, lock, func(ctx context.Context, _ Job) error {
+		select {
+		case <-time.After(60 * time.Millisecond):
+			return nil
+		case <-ctx.Done():
+			cancelled = true
+			return ctx.Err()
+		}
+	}).pollOnce(context.Background())
+
+	if cancelled {
+		t.Error("a transient renewal error cancelled the run")
+	}
+	if got := port.status(job.JobID); got != StatusDone {
+		t.Errorf("job status = %q, want done", got)
+	}
 }

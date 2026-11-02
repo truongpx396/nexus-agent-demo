@@ -97,6 +97,19 @@ func (l *SessionLock) Renew(ctx context.Context, sessionKey, token string) (bool
 	return n == 1, nil
 }
 
+// Held reports whether any worker currently holds sessionKey's lock. A worker
+// renews it for as long as it runs the session (queue.Worker's heartbeat), so a
+// held lock means the session is being driven right now and an absent one means
+// nobody is. It is a point-in-time read: a lock can be acquired or expire the
+// moment after.
+func (l *SessionLock) Held(ctx context.Context, sessionKey string) (bool, error) {
+	n, err := l.client.Exists(ctx, lockKey(sessionKey)).Result()
+	if err != nil {
+		return false, fmt.Errorf("queue: check session lock %s: %w", sessionKey, err)
+	}
+	return n > 0, nil
+}
+
 func randomToken() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
