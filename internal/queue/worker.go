@@ -31,6 +31,9 @@ type Runner interface {
 type Locker interface {
 	Acquire(ctx context.Context, sessionKey string) (token string, ok bool, err error)
 	Release(ctx context.Context, sessionKey, token string) error
+	// Renew extends a held lock's TTL; false means the lock is no longer this
+	// token's (it expired or was taken).
+	Renew(ctx context.Context, sessionKey, token string) (bool, error)
 }
 
 // WorkerConfig is one Worker's construction-time tuning.
@@ -45,6 +48,9 @@ type WorkerConfig struct {
 	Owner     string        // this worker's identity, recorded as lease_owner and used to derive the lock token's namespace
 	LeaseFor  time.Duration // how long a lease is held before it's considered abandoned
 	PollEvery time.Duration // how often to poll when nothing is leasable
+	// RenewEvery is how often a running job renews its session lock. It must be
+	// well under the lock's TTL (cmd/nexusd configures 30s); the default is 10s.
+	RenewEvery time.Duration
 }
 
 func (c WorkerConfig) withDefaults() WorkerConfig {
@@ -59,6 +65,9 @@ func (c WorkerConfig) withDefaults() WorkerConfig {
 	}
 	if c.PollEvery <= 0 {
 		c.PollEvery = 500 * time.Millisecond
+	}
+	if c.RenewEvery <= 0 {
+		c.RenewEvery = 10 * time.Second
 	}
 	return c
 }
@@ -142,7 +151,13 @@ func (w *Worker) pollOnce(ctx context.Context) {
 		}
 	}()
 
-	runErr := w.cfg.Runner.Run(ctx, job)
+	// The lock's TTL is far shorter than a turn loop can run, so it is renewed
+	// for as long as the job runs, and the run is cancelled if it is ever lost.
+	runCtx, cancelRun := context.WithCancel(ctx)
+	stopRenewing := w.holdLock(runCtx, cancelRun, job.SessionKey, token)
+	runErr := w.cfg.Runner.Run(runCtx, job)
+	stopRenewing()
+	cancelRun()
 	if runErr == nil {
 		breaker.RecordSuccess()
 		if err := w.cfg.Port.Complete(ctx, job.JobID); err != nil {
@@ -164,5 +179,46 @@ func (w *Worker) pollOnce(ctx context.Context) {
 func (w *Worker) failJob(ctx context.Context, job Job, reason string, permanent bool, retryAt time.Time) {
 	if err := w.cfg.Port.Fail(ctx, job.JobID, reason, permanent, retryAt); err != nil {
 		log.Error().Err(err).Any("job_id", job.JobID).Msg("queue: fail failed")
+	}
+}
+
+// holdLock renews the session lock every RenewEvery until the returned stop is
+// called. Without it the lock lapsed after its TTL while the turn loop was
+// still running, "per-session serial" stopped holding for any run longer than
+// that, and a second job for the same session (a follow-up message, a reclaimed
+// lease) could be driven concurrently. If the lock turns out to be lost, the
+// run is cancelled: a run that no longer holds its session must stop rather than
+// race whoever does. A failed renewal (Redis briefly unreachable) is not a lost
+// lock: it still lives until its TTL, so the next tick tries again.
+func (w *Worker) holdLock(ctx context.Context, cancelRun context.CancelFunc, sessionKey, token string) (stop func()) {
+	done := make(chan struct{})
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		ticker := time.NewTicker(w.cfg.RenewEvery)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				held, err := w.cfg.Lock.Renew(ctx, sessionKey, token)
+				if err != nil {
+					log.Warn().Err(err).Str("session_key", sessionKey).Msg("queue: session lock renewal failed; will retry")
+					continue
+				}
+				if !held {
+					log.Error().Str("session_key", sessionKey).Msg("queue: session lock lost mid-run; cancelling the run so it cannot race the new holder")
+					cancelRun()
+					return
+				}
+			}
+		}
+	}()
+	return func() {
+		close(done)
+		<-finished
 	}
 }
