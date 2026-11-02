@@ -17,7 +17,7 @@ import (
 //  2. Digest re-verify — the resolved descriptor must still match what the manifest pinned
 //  3. Admission gate   — refuse dispatch unless the descriptor's cached verdict is clean
 //  4. Input validation — Tool.ValidateInput against the tool's declared schema
-//  5. Canonical digest (bind) — RFC 8785 JCS over {tool_id, input}
+//  5. Canonical digest (bind) — simplified RFC 8785 JCS over {tool_id, input}
 //  6. Gate 2   — the tool's own CheckPermissions (capability metadata)
 //  7. PreToolUse hooks — may DENY/ASK/DEFER, or rewrite input through a path allowlist
 //  8. Digest re-bind   — recompute the digest if step 7 rewrote input ("step 9a" re-verification)

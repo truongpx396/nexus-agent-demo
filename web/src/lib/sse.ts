@@ -1,6 +1,6 @@
 // SSE-over-fetch. The browser's native EventSource cannot set custom
-// headers, and this backend's only auth mechanism IS two custom headers
-// (X-Nexus-Tenant-ID / X-Nexus-User-ID, read fresh per-request) -- so this
+// headers, and this backend's only auth mechanism IS a custom header
+// (Authorization: Bearer <token>, read fresh per-request) -- so this
 // hand-rolled parser is required, not a style choice.
 //
 // Frames look like:
