@@ -1,13 +1,14 @@
-# 🧭 Nexus Agent Demo — A Governed Agent Platform with a Flexible Deployment Topology
+# 🧭 Nexus Agent Demo — A Governed Agent Platform Built for Flexible Deployment Topology
 
-### One codebase that runs as a single process today and splits along its control-plane/data-plane seam when you need it. Multi-tenant, append-only state, hash-chained audit, human approval and provider-agnostic
+### Runs as one process today and keeps the control-plane/data-plane seam that lets it split later. Multi-tenant, append-only state, hash-chained audit, human approval and provider-agnostic
 
 **Topology is a deployment decision, not an architecture.** The control plane, the data plane and the surfaces meet only at Go
 interfaces (`controlplane.Port` v1, the durable queue, the event log, the cost gate, the model provider and the audit signer), and
-an import-graph test fails the build if a package reaches across one. So the same code runs today as one process, `nexusd`, plus a
-separate key-custody `signerd`, over Postgres + PgBouncer + Redis, and its workers are stateless and share a Redis Streams queue, so
-replicas can take each other's jobs by design. Moving the control plane into its own service, or the data plane into a customer's
-VPC, needs a transport for the port and a second `main`, not a rewrite. No split ships yet ([Deployment topology](#-deployment-topology)).
+an import-graph test fails the build if a package reaches across one. The [original design](https://github.com/truongpx396/nexus-agent#deployment-topologies)
+runs one build as multi-tenant SaaS, single-tenant, self-hosted in a customer's VPC, or a split control-plane/data-plane hybrid.
+This demo ships the smallest of those, the original's one-process collapse: `nexusd`, plus a separate key-custody `signerd`, over
+Postgres + PgBouncer + Redis. It keeps the seam the others need, but no split ships, and topology is not yet selected by
+configuration ([Deployment topology](#-deployment-topology)).
 
 Inside, every conversation is an **append-only, envelope-encrypted event log** with a **hash-chained, signer-attested audit
 trail**. One kernel loop serves every surface, every tool call walks a **16-step pipeline** and a **10-layer permission chain**,
@@ -27,7 +28,7 @@ OpenAI-compatible model, local Ollama included.
 
 [![CI](https://github.com/truongpx396/nexus-agent-demo/actions/workflows/ci.yml/badge.svg)](https://github.com/truongpx396/nexus-agent-demo/actions/workflows/ci.yml)
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](#-quickstart)
-[![Topology](https://img.shields.io/badge/Topology-one%20process%20today%2C%20splittable%20by%20design-0a7d5a)](#-deployment-topology)
+[![Topology](https://img.shields.io/badge/Topology-one%20process%20today%2C%20seams%20for%20a%20split-0a7d5a)](#-deployment-topology)
 [![Stack](https://img.shields.io/badge/Stack-Postgres%20%C2%B7%20PgBouncer%20%C2%B7%20Redis%20%C2%B7%20React-1f6feb)](#-highlights)
 [![Isolation](https://img.shields.io/badge/Isolation-RLS%20%2B%20transaction--local%20scope-8250df)](#-safety-and-trust)
 [![Audit](https://img.shields.io/badge/Audit-hash--chained%20%2B%20sign--only%20signerd-d1242f)](#-safety-and-trust)
@@ -64,7 +65,7 @@ OpenAI-compatible model, local Ollama included.
 
 | Layer | What it is |
 |---|---|
-| 🧱 **Topology** | Control plane, data plane and surfaces meet only at Go interfaces, enforced by an import-graph test. One process today (`nexusd` plus `signerd`; containers with `make docker-up`), with stateless workers on a Redis Streams queue so replicas can share it by design. A physical split is a composition change; none ships yet |
+| 🧱 **Topology** | Control plane, data plane and surfaces meet only at Go interfaces, enforced by an import-graph test. Ships as one process (`nexusd` plus `signerd`; containers with `make docker-up`), the original's one-process collapse. The seams for its SaaS, BYOC and hybrid topologies exist; those topologies do not |
 | 🧠 **Kernel** | `kernel/`: one `iter.Seq2` generator (observe → think → act). Typed response classification, 8 typed terminal reasons, and a paired `tool_use`/`tool_result` invariant that is property-tested over generated histories |
 | 🔀 **Models** | `internal/provider`: one port and one normalized stream. `fake` (default) · `anthropic` · `litellm`, with a deterministic router (data label × difficulty) and failover that commits at the first emitted chunk |
 | 🛠️ **Tools** | `internal/tools` 16-step pipeline · `internal/permissions` 10-layer chain · hooks (command, HTTP, prompt) · Docker or OpenSandbox sandbox · Crawl4AI · MCP client |
@@ -98,7 +99,7 @@ flowchart TB
         CRON["cron"]
     end
 
-    LA["runs.Launcher<br/>route · admit<br/>mint key · start"]
+    LA["runs.Launcher<br/>route · admit · mint key · start"]
 
     subgraph CP["Control plane"]
         direction TB
@@ -112,12 +113,12 @@ flowchart TB
     subgraph DP["Data plane"]
         direction LR
         ST["StartRun<br/>seed · enqueue"] --> Q[("Redis Streams")] --> W["Workers<br/>session lock · Resume"] --> K[["Kernel loop"]]
+        K --> MODEL["cost.Gate<br/>provider port<br/>fake · anthropic · litellm"]
+        K --> TOOLS["tools.Pipeline<br/>permissions chain<br/>sandbox · MCP · connectors"]
     end
 
-    MODEL["cost.Gate<br/>provider port<br/>fake · anthropic · litellm"]
-    TOOLS["tools.Pipeline<br/>permissions chain<br/>an ASK suspends in oversight<br/>sandbox · MCP · connectors"]
-
     subgraph TR["Trust surface"]
+        direction LR
         EL["kernel.EventLog"] --> PG[("Postgres<br/>RLS · sealed events")]
         EL -.-> SD["signerd<br/>signs receipts"]
     end
@@ -127,8 +128,6 @@ flowchart TB
     CRON -->|StartRun| DP
     LA -->|"controlplane.Port v1"| CP
     CP -->|admitted| DP
-    DP --> MODEL
-    DP --> TOOLS
     DP --> TR
 
     style SU fill:#e8f1ff,stroke:#6c9be0,color:#1a1a1a
@@ -138,8 +137,8 @@ flowchart TB
 ```
 
 - 🚪 **Surfaces only translate I/O.** REST, Telegram, Zalo and email start a run through `runs.Launcher`; cron calls `StartRun` directly. `nexusctl` and the web app are clients of the REST API, and MCP is a tool source, not a way in.
-- 🎛️ **The control plane is a Go interface, `controlplane.Port` (v1).** Six operations, each backed by a component the composition root wires in: `AdmitRun` (sessions), `ReserveBudget` and `ReportCost` (`cost.Gate`), `EmitAuditReceipt` (the audit chain), `RequestApproval` (`oversight`) and `AuthorizeContentAccess` (content grants). Today `runs.Launcher` is the only caller outside the package, and only for `AdmitRun`; the loop reaches the cost gate directly, in process. There is no RBAC layer: the principal comes from the verified token's claims, and routing (which model, and why) is decided in the launcher before admission.
-- 🧱 **Topology is a composition decision.** `kernel/` may not import the control plane, a surface or a storage adapter, and the control plane may not import data-plane packages; `tests/contract/boundaries_test.go` walks the import graph and fails the build on a violation. `cmd/nexusd` is the one package that wires both sides, so what a split would change is there ([Deployment topology](#-deployment-topology)).
+- 🎛️ **The control plane is a Go interface, `controlplane.Port` (v1).** Six operations, each backed by a component the composition root wires in: `AdmitRun` (sessions), `ReserveBudget` and `ReportCost` (`cost.Gate`), `EmitAuditReceipt` (the audit chain), `RequestApproval` (`oversight`) and `AuthorizeContentAccess` (content grants). Today `runs.Launcher` is the only caller outside the package, and only for `AdmitRun`; the loop reaches the cost gate directly, in process. It is slimmer than the original's control plane, which also owns SSO/OIDC, RBAC and per-tenant rate limits: here a signed-JWT dev issuer stands in for OIDC, there is no RBAC layer or per-tenant rate limiting, the principal comes from the verified token's claims, and routing (which model, and why) is decided in the launcher before admission.
+- 🧱 **Topology is a composition decision.** `kernel/` may not import the control plane, a surface or a storage adapter, and the control plane may not import `sandbox`, `memory` or `provider` (the same data-plane set as the original); `tests/contract/boundaries_test.go` walks the import graph and fails the build on a violation. `cmd/nexusd` is the one package that wires both sides, so what a split would change is there ([Deployment topology](#-deployment-topology)).
 - 🔁 **Workers are interchangeable.** `StartRun` seeds the run's opening events and enqueues a start job carrying only ids, never the input's plaintext. A worker leases it under the per-session-key lock and re-enters the loop through `runctl.Control.Resume`, the same path crash recovery uses.
 - 🧾 **The loop reaches durable state only through `kernel.EventLog`.** The Postgres adapter appends the event and its audit receipt in one tenant-scoped transaction, and `signerd` signs the receipt.
 - ✋ **An approval suspends the run.** An `ASK` from the permission chain records a suspension and stops the generator with no terminal event; a human decision resumes it.
@@ -150,16 +149,24 @@ Layout, import boundaries, schema and interfaces are in [§3](#3-target-architec
 
 ## 🚢 Deployment topology
 
-The architecture above is the same in every topology; what changes is which seams are processes. **Ships** means this repo builds and runs it. **By design** means the seam exists and is enforced, but nothing here deploys it.
+The [original design](https://github.com/truongpx396/nexus-agent#deployment-topologies) runs **one build in four topologies, selected by configuration**, plus a one-process collapse of it for a single trusted tenant. This demo ships that collapse and keeps the seams the other four need. **Ships** means this repo builds and runs it; **Seam only** means the boundary exists and is enforced, but nothing here deploys it.
 
-| Topology | Processes | What changes | Status |
-|---|---|---|---|
-| 🧑‍💻 **Dev, native** | `signerd` and `nexusd --dev` on the host; Postgres, PgBouncer and Redis in Docker | Nothing to configure: the fake provider, with keys generated into `.dev/` | **Ships**: `make up && make migrate && make seed && make run` |
-| 🐳 **Containers** | `nexusd` and `signerd` images (static, distroless, non-root) sharing the signer's unix socket on a volume | The same settings as environment variables | **Ships**: `make docker-up` |
-| 📈 **Replicated** | Several `nexusd` against one Postgres and one Redis | Designed to need no code change: the queue is a Redis Streams consumer group with a per-session lock, events cross processes over Pub/Sub, and workers keep no state | **By design.** No multi-replica deployment ships, and a multi-process worker pool is deferred until concurrency needs it ([§5](#5-explicitly-out-of-scope-and-the-trigger-that-would-change-that)) |
-| ✂️ **Split planes** | A control-plane service and data-plane workers, for example the data plane in a customer's VPC | A transport for `controlplane.Port` v1 and a second `main` in place of the in-process `controlplane.LocalPort`; the boundary tests exist to keep the kernel, surfaces and adapters out of that change | **By design.** The boundary is enforced, but no second process ships |
+| Original topology | What it is | In this demo |
+|---|---|---|
+| 🧩 **One-process collapse** (the original's "mini") | Control plane, surface gateway and worker pool merged into one binary, NATS folded into Redis | **Ships.** `nexusd` plus `signerd`, native (`make up && make migrate && make seed && make run`) or in containers (`make docker-up`: static, distroless, non-root images sharing the signer's unix socket on a volume). Redis Streams stands in for NATS |
+| 🏢 **Multi-tenant SaaS** | Shared planes; isolation by RLS and per-tenant gVisor or Kata sandboxes | **Partial.** RLS through PgBouncer, per-tenant envelope encryption and tenant-scoped state are in. The sandbox is Docker or OpenSandbox (gVisor and Kata are deferred, [§5](#5-explicitly-out-of-scope-and-the-trigger-that-would-change-that)), and SSO/OIDC, RBAC and per-tenant rate limits are not built |
+| 🏠 **Single-tenant** | A dedicated stack; the tenant boundary is the deployment | **Runs, unpackaged.** `make seed` creates one tenant; there is no dedicated-stack packaging |
+| 🖥️ **Self-hosted / BYOC** | The data plane in the customer's VPC | **Seam only.** The boundary test keeps `sandbox`, `memory` and `provider` out of the control plane, as in the original; there is no transport, no NATS and no deployment |
+| 🔀 **Hybrid** | Control plane and data plane split across a versioned contract | **Seam only.** `controlplane.Port` v1 and the in-process `LocalPort`; what is missing is listed below |
 
-The original this is modelled on runs three Go binaries (`control-plane`, `runtime-worker`, `surface-gateway`); here the same seams run as one process ([§2](#2-the-simplification-thesis)). Three things hold in every topology:
+Where this departs from the original, so the headline is not read as more than it is:
+
+- **Composition, not configuration.** The original selects a topology by configuration. Here `cmd/nexusd` hard-wires the in-process `LocalPort`, and there is no role or mode setting. The ledger marks four-topology packaging out of scope ([`docs/build-phases.md`](docs/build-phases.md), row 66), and the original's own cut line defers "multi-topology packaging".
+- **The contract is Go types, not yet a wire format.** The Port's v1 request and response structs carry no `json` tags and nothing serializes them, and only `AdmitRun` has a caller outside the package. A hybrid split needs a wire encoding and a transport for the port, plus a second `main`.
+- **Several `nexusd` processes are not supported yet.** The queue is a Redis Streams consumer group with a per-session lock, and events cross processes over Pub/Sub, which is the right shape. But startup assumes it is the only process: `recoverOrphanedSessions` enqueues a resume for every session still `running` in the database, so a second process starting would enqueue resumes for the first one's live runs. The multi-process worker pool is deferred in §5 until concurrency needs it.
+- **A slimmer control plane**, described under [Architecture](#-architecture).
+
+Three things hold in every topology:
 
 - 🔑 **`signerd` is a separate process from the start.** The audit key must never be readable by `nexusd`, which can only ask `signerd` to sign over a unix socket.
 - 🏢 **Postgres is reached through PgBouncer in transaction pooling.** The tenant-isolation rule (scope set per transaction, never per session) is meaningless without a transaction pooler to prove it against.
