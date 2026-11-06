@@ -113,7 +113,7 @@ confirm VIOLATION 1 is the only place a content-bearing channel crosses the tele
 | US2 | 3 | `internal/{tools,tools/builtin,permissions,hooks}` |
 | US3 | 4 | `internal/cost` |
 | US4 | 5 | `cmd/signerd`, `internal/{audit,oversight,sandbox}`, `internal/crypto/shred.go`, `internal/contentaccess/grants.go` |
-| US5 | 6, 18 | `internal/{queue,runctl,reliability}`, `internal/store/{checkpoint,snapshot,claims}.go` |
+| US5 | 6, 18 | `internal/{queue,runctl,reliability}`, `internal/store/snapshot.go`, `internal/runctl/postgres/{checkpoint,claims}.go` |
 | US6 | 7 | `internal/{memory,skills,surfaces,surfaces/cli}` |
 | US7 | 8 | `internal/{plan,delegate}`, `internal/tools/builtin/delegate.go` |
 | US8 | 10 | `evals/`, `internal/evalgate`, `cmd/nexusd/cli_golive.go` |
@@ -122,7 +122,7 @@ confirm VIOLATION 1 is the only place a content-bearing channel crosses the tele
 | US11 | 11, 18 | `internal/surfaces/{mcp,telegram,zalo,email,cron,web}`, `internal/connectors`, `web/` |
 | US12 | 12 | `internal/{ingest,retrieval}`, `internal/tools/builtin/retrieve.go` |
 | US13 | 16 | `internal/tools/builtin/web_crawl.go`, `internal/sandbox/opensandbox.go`, `deploy/docker-compose.agentic.yml`, `skills/` |
-| US14 | 17, 18 | `internal/obs/{logging,usage,langfuse,multi,pprof,pyroscope}.go`, `deploy/observability/` |
+| US14 | 17, 18 | `internal/obs/{logging,multi}.go`, `internal/obs/{langfuse,profiling}/`, `internal/reporting/usage.go`, `deploy/observability/` |
 
 ## Project Structure
 

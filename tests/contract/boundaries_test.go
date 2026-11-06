@@ -58,7 +58,7 @@ func noStorage(subject, pkg string) boundaryRule {
 // exporters, the continuous profiler, a container runtime. A port may be named
 // in the core; an adapter that links one of these belongs in a driven-adapter
 // subpackage that only cmd/* wires in. The database and cache drivers are
-// covered by noStorage; this is the rest.
+// covered by noStorage; this is the rest (noInfra adds the drivers back).
 var infraDeps = []string{
 	"net/http",
 	"os/exec",
@@ -71,12 +71,19 @@ var infraDeps = []string{
 }
 
 // noInfra is the rule for a package that is part of the core (a vocabulary, a
-// use case, a pipeline) and so must not link any infraDeps, even transitively.
+// use case, a pipeline) and so must reach neither a store nor any infraDeps,
+// even transitively. It includes the database and cache drivers, so the listed
+// packages are guarded by this one rule whether or not noStorage also names them.
 func noInfra(subject, pkg string) boundaryRule {
+	forbidden := append([]string{
+		modulePrefix + "internal/store",
+		"github.com/jackc/pgx",
+		"github.com/redis",
+	}, infraDeps...)
 	return boundaryRule{
-		name:      subject + " must not link an HTTP, process, telemetry-SDK or container dependency",
+		name:      subject + " must not link a store, driver, HTTP, process, telemetry-SDK or container dependency",
 		pkg:       modulePrefix + pkg,
-		forbidden: infraDeps,
+		forbidden: forbidden,
 	}
 }
 

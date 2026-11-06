@@ -11,7 +11,7 @@ Close five constitution conformance gaps in the order that changes what is *allo
 Go 1.26, Postgres through PgBouncer, Redis. Everything below already exists and is changed, not added:
 
 - **Webhooks**: `internal/surfaces/{telegram,zalo,email}/webhook.go` verify the provider and call `RateLimit.Allow(tenantID.String())`; `ratelimit.go` in each is an in-memory token bucket; `internal/surfaces/dedup.go` is the delivery-id dedup.
-- **Telemetry**: `internal/obs/{allowlist,tracer,otlp,langfuse,multi}.go`; the content opt-in is `kernel.Kernel.TraceContent`, set from `NEXUS_TRACE_CONTENT` in `cmd/nexusd/serve.go`.
+- **Telemetry**: `internal/obs/{allowlist,tracer,multi}.go`, `internal/obs/otlp/`, `internal/obs/langfuse/`; the content opt-in is `kernel.Kernel.TraceContent`, set from `NEXUS_TRACE_CONTENT` in `cmd/nexusd/serve.go`.
 - **Audit**: `internal/audit/postgres/{chain,anchor,verify}.go`, the verifier loop in `cmd/nexusd/background.go`, `internal/reporting/golden_signals.go` for the golden signals, `deploy/observability/prometheus-rules.yml` for the five alert rules.
 - **Digest**: `internal/harness/digest.go`, called from `internal/runs/launch.go`, `internal/runctl/fork.go` and `internal/surfaces/cron/scheduler.go`.
 - **Egress**: `internal/provider/` (one port, three adapters) and `internal/surfaces/outbox.go`.
