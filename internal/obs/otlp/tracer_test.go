@@ -1,8 +1,10 @@
-package obs
+package otlp
 
 import (
 	"context"
 	"testing"
+
+	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
@@ -34,12 +36,12 @@ func TestOTLPExporter_StartSpanNestsUnderParent(t *testing.T) {
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(recorder))
 	exp := &OTLPExporter{tracer: tp.Tracer("test")}
 
-	rootCtx, rootSpan := exp.StartSpan(context.Background(), "kernel.run", ObservationAgent, Attrs{"session.id": "s-1"})
-	childCtx, childSpan := exp.StartSpan(rootCtx, "model.call", ObservationGeneration, Attrs{"model.id": "m-1"})
-	_, grandchild := exp.StartSpan(childCtx, "tool.call", ObservationTool, Attrs{"tool.id": "t-1"})
-	grandchild.End(Attrs{"outcome": "ok"})
-	childSpan.End(Attrs{"usage.output": "12"})
-	rootSpan.End(Attrs{"terminal_reason": "completed"})
+	rootCtx, rootSpan := exp.StartSpan(context.Background(), "kernel.run", obs.ObservationAgent, obs.Attrs{"session.id": "s-1"})
+	childCtx, childSpan := exp.StartSpan(rootCtx, "model.call", obs.ObservationGeneration, obs.Attrs{"model.id": "m-1"})
+	_, grandchild := exp.StartSpan(childCtx, "tool.call", obs.ObservationTool, obs.Attrs{"tool.id": "t-1"})
+	grandchild.End(obs.Attrs{"outcome": "ok"})
+	childSpan.End(obs.Attrs{"usage.output": "12"})
+	rootSpan.End(obs.Attrs{"terminal_reason": "completed"})
 
 	spans := recorder.GetSpans()
 	if len(spans) != 3 {
@@ -82,7 +84,7 @@ func TestOTLPExporter_StartSpanSetsLangfuseObservationType(t *testing.T) {
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(recorder))
 	exp := &OTLPExporter{tracer: tp.Tracer("test")}
 
-	_, toolSpan := exp.StartSpan(context.Background(), "tool.call", ObservationTool, Attrs{"tool.id": "t-1"})
+	_, toolSpan := exp.StartSpan(context.Background(), "tool.call", obs.ObservationTool, obs.Attrs{"tool.id": "t-1"})
 	toolSpan.End(nil)
 
 	attrs := attrMap(recorder.GetSpans())["tool.call"]
@@ -104,8 +106,8 @@ func TestOTLPExporter_GenerationSpanAliasesGenAIAttributes(t *testing.T) {
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(recorder))
 	exp := &OTLPExporter{tracer: tp.Tracer("test")}
 
-	_, span := exp.StartSpan(context.Background(), "model.call", ObservationGeneration, Attrs{"model.id": "qwen2.5-local"})
-	span.End(Attrs{
+	_, span := exp.StartSpan(context.Background(), "model.call", obs.ObservationGeneration, obs.Attrs{"model.id": "qwen2.5-local"})
+	span.End(obs.Attrs{
 		"usage.input_uncached":   "40",
 		"usage.input_cache_read": "10",
 		"usage.output":           "12",
@@ -138,11 +140,11 @@ func TestOTLPExporter_StartSpanFiltersNonAllowlistedAttrs(t *testing.T) {
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(recorder))
 	exp := &OTLPExporter{tracer: tp.Tracer("test")}
 
-	_, span := exp.StartSpan(context.Background(), "kernel.run", ObservationAgent, Attrs{
+	_, span := exp.StartSpan(context.Background(), "kernel.run", obs.ObservationAgent, obs.Attrs{
 		"session.id":   "s-1",
 		"user_message": "this must never appear",
 	})
-	span.End(Attrs{"secret": "nope"})
+	span.End(obs.Attrs{"secret": "nope"})
 
 	attrs := attrMap(recorder.GetSpans())["kernel.run"]
 	if attrs["session.id"] != "s-1" {

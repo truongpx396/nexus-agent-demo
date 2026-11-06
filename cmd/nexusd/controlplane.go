@@ -9,9 +9,9 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
+	"github.com/truongpx396/nexus-agent-demo/internal/contentaccess"
 	"github.com/truongpx396/nexus-agent-demo/internal/controlplane"
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
-	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
 	runspg "github.com/truongpx396/nexus-agent-demo/internal/runs/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
@@ -106,7 +106,7 @@ func (a *nexusdApprovalBackend) RequestApproval(ctx context.Context, req control
 
 // nexusdContentAccessBackend implements controlplane.ContentAccessBackend.
 type nexusdContentAccessBackend struct {
-	grants *obs.Grants
+	grants *contentaccess.Grants
 }
 
 func (a *nexusdContentAccessBackend) AuthorizeContentAccess(ctx context.Context, req controlplane.AuthorizeContentAccessV1) (controlplane.GrantV1, error) {
@@ -121,7 +121,7 @@ func (a *nexusdContentAccessBackend) AuthorizeContentAccess(ctx context.Context,
 // controlplane.Port this process serves — see this file's own top-of-file
 // comment for why the translation lives here rather than inside
 // internal/controlplane itself.
-func newControlPlane(st *store.Store, gate *cost.Gate, chain *auditpg.Chain, approvals *oversight.Approvals, grants *obs.Grants) *controlplane.LocalPort {
+func newControlPlane(st *store.Store, gate *cost.Gate, chain *auditpg.Chain, approvals *oversight.Approvals, grants *contentaccess.Grants) *controlplane.LocalPort {
 	return controlplane.NewLocalPort(
 		runspg.Sessions{Store: st},
 		newNexusdBudgetBackend(gate),

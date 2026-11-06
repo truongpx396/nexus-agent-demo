@@ -1,4 +1,10 @@
-package obs
+// Package contentaccess is the Content Access Grant service (README task 5.11,
+// pattern 35): the only path to plaintext outside a run's own audience. It is
+// a business capability in its own right — grant, expire, revoke, read, audit —
+// not telemetry, so it does not live in internal/obs, whose job is the
+// content-free signal that the kernel emits. Its Postgres adapter is
+// internal/contentaccess/postgres.
+package contentaccess
 
 import (
 	"context"
@@ -48,7 +54,7 @@ type EventDTO struct {
 // GrantStore is everything Grants needs from storage, and nothing about how
 // it is kept: the grant rows, the audit events about them (each hash-chained
 // by the adapter), and the decrypted history a grant unlocks. The Postgres
-// adapter is internal/obs/postgres; every method runs in the tenant's own
+// adapter is internal/contentaccess/postgres; every method runs in the tenant's own
 // scope.
 type GrantStore interface {
 	// Issue stores gr (setting its CreatedAt) and appends the

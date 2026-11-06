@@ -1,9 +1,16 @@
-package obs
+// Package otlp is the OTLP/HTTP adapter for obs.Tracer and obs.Exporter: it
+// sends allowlist-filtered spans to a real collector (Tempo, Langfuse's OTLP
+// endpoint, ...). The telemetry vocabulary and the allowlist are internal/obs;
+// this package is the part that links the OpenTelemetry SDK, so the kernel,
+// which imports obs, does not.
+package otlp
 
 import (
 	"context"
 	"fmt"
 	"strconv"
+
+	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
@@ -30,7 +37,7 @@ type OTLPExporter struct {
 	tp     *sdktrace.TracerProvider
 	// Drops mirrors the stdout Exporter's own field — nil is valid and
 	// simply means this exporter isn't counted toward any dashboard.
-	Drops *DropTracker
+	Drops *obs.DropTracker
 }
 
 // NewOTLPExporter dials endpoint (host:port, no scheme — e.g.
@@ -67,8 +74,8 @@ func NewOTLPExporter(ctx context.Context, endpoint string, insecure bool, header
 // Emit filters attrs through the allowlist before it ever becomes a span
 // attribute — the exporter itself cannot bypass Filter, because it never
 // sees anything else (span.go's own Exporter.Emit doc comment, verbatim).
-func (e *OTLPExporter) Emit(name string, attrs Attrs) error {
-	filtered := FilterTracked(attrs, e.Drops)
+func (e *OTLPExporter) Emit(name string, attrs obs.Attrs) error {
+	filtered := obs.FilterTracked(attrs, e.Drops)
 	_, span := e.tracer.Start(context.Background(), name)
 	span.SetAttributes(toAttributeKVs(filtered)...)
 	span.End()
@@ -93,8 +100,8 @@ func (e *OTLPExporter) Emit(name string, attrs Attrs) error {
 // content stays out of this path exactly like Emit's (constitution
 // Principle VI) — this only relabels structure that was already
 // allowlisted, it does not admit anything new.
-func (e *OTLPExporter) StartSpan(ctx context.Context, name string, kind ObservationType, attrs Attrs) (context.Context, Span) {
-	filtered := FilterTracked(attrs, e.Drops)
+func (e *OTLPExporter) StartSpan(ctx context.Context, name string, kind obs.ObservationType, attrs obs.Attrs) (context.Context, obs.Span) {
+	filtered := obs.FilterTracked(attrs, e.Drops)
 	kvs := toAttributeKVs(filtered)
 	kvs = append(kvs, attribute.String("langfuse.observation.type", string(kind)))
 	kvs = append(kvs, langfuseGenAIAliases(kind, filtered)...)
@@ -107,7 +114,7 @@ func (e *OTLPExporter) StartSpan(ctx context.Context, name string, kind Observat
 // exactly the two calls that lived in spawn.go directly before Tracer
 // grew this seam; unchanged behavior, just relocated so a caller no
 // longer needs to know it's specifically OTel underneath.
-func (e *OTLPExporter) Detach(ctx context.Context) SpanLink {
+func (e *OTLPExporter) Detach(ctx context.Context) obs.SpanLink {
 	sc := trace.SpanContextFromContext(ctx)
 	if !sc.IsValid() {
 		return nil
@@ -115,7 +122,7 @@ func (e *OTLPExporter) Detach(ctx context.Context) SpanLink {
 	return sc
 }
 
-func (e *OTLPExporter) Attach(ctx context.Context, link SpanLink) context.Context {
+func (e *OTLPExporter) Attach(ctx context.Context, link obs.SpanLink) context.Context {
 	sc, ok := link.(trace.SpanContext)
 	if !ok {
 		return ctx
@@ -125,16 +132,16 @@ func (e *OTLPExporter) Attach(ctx context.Context, link SpanLink) context.Contex
 
 type otlpSpan struct {
 	span  trace.Span
-	kind  ObservationType
-	drops *DropTracker
+	kind  obs.ObservationType
+	drops *obs.DropTracker
 }
 
 // End merges attrs known only at close (usage, outcome, terminal_reason)
 // onto the span before ending it — filtered and GenAI-aliased exactly like
 // StartSpan's own attrs.
-func (s *otlpSpan) End(attrs Attrs) {
+func (s *otlpSpan) End(attrs obs.Attrs) {
 	if len(attrs) > 0 {
-		filtered := FilterTracked(attrs, s.drops)
+		filtered := obs.FilterTracked(attrs, s.drops)
 		kvs := toAttributeKVs(filtered)
 		kvs = append(kvs, langfuseGenAIAliases(s.kind, filtered)...)
 		s.span.SetAttributes(kvs...)
@@ -162,7 +169,7 @@ func (s *otlpSpan) SetContent(input, output string) {
 	}
 }
 
-func toAttributeKVs(attrs Attrs) []attribute.KeyValue {
+func toAttributeKVs(attrs obs.Attrs) []attribute.KeyValue {
 	kvs := make([]attribute.KeyValue, 0, len(attrs))
 	for k, v := range attrs {
 		kvs = append(kvs, attribute.String(k, v))
@@ -175,15 +182,15 @@ func toAttributeKVs(attrs Attrs) []attribute.KeyValue {
 // StartSpan's own doc comment for why (Langfuse specifically reads these,
 // confirmed via its docs). Every other observation kind gets none: a tool
 // or agent span carries no token usage to alias.
-func langfuseGenAIAliases(kind ObservationType, attrs Attrs) []attribute.KeyValue {
-	if kind != ObservationGeneration {
+func langfuseGenAIAliases(kind obs.ObservationType, attrs obs.Attrs) []attribute.KeyValue {
+	if kind != obs.ObservationGeneration {
 		return nil
 	}
 	var kvs []attribute.KeyValue
 	if v, ok := attrs["model.id"]; ok {
 		kvs = append(kvs, attribute.String("gen_ai.request.model", v))
 	}
-	if input := sumInt(attrs, "usage.input_uncached", "usage.input_cache_read", "usage.input_cache_write"); input > 0 {
+	if input := attrs.SumInt("usage.input_uncached", "usage.input_cache_read", "usage.input_cache_write"); input > 0 {
 		kvs = append(kvs, attribute.Int64("gen_ai.usage.input_tokens", input))
 	}
 	if v, ok := attrs["usage.output"]; ok {
@@ -192,18 +199,6 @@ func langfuseGenAIAliases(kind ObservationType, attrs Attrs) []attribute.KeyValu
 		}
 	}
 	return kvs
-}
-
-func sumInt(attrs Attrs, keys ...string) int64 {
-	var total int64
-	for _, k := range keys {
-		if v, ok := attrs[k]; ok {
-			if n, err := strconv.ParseInt(v, 10, 64); err == nil {
-				total += n
-			}
-		}
-	}
-	return total
 }
 
 // Shutdown flushes every buffered span before the process exits — a

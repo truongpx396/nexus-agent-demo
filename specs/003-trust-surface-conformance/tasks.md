@@ -15,7 +15,7 @@ description: "Task list for trust-surface conformance (proposed)"
 
 ## Phase 1: User Story 2 - telemetry has no content channel (a violation, so first)
 
-- [ ] T001 [US2] Decide the resolution (remove `NEXUS_TRACE_CONTENT` and `Span.SetContent`, or amend the constitution with a dev-only channel that is refused outside `--dev` and emits a receipt), and implement it in `cmd/nexusd/serve.go`, `internal/obs/otlp.go`, `internal/obs/tracer.go` (was 001 T232)
+- [ ] T001 [US2] Decide the resolution (remove `NEXUS_TRACE_CONTENT` and `Span.SetContent`, or amend the constitution with a dev-only channel that is refused outside `--dev` and emits a receipt), and implement it in `cmd/nexusd/serve.go`, `internal/obs/otlp/exporter.go`, `internal/obs/tracer.go` (was 001 T232)
 - [ ] T002 [US2] Change `TestKernelTracerContentOptIn` in `tests/integration/tracer_test.go` to assert the new behaviour instead of the violation (was 001 T232)
 
 ## Phase 2: User Story 1 - webhooks (replay window, per-sender limits)
@@ -27,7 +27,7 @@ description: "Task list for trust-surface conformance (proposed)"
 ## Phase 3: User Story 3 - audit anchoring and alerting
 
 - [ ] T006 [US3] Anchor the chain head in an external append-only sink behind a port, and have the verifier cross-check it, in `internal/audit/postgres/anchor.go`, `internal/audit/postgres/verify.go`, `cmd/nexusd/background.go` (was 001 T235)
-- [ ] T007 [US3] Expose a break-or-gap counter on `/metrics` and add a Prometheus rule that names a runbook, in `internal/obs/dashboard.go`, `deploy/observability/prometheus-rules.yml` (was 001 T236)
+- [ ] T007 [US3] Expose a break-or-gap counter on `/metrics` and add a Prometheus rule that names a runbook, in `internal/reporting/golden_signals.go`, `deploy/observability/prometheus-rules.yml` (was 001 T236)
 - [ ] T008 [US3] Test that deleting a chain's tail together with its anchors is reported as a break, in `tests/integration/audit_tamper_test.go` (relates to 001 T245)
 
 ## Phase 4: User Story 4 - harness digest pinning

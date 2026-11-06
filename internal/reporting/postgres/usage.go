@@ -9,13 +9,13 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/obs"
+	"github.com/truongpx396/nexus-agent-demo/internal/reporting"
 )
 
 // ToolCallCounts counts tool_use events per tool_id, tenant-scoped
 // through store.Store.InTenantTx like every other read in this package.
-func (r *Reports) ToolCallCounts(ctx context.Context, tenantID uuid.UUID) (obs.ToolCallCounts, error) {
-	counts := obs.ToolCallCounts{}
+func (r *Reports) ToolCallCounts(ctx context.Context, tenantID uuid.UUID) (reporting.ToolCallCounts, error) {
+	counts := reporting.ToolCallCounts{}
 	err := r.st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
 			SELECT tool_id, count(*)
@@ -47,8 +47,8 @@ func (r *Reports) ToolCallCounts(ctx context.Context, tenantID uuid.UUID) (obs.T
 // sums tenant-wide but never split out. Rows with a NULL model_id (a
 // non-token meter, e.g. MeterSandboxSeconds — task 4.2) are excluded: this
 // is a MODEL spend breakdown, not a blanket cost report.
-func (r *Reports) ModelSpend(ctx context.Context, tenantID uuid.UUID) ([]obs.ModelSpend, error) {
-	var out []obs.ModelSpend
+func (r *Reports) ModelSpend(ctx context.Context, tenantID uuid.UUID) ([]reporting.ModelSpend, error) {
+	var out []reporting.ModelSpend
 	err := r.st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
 			SELECT
@@ -71,7 +71,7 @@ func (r *Reports) ModelSpend(ctx context.Context, tenantID uuid.UUID) ([]obs.Mod
 		defer rows.Close()
 
 		for rows.Next() {
-			var m obs.ModelSpend
+			var m reporting.ModelSpend
 			if err := rows.Scan(&m.ModelID, &m.Currency, &m.InputUncached, &m.InputCacheRead, &m.InputCacheWrite, &m.Output, &m.CostMinorUnits); err != nil {
 				return fmt.Errorf("obs: scan model spend: %w", err)
 			}

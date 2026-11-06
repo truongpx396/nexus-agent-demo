@@ -1,4 +1,4 @@
-package obs
+package langfuse
 
 import (
 	"context"
@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 
 	"go.opentelemetry.io/otel/trace"
 )
@@ -104,12 +106,12 @@ func TestLangfuseExporter_StartSpanNestsUnderParent(t *testing.T) {
 	cs := newCaptureServer(t)
 	exp := newTestLangfuseExporter(t, cs)
 
-	rootCtx, rootSpan := exp.StartSpan(context.Background(), "kernel.run", ObservationAgent, Attrs{"session.id": "s-1"})
-	childCtx, childSpan := exp.StartSpan(rootCtx, "model.call", ObservationGeneration, Attrs{"model.id": "m-1"})
-	_, grandchild := exp.StartSpan(childCtx, "tool.call", ObservationTool, Attrs{"tool.id": "t-1"})
-	grandchild.End(Attrs{"outcome": "ok"})
-	childSpan.End(Attrs{"usage.output": "12"})
-	rootSpan.End(Attrs{"terminal_reason": "completed"})
+	rootCtx, rootSpan := exp.StartSpan(context.Background(), "kernel.run", obs.ObservationAgent, obs.Attrs{"session.id": "s-1"})
+	childCtx, childSpan := exp.StartSpan(rootCtx, "model.call", obs.ObservationGeneration, obs.Attrs{"model.id": "m-1"})
+	_, grandchild := exp.StartSpan(childCtx, "tool.call", obs.ObservationTool, obs.Attrs{"tool.id": "t-1"})
+	grandchild.End(obs.Attrs{"outcome": "ok"})
+	childSpan.End(obs.Attrs{"usage.output": "12"})
+	rootSpan.End(obs.Attrs{"terminal_reason": "completed"})
 
 	events := cs.waitForEvents(5) // trace-create + 3 creates + ... (updates may still be flushing)
 	traces := eventsByType(events, "trace-create")
@@ -164,11 +166,11 @@ func TestLangfuseExporter_StartSpanFiltersNonAllowlistedAttrs(t *testing.T) {
 	cs := newCaptureServer(t)
 	exp := newTestLangfuseExporter(t, cs)
 
-	_, span := exp.StartSpan(context.Background(), "kernel.run", ObservationAgent, Attrs{
+	_, span := exp.StartSpan(context.Background(), "kernel.run", obs.ObservationAgent, obs.Attrs{
 		"session.id":   "s-1",
 		"user_message": "this must never appear",
 	})
-	span.End(Attrs{"secret": "nope"})
+	span.End(obs.Attrs{"secret": "nope"})
 
 	events := cs.waitForEvents(2)
 	for _, e := range events {
@@ -190,8 +192,8 @@ func TestLangfuseExporter_GenerationEventPopulatesModelAndUsage(t *testing.T) {
 	cs := newCaptureServer(t)
 	exp := newTestLangfuseExporter(t, cs)
 
-	_, span := exp.StartSpan(context.Background(), "model.call", ObservationGeneration, Attrs{"model.id": "qwen2.5-local"})
-	span.End(Attrs{
+	_, span := exp.StartSpan(context.Background(), "model.call", obs.ObservationGeneration, obs.Attrs{"model.id": "qwen2.5-local"})
+	span.End(obs.Attrs{
 		"usage.input_uncached":   "40",
 		"usage.input_cache_read": "10",
 		"usage.output":           "12",
@@ -219,7 +221,7 @@ func TestLangfuseExporter_GenerationEventPopulatesModelAndUsage(t *testing.T) {
 	}
 
 	// A non-generation span must carry neither field.
-	_, toolSpan := exp.StartSpan(context.Background(), "tool.call", ObservationTool, Attrs{"tool.id": "t-1"})
+	_, toolSpan := exp.StartSpan(context.Background(), "tool.call", obs.ObservationTool, obs.Attrs{"tool.id": "t-1"})
 	toolSpan.End(nil)
 	events = cs.waitForEvents(len(events) + 2)
 	for _, e := range eventsByType(events, "span-create") {
@@ -238,7 +240,7 @@ func TestLangfuseExporter_SetContentOnlyWhenNonEmpty(t *testing.T) {
 	cs := newCaptureServer(t)
 	exp := newTestLangfuseExporter(t, cs)
 
-	_, withContent := exp.StartSpan(context.Background(), "model.call", ObservationGeneration, Attrs{"model.id": "m-1"})
+	_, withContent := exp.StartSpan(context.Background(), "model.call", obs.ObservationGeneration, obs.Attrs{"model.id": "m-1"})
 	withContent.SetContent("the prompt", "the completion")
 	withContent.End(nil)
 
@@ -252,7 +254,7 @@ func TestLangfuseExporter_SetContentOnlyWhenNonEmpty(t *testing.T) {
 	// neither field at all (omitempty should drop them, not send empty
 	// strings) — a fresh trace root so it has no other generation-update
 	// to be confused with.
-	_, noContent := exp.StartSpan(context.Background(), "model.call", ObservationGeneration, Attrs{"model.id": "m-2"})
+	_, noContent := exp.StartSpan(context.Background(), "model.call", obs.ObservationGeneration, obs.Attrs{"model.id": "m-2"})
 	noContent.End(nil)
 	events = cs.waitForEvents(4)
 	for _, e := range eventsByType(events, "generation-update") {
@@ -283,7 +285,7 @@ func TestLangfuseExporter_NestsAcrossGoroutineBoundaryLikeDelegateSpawn(t *testi
 	cs := newCaptureServer(t)
 	exp := newTestLangfuseExporter(t, cs)
 
-	parentCtx, parentSpan := exp.StartSpan(context.Background(), "kernel.run", ObservationAgent, Attrs{"session.id": "parent-1"})
+	parentCtx, parentSpan := exp.StartSpan(context.Background(), "kernel.run", obs.ObservationAgent, obs.Attrs{"session.id": "parent-1"})
 
 	// internal/delegate/spawn.go, verbatim:
 	parentSpanCtx := trace.SpanContextFromContext(parentCtx)
@@ -295,7 +297,7 @@ func TestLangfuseExporter_NestsAcrossGoroutineBoundaryLikeDelegateSpawn(t *testi
 		t.Fatal("StartSpan's returned ctx must carry a valid trace.SpanContext — spawn.go's cross-goroutine propagation depends on it")
 	}
 
-	_, childSpan := exp.StartSpan(bg, "kernel.run", ObservationAgent, Attrs{"session.id": "child-1"})
+	_, childSpan := exp.StartSpan(bg, "kernel.run", obs.ObservationAgent, obs.Attrs{"session.id": "child-1"})
 	childSpan.End(nil)
 	parentSpan.End(nil)
 
@@ -333,7 +335,7 @@ func TestLangfuseExporter_EmitSendsEventCreateWithoutTraceID(t *testing.T) {
 	cs := newCaptureServer(t)
 	exp := newTestLangfuseExporter(t, cs)
 
-	if err := exp.Emit("webhook.received", Attrs{"session.id": "s-1"}); err != nil {
+	if err := exp.Emit("webhook.received", obs.Attrs{"session.id": "s-1"}); err != nil {
 		t.Fatalf("Emit: %v", err)
 	}
 
@@ -351,7 +353,7 @@ func TestLangfuseExporter_UsesBasicAuth(t *testing.T) {
 	cs := newCaptureServer(t)
 	exp := newTestLangfuseExporter(t, cs)
 
-	_ = exp.Emit("x", Attrs{"session.id": "s-1"})
+	_ = exp.Emit("x", obs.Attrs{"session.id": "s-1"})
 	cs.waitForEvents(1)
 
 	cs.mu.Lock()
@@ -368,7 +370,7 @@ func TestLangfuseExporter_ShutdownFlushesPending(t *testing.T) {
 	// this event within the test's lifetime.
 	exp := newLangfuseExporterWithInterval(cs.server.URL, "pk-test", "sk-test", time.Hour)
 
-	_ = exp.Emit("x", Attrs{"session.id": "s-1"})
+	_ = exp.Emit("x", obs.Attrs{"session.id": "s-1"})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()

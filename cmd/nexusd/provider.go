@@ -10,6 +10,8 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
+	"github.com/truongpx396/nexus-agent-demo/internal/obs/langfuse"
+	"github.com/truongpx396/nexus-agent-demo/internal/obs/otlp"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/anthropic"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
@@ -112,7 +114,7 @@ func (r repeatingFakeProvider) Stream(ctx context.Context, p provider.Prompt, to
 // spanExporter is what newSpanExporter returns: rest.Server.Exporter's own
 // point-event Emit, plus obs.Tracer's real start/end spans that
 // kernel.Kernel.Tracer uses (docs/local-llm.md) — obs.Exporter and
-// obs.OTLPExporter both satisfy this already, this interface just names the
+// otlp.OTLPExporter both satisfy this already, this interface just names the
 // combination once instead of at each of the two call sites that need it.
 type spanExporter interface {
 	rest.SpanEmitter
@@ -122,9 +124,9 @@ type spanExporter interface {
 // newSpanExporter builds whichever obs Exporter(s) this process emits
 // spans through (README task 13.12, closing production-readiness finding
 // F13): NEXUS_LANGFUSE_HOST set means the native-ingestion exporter
-// (obs.LangfuseExporter, docs/local-llm.md's lightweight self-hosted
+// (langfuse.LangfuseExporter, docs/local-llm.md's lightweight self-hosted
 // Langfuse v2 path — no OTLP collector needed); NEXUS_OTLP_ENDPOINT set
-// means a real OTLP collector (obs.OTLPExporter — Grafana Tempo,
+// means a real OTLP collector (otlp.OTLPExporter — Grafana Tempo,
 // docs/observability.md, or Langfuse's own OTLP endpoint, the heavier
 // v3+/v4 self-hosted path). Unlike earlier, these are NOT mutually
 // exclusive — both set means both run, fanned out through
@@ -153,7 +155,7 @@ func newSpanExporter(ctx context.Context) (spanExporter, func(), error) {
 		if publicKey == "" || secretKey == "" {
 			return nil, nil, fmt.Errorf("NEXUS_LANGFUSE_HOST set but NEXUS_LANGFUSE_PUBLIC_KEY/NEXUS_LANGFUSE_SECRET_KEY missing")
 		}
-		exp := obs.NewLangfuseExporter(langfuseHost, publicKey, secretKey)
+		exp := langfuse.NewLangfuseExporter(langfuseHost, publicKey, secretKey)
 		exporters = append(exporters, exp)
 		shutdowns = append(shutdowns, func() {
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -167,7 +169,7 @@ func newSpanExporter(ctx context.Context) (spanExporter, func(), error) {
 	if endpoint := envOr("NEXUS_OTLP_ENDPOINT", ""); endpoint != "" {
 		headers := parseHeaderList(envOr("NEXUS_OTLP_HEADERS", ""))
 		urlPath := envOr("NEXUS_OTLP_URL_PATH", "")
-		exp, err := obs.NewOTLPExporter(ctx, endpoint, envOr("NEXUS_OTLP_INSECURE", "true") == "true", headers, urlPath)
+		exp, err := otlp.NewOTLPExporter(ctx, endpoint, envOr("NEXUS_OTLP_INSECURE", "true") == "true", headers, urlPath)
 		if err != nil {
 			return nil, nil, err
 		}

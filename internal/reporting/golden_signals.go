@@ -1,4 +1,4 @@
-package obs
+package reporting
 
 // GoldenSignals is the go-live dashboard (README task 10.12) — every field
 // this codebase's own constitution names as what a real deployment must be

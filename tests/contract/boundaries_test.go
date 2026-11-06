@@ -53,7 +53,74 @@ func noStorage(subject, pkg string) boundaryRule {
 	}
 }
 
+// infraDeps are the packages that mean "this code does I/O against something":
+// an HTTP client or server, a child process, the OpenTelemetry SDK and its
+// exporters, the continuous profiler, a container runtime. A port may be named
+// in the core; an adapter that links one of these belongs in a driven-adapter
+// subpackage that only cmd/* wires in. The database and cache drivers are
+// covered by noStorage; this is the rest.
+var infraDeps = []string{
+	"net/http",
+	"os/exec",
+	"go.opentelemetry.io/otel/sdk",
+	"go.opentelemetry.io/otel/exporters",
+	"github.com/grafana",
+	"github.com/moby",
+	"github.com/containerd",
+	"github.com/alibaba",
+}
+
+// noInfra is the rule for a package that is part of the core (a vocabulary, a
+// use case, a pipeline) and so must not link any infraDeps, even transitively.
+func noInfra(subject, pkg string) boundaryRule {
+	return boundaryRule{
+		name:      subject + " must not link an HTTP, process, telemetry-SDK or container dependency",
+		pkg:       modulePrefix + pkg,
+		forbidden: infraDeps,
+	}
+}
+
 func init() {
+	// The core and every feature package that is written against ports. Each is
+	// clean today; this is the ratchet that keeps it so. Deliberately absent:
+	//   - internal/connectors: its public API carries golang.org/x/oauth2 types
+	//     (the protocol library, not a store), so wrapping it is a redesign;
+	//   - internal/skills: ScriptTool's unsandboxed fallback runs os/exec;
+	//   - internal/sandbox: it IS the container adapter for tools.SandboxExec;
+	//   - the REST and MCP surfaces: HTTP is what a driving adapter is for.
+	for _, s := range []struct{ subject, pkg string }{
+		{"the kernel", "kernel"},
+		{"telemetry vocabulary", "internal/obs"},
+		{"the tool pipeline", "internal/tools"},
+		{"the hook port", "internal/hooks"},
+		{"the permission chain", "internal/permissions"},
+		{"the budget domain", "internal/cost"},
+		{"the event-log model", "internal/eventlog"},
+		{"the provider port", "internal/provider"},
+		{"the prompt context", "internal/promptctx"},
+		{"reliability", "internal/reliability"},
+		{"the envelope", "internal/crypto"},
+		{"the audit vocabulary", "internal/audit"},
+		{"the oversight service", "internal/oversight"},
+		{"run control", "internal/runctl"},
+		{"run-state rebuilding", "internal/runstate"},
+		{"the delegation service", "internal/delegate"},
+		{"the teams service", "internal/teams"},
+		{"the plan executor", "internal/plan"},
+		{"file-first memory", "internal/memory"},
+		{"the retrieval service", "internal/retrieval"},
+		{"ingestion", "internal/ingest"},
+		{"tenant config", "internal/config"},
+		{"the job queue port", "internal/queue"},
+		{"the run use case", "internal/runs"},
+		{"the control plane port", "internal/controlplane"},
+		{"the shared surface primitives", "internal/surfaces"},
+		{"content access grants", "internal/contentaccess"},
+		{"reporting", "internal/reporting"},
+	} {
+		rules = append(rules, noInfra(s.subject, s.pkg))
+	}
+
 	for _, s := range []struct{ subject, pkg string }{
 		{"the REST surface", "internal/surfaces/rest"},
 		{"the telegram surface", "internal/surfaces/telegram"},
@@ -74,6 +141,8 @@ func init() {
 		{"file-first memory", "internal/memory"},
 		{"the retrieval service", "internal/retrieval"},
 		{"the connectors vault", "internal/connectors"},
+		{"content access grants", "internal/contentaccess"},
+		{"reporting", "internal/reporting"},
 	} {
 		rules = append(rules, noStorage(s.subject, s.pkg))
 	}
@@ -81,11 +150,16 @@ func init() {
 
 var rules = []boundaryRule{
 	{
-		name: "kernel must not import surfaces, controlplane, an adapter of its own ports, or reach the database or cache",
+		name: "kernel must not import surfaces, controlplane, the tool pipeline, an adapter of its own ports, or reach the database or cache",
 		pkg:  modulePrefix + "kernel",
 		forbidden: []string{
 			modulePrefix + "internal/surfaces",
 			modulePrefix + "internal/controlplane",
+			// The pipeline is what implements the kernel's ToolExecutor port, so
+			// it is on the far side of it: internal/tools/kerneladapter is the
+			// one package that knows both. (The infrastructure the pipeline's
+			// neighbours link is forbidden below by noInfra.)
+			modulePrefix + "internal/tools",
 			modulePrefix + "internal/eventlog/postgres",
 			modulePrefix + "internal/eventlog/inmem",
 			// The core of the hexagon reaches durable state only through its
@@ -98,9 +172,11 @@ var rules = []boundaryRule{
 		},
 	},
 	{
-		// Telemetry and the content-access service (Tracer, Attrs, Grants,
-		// Reports) are reached by the kernel and by REST. Their Postgres
-		// adapters are internal/obs/postgres.
+		// Telemetry (Tracer, Attrs, the allowlist) is reached by the kernel and
+		// by REST. Its exporters are driven adapters (internal/obs/otlp,
+		// internal/obs/langfuse, internal/obs/profiling); the content-access
+		// grants and the reports that used to sit beside it are features of
+		// their own (internal/contentaccess, internal/reporting).
 		name: "obs must not reach the database or cache",
 		pkg:  modulePrefix + "internal/obs",
 		forbidden: []string{

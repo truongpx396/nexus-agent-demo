@@ -1,4 +1,4 @@
-package obs
+package reporting
 
 // ToolCallCounts is tool_id -> the number of tool_use events recorded
 // against it (specs/README.md's Phase 17, task 17.9 — the per-tool

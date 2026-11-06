@@ -16,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/truongpx396/nexus-agent-demo/internal/contentaccess"
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/runs"
@@ -52,7 +53,7 @@ type Server struct {
 	// needed (tests/contract/boundaries_test.go's transitive kernel-import
 	// check on internal/surfaces is what actually decides which
 	// dependencies need one, not this package's own convenience).
-	Grants *obs.Grants
+	Grants *contentaccess.Grants
 
 	// RunCtl, if set, backs the cancel/steer/tighten-autonomy/fork endpoints
 	// (README task 6.9-6.11) — nil leaves them unmounted, which every

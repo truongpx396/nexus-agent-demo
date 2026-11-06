@@ -1,7 +1,9 @@
-package obs
+package otlp
 
 import (
 	"testing"
+
+	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
@@ -21,7 +23,7 @@ func newTestOTLPExporter(t *testing.T) (*OTLPExporter, *tracetest.InMemoryExport
 func TestOTLPExporter_EmitFiltersAttributes(t *testing.T) {
 	exp, recorder := newTestOTLPExporter(t)
 
-	if err := exp.Emit("turn.completed", Attrs{
+	if err := exp.Emit("turn.completed", obs.Attrs{
 		"session.id":      "abc-123",
 		"terminal_reason": "completed",
 		"user_message":    "this is conversation content and must never appear",
@@ -52,10 +54,10 @@ func TestOTLPExporter_EmitFiltersAttributes(t *testing.T) {
 
 func TestOTLPExporter_EmitTracksDrops(t *testing.T) {
 	exp, _ := newTestOTLPExporter(t)
-	tracker := &DropTracker{}
+	tracker := &obs.DropTracker{}
 	exp.Drops = tracker
 
-	if err := exp.Emit("turn.completed", Attrs{
+	if err := exp.Emit("turn.completed", obs.Attrs{
 		"session.id": "abc-123", // allowed
 		"secret":     "nope",    // dropped
 	}); err != nil {

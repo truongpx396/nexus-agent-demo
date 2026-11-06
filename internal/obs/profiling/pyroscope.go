@@ -1,4 +1,4 @@
-package obs
+package profiling
 
 import (
 	"github.com/grafana/pyroscope-go"

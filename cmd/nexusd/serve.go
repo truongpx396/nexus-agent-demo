@@ -10,7 +10,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/truongpx396/nexus-agent-demo/internal/contentaccess"
 	teamspg "github.com/truongpx396/nexus-agent-demo/internal/teams/postgres"
+	"github.com/truongpx396/nexus-agent-demo/internal/tools/kerneladapter"
 
 	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
 	delegatepg "github.com/truongpx396/nexus-agent-demo/internal/delegate/postgres"
@@ -30,16 +32,17 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/connectors"
 	connectorspg "github.com/truongpx396/nexus-agent-demo/internal/connectors/postgres"
 	connectorsredis "github.com/truongpx396/nexus-agent-demo/internal/connectors/redis"
+	contentaccesspg "github.com/truongpx396/nexus-agent-demo/internal/contentaccess/postgres"
 	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/delegate"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/memory"
-	"github.com/truongpx396/nexus-agent-demo/internal/obs"
-	obspg "github.com/truongpx396/nexus-agent-demo/internal/obs/postgres"
+	"github.com/truongpx396/nexus-agent-demo/internal/obs/profiling"
 	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
 	oversightpg "github.com/truongpx396/nexus-agent-demo/internal/oversight/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/reliability"
+	reportingpg "github.com/truongpx396/nexus-agent-demo/internal/reporting/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
 	"github.com/truongpx396/nexus-agent-demo/internal/runs"
 	runspg "github.com/truongpx396/nexus-agent-demo/internal/runs/postgres"
@@ -115,18 +118,18 @@ func serve(ctx context.Context) error {
 
 	// Profiling (docs/observability.md's "profiling" compose profile):
 	// on-demand pprof on its OWN loopback-scoped listener (never the mux
-	// below /metrics/webhooks share — obs.StartPprofServer's own doc comment
+	// below /metrics/webhooks share — profiling.StartPprofServer's own doc comment
 	// says why), plus optional continuous profiling pushed to Grafana
 	// Pyroscope. Both are opt-in and no-ops when their env vars are unset —
 	// same zero-setup posture as the span exporter above. Mutex/block
 	// sampling is a single process-wide rate shared by both consumers
-	// (obs.EnableMutexBlockProfiling's own doc comment), so it's set once
+	// (profiling.EnableMutexBlockProfiling's own doc comment), so it's set once
 	// here regardless of which of the two ends up using it.
 	mutexFraction := envIntOr("NEXUS_PPROF_MUTEX_FRACTION", 0)
 	blockRate := envIntOr("NEXUS_PPROF_BLOCK_RATE", 0)
-	obs.EnableMutexBlockProfiling(mutexFraction, blockRate)
+	profiling.EnableMutexBlockProfiling(mutexFraction, blockRate)
 
-	shutdownPprof, err := obs.StartPprofServer(envOr("NEXUS_PPROF_ADDR", ""))
+	shutdownPprof, err := profiling.StartPprofServer(envOr("NEXUS_PPROF_ADDR", ""))
 	if err != nil {
 		return fmt.Errorf("start pprof server: %w", err)
 	}
@@ -138,7 +141,7 @@ func serve(ctx context.Context) error {
 		}
 	}()
 
-	profiler, err := obs.StartPyroscope(obs.PyroscopeConfig{
+	profiler, err := profiling.StartPyroscope(profiling.PyroscopeConfig{
 		ServerAddress:       envOr("NEXUS_PYROSCOPE_ADDR", ""),
 		ApplicationName:     "nexusd",
 		Tags:                map[string]string{"git_commit": version.GitCommit},
@@ -218,8 +221,8 @@ func serve(ctx context.Context) error {
 	inputs := oversight.NewInputs(oversightStore)
 	k := &kernel.Kernel{
 		Provider: provider.Wrap([]provider.Provider{prov}),
-		Tools:    kernel.PipelineExecutor{Pipeline: pipeline}, // real tool pipeline, Phase 3
-		Budget:   gate,                                        // real reserve-then-reconcile cost gate, Phase 4
+		Tools:    kerneladapter.PipelineExecutor{Pipeline: pipeline}, // real tool pipeline, Phase 3
+		Budget:   gate,                                               // real reserve-then-reconcile cost gate, Phase 4
 		Log: postgres.New(st, postgres.Hooks{
 			Receipt:  chainReceiptFunc(chain),     // hash-chained audit receipts, Phase 5 task 5.2
 			Suspend:  onSuspendFunc(approvals),    // durably record an approval on every suspend, Phase 5 task 5.6
@@ -258,7 +261,7 @@ func serve(ctx context.Context) error {
 		Kernel: k, Approvals: approvals, Sessions: oversightStore, Keys: oversightStore,
 		System: starter.system, Catalog: catalog, MaxTurns: starter.maxTurns,
 	}
-	grants := obs.NewGrants(obspg.NewGrantStore(st, keyStore, chain))
+	grants := contentaccess.NewGrants(contentaccesspg.NewGrantStore(st, keyStore, chain))
 
 	ctl := &runctl.Control{
 		Store: runctlpg.New(st, keyStore, chain), Approvals: approvals, Inputs: inputs, Kernel: k,
@@ -393,7 +396,7 @@ func serve(ctx context.Context) error {
 	// a load balancer or Kubernetes probe has no bearer token to send.
 	mux.HandleFunc("GET /healthz", handleHealthz)
 	mux.HandleFunc("GET /readyz", handleReadyz(pool, redisClient, signer))
-	mux.HandleFunc("GET /metrics", handleMetrics(obspg.New(st)))
+	mux.HandleFunc("GET /metrics", handleMetrics(reportingpg.New(st)))
 	mux.Handle("/v1/webhooks/telegram/", telegramSrv.Handler())
 	mux.Handle("/v1/webhooks/zalo/", zaloSrv.Handler())
 	mux.Handle("/v1/webhooks/email/", emailSrv.Handler())

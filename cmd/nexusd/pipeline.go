@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/truongpx396/nexus-agent-demo/internal/hooks/exechook"
+	"github.com/truongpx396/nexus-agent-demo/internal/hooks/httphook"
 	runctlpg "github.com/truongpx396/nexus-agent-demo/internal/runctl/postgres"
 
 	"github.com/google/uuid"
@@ -164,7 +166,7 @@ func newToolPipeline(st *store.Store, cfgStore config.Loader, keyStore *cryptopg
 		Registry:         reg,
 		Manifest:         manifest,
 		Chain:            permChain,
-		Hooks:            hooks.NewDispatcher(),
+		Hooks:            newHookDispatcher(),
 		Blobs:            tools.BlobStore{Dir: envOr("NEXUS_BLOB_DIR", ".dev/blobs")},
 		WorkspaceRoot:    workspaceRoot,
 		DerivedArtifacts: derivedArtifactRecorder(st, chain),
@@ -387,4 +389,14 @@ type demoSafetyModel struct{}
 
 func (demoSafetyModel) Classify(context.Context, string, string) (safety.Verdict, string, error) {
 	return safety.VerdictDefer, "no real safety model configured (Phase 3 demo default)", nil
+}
+
+// newHookDispatcher is the hook layer with every handler kind registered:
+// internal/hooks owns the port, the chain and the I/O-free prompt kind, and the
+// command and http kinds are adapters only the composition root links in.
+func newHookDispatcher() *hooks.Dispatcher {
+	d := hooks.NewDispatcher()
+	d.Handlers[hooks.KindCommand] = exechook.Handler{}
+	d.Handlers[hooks.KindHTTP] = httphook.Handler{}
+	return d
 }

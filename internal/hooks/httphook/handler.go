@@ -1,4 +1,8 @@
-package hooks
+// Package httphook is the http-hook adapter: it POSTs the hook request to an
+// operator-configured endpoint behind an SSRF guard. It owns the net/http
+// dependency so the hook port and dispatcher in internal/hooks — and the tool
+// pipeline that imports them — do not.
+package httphook
 
 import (
 	"bytes"
@@ -9,12 +13,14 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/truongpx396/nexus-agent-demo/internal/hooks"
 )
 
 // privateBlocks is the set of ranges an http hook is refused to call unless
 // AllowPrivateNetworks is set — loopback, RFC1918/ULA, link-local, and the
 // "current network" block. This is the SSRF guard README task 3.11 names:
-// an http hook target is tenant/operator config, but Config.URL can still be
+// an http hook target is tenant/operator config, but hooks.Config.URL can still be
 // templated from tool input in a future phase, so the guard belongs here,
 // not at the config-authoring boundary.
 var privateBlocks = mustParseCIDRs(
@@ -44,21 +50,21 @@ func isPrivateIP(ip net.IP) bool {
 	return false
 }
 
-// HTTPHandler POSTs the same commandRequest shape CommandHandler sends over
-// stdin, and expects the same commandResponse shape back as the body.
-type HTTPHandler struct {
+// Handler POSTs the same hooks.Request shape CommandHandler sends over
+// stdin, and expects the same hooks.Response shape back as the body.
+type Handler struct {
 	Client               *http.Client
 	Resolver             *net.Resolver // overridable for tests
 	AllowPrivateNetworks bool          // test-only escape hatch; production leaves this false
 }
 
-func (h HTTPHandler) Run(ctx context.Context, cfg Config, hctx Context) (Outcome, error) {
+func (h Handler) Run(ctx context.Context, cfg hooks.Config, hctx hooks.Context) (hooks.Outcome, error) {
 	u, err := url.Parse(cfg.URL)
 	if err != nil {
-		return Outcome{}, fmt.Errorf("http hook %q: invalid url: %w", cfg.Name, err)
+		return hooks.Outcome{}, fmt.Errorf("http hook %q: invalid url: %w", cfg.Name, err)
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return Outcome{}, fmt.Errorf("http hook %q: scheme %q not allowed", cfg.Name, u.Scheme)
+		return hooks.Outcome{}, fmt.Errorf("http hook %q: scheme %q not allowed", cfg.Name, u.Scheme)
 	}
 
 	if !h.AllowPrivateNetworks {
@@ -68,22 +74,22 @@ func (h HTTPHandler) Run(ctx context.Context, cfg Config, hctx Context) (Outcome
 		}
 		ips, err := resolver.LookupIP(ctx, "ip", u.Hostname())
 		if err != nil {
-			return Outcome{}, fmt.Errorf("http hook %q: resolve %s: %w", cfg.Name, u.Hostname(), err)
+			return hooks.Outcome{}, fmt.Errorf("http hook %q: resolve %s: %w", cfg.Name, u.Hostname(), err)
 		}
 		for _, ip := range ips {
 			if isPrivateIP(ip) {
-				return Outcome{}, fmt.Errorf("http hook %q: refuses to call private/loopback address %s (SSRF guard)", cfg.Name, ip)
+				return hooks.Outcome{}, fmt.Errorf("http hook %q: refuses to call private/loopback address %s (SSRF guard)", cfg.Name, ip)
 			}
 		}
 	}
 
-	payload, err := json.Marshal(commandRequest{Event: string(cfg.Event), ToolID: hctx.ToolID, Input: hctx.Input})
+	payload, err := json.Marshal(hooks.Request{Event: string(cfg.Event), ToolID: hctx.ToolID, Input: hctx.Input})
 	if err != nil {
-		return Outcome{}, fmt.Errorf("marshal http hook request: %w", err)
+		return hooks.Outcome{}, fmt.Errorf("marshal http hook request: %w", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(payload)) //nolint:gosec // cfg.URL is operator-authored hook config; the SSRF guard above bounds what it may resolve to
 	if err != nil {
-		return Outcome{}, fmt.Errorf("build http hook request: %w", err)
+		return hooks.Outcome{}, fmt.Errorf("build http hook request: %w", err)
 	}
 	req.Header.Set("content-type", "application/json")
 
@@ -93,16 +99,16 @@ func (h HTTPHandler) Run(ctx context.Context, cfg Config, hctx Context) (Outcome
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return Outcome{}, fmt.Errorf("http hook %q: %w", cfg.Name, err)
+		return hooks.Outcome{}, fmt.Errorf("http hook %q: %w", cfg.Name, err)
 	}
 	defer resp.Body.Close() //nolint:errcheck // read-only response body; nothing to flush
 	if resp.StatusCode/100 != 2 {
-		return Outcome{}, fmt.Errorf("http hook %q: status %d", cfg.Name, resp.StatusCode)
+		return hooks.Outcome{}, fmt.Errorf("http hook %q: status %d", cfg.Name, resp.StatusCode)
 	}
 
-	var out commandResponse
+	var out hooks.Response
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return Outcome{}, fmt.Errorf("http hook %q: parse response: %w", cfg.Name, err)
+		return hooks.Outcome{}, fmt.Errorf("http hook %q: parse response: %w", cfg.Name, err)
 	}
-	return Outcome{Decision: Decision(out.Decision), Reason: out.Reason, UpdatedInput: out.UpdatedInput}, nil
+	return hooks.Outcome{Decision: hooks.Decision(out.Decision), Reason: out.Reason, UpdatedInput: out.UpdatedInput}, nil
 }

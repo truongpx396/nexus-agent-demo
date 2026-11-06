@@ -44,7 +44,7 @@ Legend: **F** = full fidelity · **S** = simplified but structurally identical �
 | 32 | Per-tenant envelope encryption + crypto-shredding erasure | **F** | `internal/crypto/` | Erasure destroys the DEK; `payload_digest` survives; chain still verifies |
 | 33 | Derived artifacts hard-deleted in the same erasure transaction | **F** | `internal/crypto/postgres/shred.go` | Reconciliation job proves no derived row outlived its source |
 | 34 | Content-free telemetry: deny-by-default attribute allowlist, no admitting flag | **F** | `internal/obs/allowlist.go` | Exporter-side filter + a test that tries every content key |
-| 35 | Content access grant: audited, expiring, receipt per read | **F** | `internal/obs/grant.go` | The only path to plaintext outside the run's own audience |
+| 35 | Content access grant: audited, expiring, receipt per read | **F** | `internal/contentaccess/grants.go` | The only path to plaintext outside the run's own audience |
 | 36 | Turn-scoped spans derived from the log + bidirectional join key | **S** | `internal/obs/span.go` | Emitted per turn from durable events; exporter is stdout OTLP |
 | 37 | Cost: token classes, versioned price book, reserve→reconcile, epoch-marked counter | **F** | `internal/cost/` | Redis Lua reserve; epoch mismatch fails closed |
 | 38 | `Money` as exact integers + explicit currency, rounding once | **F** | `internal/cost/money.go` | No binary float anywhere in the path |

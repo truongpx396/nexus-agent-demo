@@ -1,4 +1,8 @@
-package obs
+// Package profiling is the runtime-profiling adapter: nexusd's pprof listener
+// and the Pyroscope continuous-profiling client. It is not telemetry
+// vocabulary (that is internal/obs), so it lives outside it and the kernel,
+// which imports obs, does not link net/http/pprof or the Pyroscope SDK.
+package profiling
 
 import (
 	"context"

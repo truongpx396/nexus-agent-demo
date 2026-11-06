@@ -8,6 +8,8 @@
 // telemetry.
 package obs
 
+import "strconv"
+
 // allowedAttrs are the only keys Filter ever lets through. Every one of
 // them is structure: identifiers, sizes, durations, digests, typed
 // outcomes. None of them is, or can become, conversation content.
@@ -37,6 +39,21 @@ var allowedAttrs = map[string]struct{}{
 // dotted names; values are always strings — telemetry never carries a
 // structured value that could itself smuggle content.
 type Attrs map[string]string
+
+// SumInt adds up the integer values of keys present in a; absent or non-numeric
+// values count as zero. The exporters use it for token-usage attributes, which
+// the allowlist admits as decimal strings.
+func (a Attrs) SumInt(keys ...string) int64 {
+	var total int64
+	for _, k := range keys {
+		if v, ok := a[k]; ok {
+			if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+				total += n
+			}
+		}
+	}
+	return total
+}
 
 // Filter drops every key not on the allowlist. It does not truncate or
 // redact an unlisted key's value — it removes the key entirely, because a

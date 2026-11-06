@@ -1,4 +1,4 @@
-package obs_test
+package contentaccess_test
 
 import (
 	"context"
@@ -9,15 +9,15 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/obs"
+	"github.com/truongpx396/nexus-agent-demo/internal/contentaccess"
 )
 
 // fakeGrantStore records what Grants asks of storage and answers from fields.
 type fakeGrantStore struct {
-	grants  []obs.Grant // what ListFor returns, newest first
-	history []obs.EventDTO
+	grants  []contentaccess.Grant // what ListFor returns, newest first
+	history []contentaccess.EventDTO
 
-	issued   []obs.Grant
+	issued   []contentaccess.Grant
 	refusals []string
 	accesses []int // event counts recorded
 	listed   int
@@ -26,15 +26,15 @@ type fakeGrantStore struct {
 	issueErr, listErr, refusalErr, historyErr, accessErr error
 }
 
-func (f *fakeGrantStore) Issue(_ context.Context, gr obs.Grant) (obs.Grant, error) {
+func (f *fakeGrantStore) Issue(_ context.Context, gr contentaccess.Grant) (contentaccess.Grant, error) {
 	if f.issueErr != nil {
-		return obs.Grant{}, f.issueErr
+		return contentaccess.Grant{}, f.issueErr
 	}
 	f.issued = append(f.issued, gr)
 	return gr, nil
 }
 
-func (f *fakeGrantStore) ListFor(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) ([]obs.Grant, error) {
+func (f *fakeGrantStore) ListFor(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) ([]contentaccess.Grant, error) {
 	f.listed++
 	return f.grants, f.listErr
 }
@@ -47,7 +47,7 @@ func (f *fakeGrantStore) RecordRefusal(_ context.Context, _, _, _ uuid.UUID, rea
 	return nil
 }
 
-func (f *fakeGrantStore) History(context.Context, uuid.UUID, uuid.UUID) ([]obs.EventDTO, error) {
+func (f *fakeGrantStore) History(context.Context, uuid.UUID, uuid.UUID) ([]contentaccess.EventDTO, error) {
 	f.opened++
 	return f.history, f.historyErr
 }
@@ -67,14 +67,14 @@ var (
 	grantee = uuid.New()
 )
 
-func newGrants(f *fakeGrantStore) *obs.Grants {
-	g := obs.NewGrants(f)
+func newGrants(f *fakeGrantStore) *contentaccess.Grants {
+	g := contentaccess.NewGrants(f)
 	g.Now = func() time.Time { return t0 }
 	return g
 }
 
-func grant(expires time.Time, revoked *time.Time) obs.Grant {
-	return obs.Grant{GrantID: uuid.New(), TenantID: tenant, SessionID: session, GranteeID: grantee, ExpiresAt: expires, RevokedAt: revoked}
+func grant(expires time.Time, revoked *time.Time) contentaccess.Grant {
+	return contentaccess.Grant{GrantID: uuid.New(), TenantID: tenant, SessionID: session, GranteeID: grantee, ExpiresAt: expires, RevokedAt: revoked}
 }
 
 func TestRequestGrant_DefaultsToAnHourAndRecordsWhatWasAsked(t *testing.T) {
@@ -107,7 +107,7 @@ func TestAuthorize_UsesTheNewestCurrentlyValidGrant(t *testing.T) {
 	past, future := t0.Add(-time.Minute), t0.Add(time.Hour)
 	revokedAt := t0.Add(-time.Second)
 	expired, revoked, good := grant(past, nil), grant(future, &revokedAt), grant(future, nil)
-	f := &fakeGrantStore{grants: []obs.Grant{expired, revoked, good}} // newest first
+	f := &fakeGrantStore{grants: []contentaccess.Grant{expired, revoked, good}} // newest first
 
 	got, err := newGrants(f).Authorize(context.Background(), tenant, session, grantee)
 	if err != nil {
@@ -123,7 +123,7 @@ func TestAuthorize_UsesTheNewestCurrentlyValidGrant(t *testing.T) {
 
 func TestAuthorize_WithNoValidGrantRefusesAndAuditsTheRefusal(t *testing.T) {
 	revokedAt := t0.Add(-time.Second)
-	cases := map[string][]obs.Grant{
+	cases := map[string][]contentaccess.Grant{
 		"no grants at all":    nil,
 		"only expired":        {grant(t0.Add(-time.Minute), nil)},
 		"only revoked":        {grant(t0.Add(time.Hour), &revokedAt)},
@@ -163,8 +163,8 @@ func TestAuthorize_StorageFailuresAreNotMistakenForARefusalOrAGrant(t *testing.T
 }
 
 func TestRead_ReturnsTheHistoryAndRecordsOneReceiptForTheWholeRead(t *testing.T) {
-	history := []obs.EventDTO{{Seq: 1}, {Seq: 2}, {Seq: 3}}
-	f := &fakeGrantStore{grants: []obs.Grant{grant(t0.Add(time.Hour), nil)}, history: history}
+	history := []contentaccess.EventDTO{{Seq: 1}, {Seq: 2}, {Seq: 3}}
+	f := &fakeGrantStore{grants: []contentaccess.Grant{grant(t0.Add(time.Hour), nil)}, history: history}
 
 	got, err := newGrants(f).Read(context.Background(), tenant, session, grantee)
 	if err != nil {
@@ -179,7 +179,7 @@ func TestRead_ReturnsTheHistoryAndRecordsOneReceiptForTheWholeRead(t *testing.T)
 }
 
 func TestRead_WithoutAGrantOpensNothingAndRecordsNoAccess(t *testing.T) {
-	f := &fakeGrantStore{history: []obs.EventDTO{{Seq: 1}}}
+	f := &fakeGrantStore{history: []contentaccess.EventDTO{{Seq: 1}}}
 	got, err := newGrants(f).Read(context.Background(), tenant, session, grantee)
 	if err == nil || got != nil {
 		t.Fatalf("Read = (%v, %v), want a refusal with no content", got, err)
@@ -194,8 +194,8 @@ func TestRead_WithoutAGrantOpensNothingAndRecordsNoAccess(t *testing.T) {
 
 func TestRead_WithholdsTheContentIfTheReceiptCannotBeRecorded(t *testing.T) {
 	f := &fakeGrantStore{
-		grants:    []obs.Grant{grant(t0.Add(time.Hour), nil)},
-		history:   []obs.EventDTO{{Seq: 1}},
+		grants:    []contentaccess.Grant{grant(t0.Add(time.Hour), nil)},
+		history:   []contentaccess.EventDTO{{Seq: 1}},
 		accessErr: errors.New("chain unavailable"),
 	}
 	got, err := newGrants(f).Read(context.Background(), tenant, session, grantee)
@@ -208,7 +208,7 @@ func TestRead_WithholdsTheContentIfTheReceiptCannotBeRecorded(t *testing.T) {
 }
 
 func TestRead_AHistoryFailureRecordsNoAccess(t *testing.T) {
-	f := &fakeGrantStore{grants: []obs.Grant{grant(t0.Add(time.Hour), nil)}, historyErr: errors.New("decrypt failed")}
+	f := &fakeGrantStore{grants: []contentaccess.Grant{grant(t0.Add(time.Hour), nil)}, historyErr: errors.New("decrypt failed")}
 	if _, err := newGrants(f).Read(context.Background(), tenant, session, grantee); err == nil {
 		t.Fatal("Read succeeded though the history could not be opened")
 	}

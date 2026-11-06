@@ -1,3 +1,4 @@
+// Package postgres is the Postgres adapter for contentaccess.GrantStore.
 package postgres
 
 import (
@@ -9,15 +10,15 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
+	"github.com/truongpx396/nexus-agent-demo/internal/contentaccess"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/sealed"
-	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
-// GrantStore implements obs.GrantStore over Postgres: the content_access_grants
+// GrantStore implements contentaccess.GrantStore over Postgres: the content_access_grants
 // table, the audit events about it (sealed under the session's own key and
 // hash-chained through Chain, in the same transaction as the change they
 // record), and the decryption of a session's history.
@@ -27,7 +28,7 @@ type GrantStore struct {
 	sealer *sealed.Sealer
 }
 
-var _ obs.GrantStore = (*GrantStore)(nil)
+var _ contentaccess.GrantStore = (*GrantStore)(nil)
 
 // NewGrantStore returns a GrantStore. chain may be nil, in which case audit
 // events are appended without a signed receipt (a minimal wiring for tests).
@@ -35,7 +36,7 @@ func NewGrantStore(st *store.Store, keys *cryptopg.KeyStore, chain *auditpg.Chai
 	return &GrantStore{st: st, keys: keys, sealer: sealed.NewSealer(keys, chain)}
 }
 
-func (s *GrantStore) Issue(ctx context.Context, gr obs.Grant) (obs.Grant, error) {
+func (s *GrantStore) Issue(ctx context.Context, gr contentaccess.Grant) (contentaccess.Grant, error) {
 	err := s.st.InTenantTx(ctx, gr.TenantID, func(ctx context.Context, tx pgx.Tx) error {
 		if err := tx.QueryRow(ctx, `
 			INSERT INTO content_access_grants (grant_id, tenant_id, session_id, grantee_id, reason, expires_at)
@@ -49,8 +50,8 @@ func (s *GrantStore) Issue(ctx context.Context, gr obs.Grant) (obs.Grant, error)
 	return gr, err
 }
 
-func (s *GrantStore) ListFor(ctx context.Context, tenantID, sessionID, granteeID uuid.UUID) ([]obs.Grant, error) {
-	var out []obs.Grant
+func (s *GrantStore) ListFor(ctx context.Context, tenantID, sessionID, granteeID uuid.UUID) ([]contentaccess.Grant, error) {
+	var out []contentaccess.Grant
 	err := s.st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
 			SELECT grant_id, tenant_id, session_id, grantee_id, reason, expires_at, revoked_at, created_at
@@ -62,7 +63,7 @@ func (s *GrantStore) ListFor(ctx context.Context, tenantID, sessionID, granteeID
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var g obs.Grant
+			var g contentaccess.Grant
 			if err := rows.Scan(&g.GrantID, &g.TenantID, &g.SessionID, &g.GranteeID, &g.Reason, &g.ExpiresAt, &g.RevokedAt, &g.CreatedAt); err != nil {
 				return fmt.Errorf("obs: scan content access grant: %w", err)
 			}
@@ -85,7 +86,7 @@ func (s *GrantStore) RecordAccess(ctx context.Context, tenantID, sessionID, gran
 	})
 }
 
-func (s *GrantStore) History(ctx context.Context, tenantID, sessionID uuid.UUID) ([]obs.EventDTO, error) {
+func (s *GrantStore) History(ctx context.Context, tenantID, sessionID uuid.UUID) ([]contentaccess.EventDTO, error) {
 	var history []eventlog.Event
 	err := s.st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
@@ -97,9 +98,9 @@ func (s *GrantStore) History(ctx context.Context, tenantID, sessionID uuid.UUID)
 	}
 
 	dekCache := map[string]crypto.DEK{}
-	out := make([]obs.EventDTO, 0, len(history))
+	out := make([]contentaccess.EventDTO, 0, len(history))
 	for _, e := range history {
-		dto := obs.EventDTO{EventID: e.EventID, Seq: e.Seq, Type: e.Type, CreatedAt: e.CreatedAt}
+		dto := contentaccess.EventDTO{EventID: e.EventID, Seq: e.Seq, Type: e.Type, CreatedAt: e.CreatedAt}
 		if e.Type == eventlog.EventThought {
 			out = append(out, dto) // never shown, even under a grant
 			continue

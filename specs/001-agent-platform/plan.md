@@ -112,7 +112,7 @@ confirm VIOLATION 1 is the only place a content-bearing channel crosses the tele
 | US1 | 2 | `kernel/`, `internal/{promptctx,provider,surfaces/rest}` |
 | US2 | 3 | `internal/{tools,tools/builtin,permissions,hooks}` |
 | US3 | 4 | `internal/cost` |
-| US4 | 5 | `cmd/signerd`, `internal/{audit,oversight,sandbox}`, `internal/crypto/shred.go`, `internal/obs/grant.go` |
+| US4 | 5 | `cmd/signerd`, `internal/{audit,oversight,sandbox}`, `internal/crypto/shred.go`, `internal/contentaccess/grants.go` |
 | US5 | 6, 18 | `internal/{queue,runctl,reliability}`, `internal/store/{checkpoint,snapshot,claims}.go` |
 | US6 | 7 | `internal/{memory,skills,surfaces,surfaces/cli}` |
 | US7 | 8 | `internal/{plan,delegate}`, `internal/tools/builtin/delegate.go` |

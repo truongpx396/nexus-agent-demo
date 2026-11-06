@@ -14,7 +14,7 @@ import (
 // Invocation is what the pipeline receives for one tool_use. It is kept
 // independent of any specific caller's own request shape (a kernel
 // ToolUseRequest, a future eval harness's own shape, ...) so this package
-// has no reason to import a caller's package — kernel/tools_adapter.go is
+// has no reason to import a caller's package — internal/tools/kerneladapter/executor.go is
 // where kernel.ToolUseRequest gets translated into this.
 type Invocation struct {
 	TenantID      uuid.UUID
@@ -54,7 +54,7 @@ type ExecuteResult struct {
 
 	// AwaitingDelegation/ChildSessionID mirror Result.AwaitingChildSessionID
 	// one layer up (README task 8.10) — finishCall's own short-circuit,
-	// translated by kernel/tools_adapter.go into kernel.ToolResult exactly
+	// translated by internal/tools/kerneladapter/executor.go into kernel.ToolResult exactly
 	// like AwaitingApproval already is.
 	AwaitingDelegation bool
 	ChildSessionID     uuid.UUID
@@ -165,7 +165,7 @@ type sessionState struct {
 
 // Pipeline is the single execution path (README task 3.4, pattern 16):
 // construct once, share across every run this process serves, and call
-// Execute per tool_use. It implements the shape kernel/tools_adapter.go
+// Execute per tool_use. It implements the shape internal/tools/kerneladapter/executor.go
 // wraps into a kernel.ToolExecutor — this package itself never imports
 // kernel (kernel is the one allowed to depend on tools, never the reverse;
 // kernel/types.go's own doc comment names the allowed direction).

@@ -1,4 +1,8 @@
-package obs
+// Package langfuse is the Langfuse adapter for obs.Tracer and obs.Exporter
+// (docs/local-llm.md): the lightweight self-hosted alternative to a full OTLP
+// collector. Like internal/obs/otlp it is a driven adapter only cmd/nexusd
+// wires in; the kernel sees obs.Tracer, never this package.
+package langfuse
 
 import (
 	"bytes"
@@ -9,6 +13,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
@@ -37,7 +43,7 @@ type LangfuseExporter struct {
 
 	// Drops mirrors the other exporters' own field — nil is valid and simply
 	// means this exporter isn't counted toward any dashboard.
-	Drops *DropTracker
+	Drops *obs.DropTracker
 
 	mu      sync.Mutex
 	pending []langfuseEvent
@@ -214,8 +220,8 @@ func (e *LangfuseExporter) Shutdown(ctx context.Context) error {
 // auto-creates an implicit single-observation trace for it (its own id
 // doubling as that trace's id), confirmed against a real langfuse/
 // langfuse:2 instance (docs/local-llm.md), not dropped.
-func (e *LangfuseExporter) Emit(name string, attrs Attrs) error {
-	filtered := FilterTracked(attrs, e.Drops)
+func (e *LangfuseExporter) Emit(name string, attrs obs.Attrs) error {
+	filtered := obs.FilterTracked(attrs, e.Drops)
 	e.enqueue(langfuseEvent{
 		ID:        uuid.NewString(),
 		Timestamp: nowRFC3339(),
@@ -232,10 +238,10 @@ func (e *LangfuseExporter) Emit(name string, attrs Attrs) error {
 type langfuseSpan struct {
 	exp                   *LangfuseExporter
 	traceID, id, parentID string
-	kind                  ObservationType
+	kind                  obs.ObservationType
 	name                  string
 	startTime             time.Time
-	startAttrs            Attrs
+	startAttrs            obs.Attrs
 	input, output         string
 }
 
@@ -263,7 +269,7 @@ type langfuseSpan struct {
 // trace-create, id = a fresh TraceID) as well as its own root observation;
 // a valid parent means this reuses the parent's TraceID and links via
 // parentObservationId = the parent's SpanID.
-func (e *LangfuseExporter) StartSpan(ctx context.Context, name string, kind ObservationType, attrs Attrs) (context.Context, Span) {
+func (e *LangfuseExporter) StartSpan(ctx context.Context, name string, kind obs.ObservationType, attrs obs.Attrs) (context.Context, obs.Span) {
 	parentSC := trace.SpanContextFromContext(ctx)
 
 	var traceID trace.TraceID
@@ -276,7 +282,7 @@ func (e *LangfuseExporter) StartSpan(ctx context.Context, name string, kind Obse
 	}
 	spanID := newSpanID()
 
-	filtered := FilterTracked(attrs, e.Drops)
+	filtered := obs.FilterTracked(attrs, e.Drops)
 	now := time.Now()
 
 	if !parentSC.IsValid() {
@@ -297,7 +303,7 @@ func (e *LangfuseExporter) StartSpan(ctx context.Context, name string, kind Obse
 		Metadata:            filtered,
 	}
 	eventType := "span-create"
-	if kind == ObservationGeneration {
+	if kind == obs.ObservationGeneration {
 		eventType = "generation-create"
 		body.Model, body.Usage = langfuseGenerationFields(filtered)
 	}
@@ -326,7 +332,7 @@ func (e *LangfuseExporter) StartSpan(ctx context.Context, name string, kind Obse
 // trace.SpanContext, specifically so it interops with
 // internal/delegate/spawn.go's cross-goroutine propagation without
 // spawn.go needing to know which Tracer implementation is actually wired.
-func (e *LangfuseExporter) Detach(ctx context.Context) SpanLink {
+func (e *LangfuseExporter) Detach(ctx context.Context) obs.SpanLink {
 	sc := trace.SpanContextFromContext(ctx)
 	if !sc.IsValid() {
 		return nil
@@ -334,7 +340,7 @@ func (e *LangfuseExporter) Detach(ctx context.Context) SpanLink {
 	return sc
 }
 
-func (e *LangfuseExporter) Attach(ctx context.Context, link SpanLink) context.Context {
+func (e *LangfuseExporter) Attach(ctx context.Context, link obs.SpanLink) context.Context {
 	sc, ok := link.(trace.SpanContext)
 	if !ok {
 		return ctx
@@ -359,15 +365,15 @@ func newSpanID() trace.SpanID {
 // (only if SetContent was called — see its own doc comment) rather than on
 // the create event, since a caller typically has content only once the
 // call finishes.
-func (s *langfuseSpan) End(attrs Attrs) {
-	merged := make(Attrs, len(s.startAttrs)+len(attrs))
+func (s *langfuseSpan) End(attrs obs.Attrs) {
+	merged := make(obs.Attrs, len(s.startAttrs)+len(attrs))
 	for k, v := range s.startAttrs {
 		merged[k] = v
 	}
 	for k, v := range attrs {
 		merged[k] = v
 	}
-	filtered := FilterTracked(merged, s.exp.Drops)
+	filtered := obs.FilterTracked(merged, s.exp.Drops)
 
 	body := langfuseObservationBody{
 		ID:       s.id,
@@ -377,7 +383,7 @@ func (s *langfuseSpan) End(attrs Attrs) {
 		Output:   s.output,
 	}
 	eventType := "span-update"
-	if s.kind == ObservationGeneration {
+	if s.kind == obs.ObservationGeneration {
 		eventType = "generation-update"
 		body.Model, body.Usage = langfuseGenerationFields(filtered)
 	}
@@ -396,11 +402,11 @@ func (s *langfuseSpan) SetContent(input, output string) {
 // allowlisted model.id/usage.* keys into this event's model/usage fields —
 // the native-ingestion counterpart to otlp.go's langfuseGenAIAliases. A
 // non-generation span never calls this.
-func langfuseGenerationFields(attrs Attrs) (string, *langfuseUsage) {
+func langfuseGenerationFields(attrs obs.Attrs) (string, *langfuseUsage) {
 	model := attrs["model.id"]
 	usage := &langfuseUsage{Unit: "TOKENS"}
 	var has bool
-	if v := sumInt(attrs, "usage.input_uncached", "usage.input_cache_read", "usage.input_cache_write"); v > 0 {
+	if v := attrs.SumInt("usage.input_uncached", "usage.input_cache_read", "usage.input_cache_write"); v > 0 {
 		usage.Input = v
 		has = true
 	}

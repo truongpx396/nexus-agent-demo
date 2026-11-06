@@ -1,4 +1,4 @@
-// Package postgres is the Postgres adapter for obs.Reports: the dashboard's
+// Package postgres is the Postgres adapter for reporting.Reports: the dashboard's
 // golden-signal aggregates and the /metrics per-tool and per-model breakdowns,
 // each read inside the tenant's own scope (store.Store.InTenantTx — the one
 // sanctioned scoping call, same as every other read in this codebase).
@@ -13,23 +13,23 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/obs"
+	"github.com/truongpx396/nexus-agent-demo/internal/reporting"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
-// Reports implements obs.Reports over Postgres.
+// Reports implements reporting.Reports over Postgres.
 type Reports struct {
 	st *store.Store
 }
 
-var _ obs.Reports = (*Reports)(nil)
+var _ reporting.Reports = (*Reports)(nil)
 
 // New returns Reports that open their tenant-scoped transactions on st.
 func New(st *store.Store) *Reports { return &Reports{st: st} }
 
 // GoldenSignals queries every signal out of tenantID's own tenant-scoped rows.
-func (r *Reports) GoldenSignals(ctx context.Context, tenantID uuid.UUID, staleClaimAfter time.Duration) (obs.GoldenSignals, error) {
-	var g obs.GoldenSignals
+func (r *Reports) GoldenSignals(ctx context.Context, tenantID uuid.UUID, staleClaimAfter time.Duration) (reporting.GoldenSignals, error) {
+	var g reporting.GoldenSignals
 	err := r.st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		if err := queryCompletionByReason(ctx, tx, &g); err != nil {
 			return err
@@ -54,7 +54,7 @@ func (r *Reports) GoldenSignals(ctx context.Context, tenantID uuid.UUID, staleCl
 	return g, err
 }
 
-func queryCompletionByReason(ctx context.Context, tx pgx.Tx, g *obs.GoldenSignals) error {
+func queryCompletionByReason(ctx context.Context, tx pgx.Tx, g *reporting.GoldenSignals) error {
 	rows, err := tx.Query(ctx, `
 		SELECT terminal_reason, count(*)
 		FROM sessions
@@ -95,7 +95,7 @@ func queryCompletionByReason(ctx context.Context, tx pgx.Tx, g *obs.GoldenSignal
 	return nil
 }
 
-func queryCostCeilingBreachRate(ctx context.Context, tx pgx.Tx, g *obs.GoldenSignals) error {
+func queryCostCeilingBreachRate(ctx context.Context, tx pgx.Tx, g *reporting.GoldenSignals) error {
 	var total, refused int
 	err := tx.QueryRow(ctx, `
 		SELECT count(*), count(*) FILTER (WHERE decision = 'refuse_ceiling')
@@ -108,7 +108,7 @@ func queryCostCeilingBreachRate(ctx context.Context, tx pgx.Tx, g *obs.GoldenSig
 	return nil
 }
 
-func queryCacheReadRate(ctx context.Context, tx pgx.Tx, g *obs.GoldenSignals) error {
+func queryCacheReadRate(ctx context.Context, tx pgx.Tx, g *reporting.GoldenSignals) error {
 	var uncached, cacheRead, cacheWrite int64
 	err := tx.QueryRow(ctx, `
 		SELECT
@@ -127,7 +127,7 @@ func queryCacheReadRate(ctx context.Context, tx pgx.Tx, g *obs.GoldenSignals) er
 	return nil
 }
 
-func queryApprovalSignals(ctx context.Context, tx pgx.Tx, g *obs.GoldenSignals) error {
+func queryApprovalSignals(ctx context.Context, tx pgx.Tx, g *reporting.GoldenSignals) error {
 	var p50, p95 *float64
 	err := tx.QueryRow(ctx, `
 		SELECT
@@ -156,7 +156,7 @@ func queryApprovalSignals(ctx context.Context, tx pgx.Tx, g *obs.GoldenSignals) 
 	return nil
 }
 
-func queryUnresolvedClaims(ctx context.Context, tx pgx.Tx, g *obs.GoldenSignals, staleAfter time.Duration) error {
+func queryUnresolvedClaims(ctx context.Context, tx pgx.Tx, g *reporting.GoldenSignals, staleAfter time.Duration) error {
 	err := tx.QueryRow(ctx, `
 		SELECT count(*) FROM claims
 		WHERE status = 'in_flight' AND created_at < now() - make_interval(secs => $1)`,
@@ -168,7 +168,7 @@ func queryUnresolvedClaims(ctx context.Context, tx pgx.Tx, g *obs.GoldenSignals,
 	return nil
 }
 
-func queryTaintTransitionRate(ctx context.Context, tx pgx.Tx, g *obs.GoldenSignals) error {
+func queryTaintTransitionRate(ctx context.Context, tx pgx.Tx, g *reporting.GoldenSignals) error {
 	var sessionsWithTransition int
 	err := tx.QueryRow(ctx,
 		`SELECT count(DISTINCT session_id) FROM events WHERE type = $1`,
@@ -181,7 +181,7 @@ func queryTaintTransitionRate(ctx context.Context, tx pgx.Tx, g *obs.GoldenSigna
 	return nil
 }
 
-func querySessionsBySurface(ctx context.Context, tx pgx.Tx, g *obs.GoldenSignals) error {
+func querySessionsBySurface(ctx context.Context, tx pgx.Tx, g *reporting.GoldenSignals) error {
 	rows, err := tx.Query(ctx, `SELECT surface_id, count(*) FROM sessions GROUP BY surface_id`)
 	if err != nil {
 		return fmt.Errorf("obs: query sessions by surface: %w", err)

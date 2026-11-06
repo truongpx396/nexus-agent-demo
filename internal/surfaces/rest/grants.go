@@ -13,7 +13,7 @@ import (
 // file's sibling), which is the run's OWN owning user reading their own
 // session's content (pattern #51, gated on sess.UserID == userID): here the
 // requester and the grantee are independent principals, and every grant AND
-// every read produces its own audited receipt (internal/obs.Grants).
+// every read produces its own audited receipt (internal/contentaccess.Grants).
 
 type requestGrantRequest struct {
 	GranteeID  string `json:"grantee_id"`

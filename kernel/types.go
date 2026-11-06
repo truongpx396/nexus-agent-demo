@@ -83,7 +83,7 @@ type ToolResult struct {
 	ChildSessionID uuid.UUID
 
 	// TaintChanged/TaintEngaged mirror tools.ExecuteResult's own identically
-	// named fields verbatim (kernel/tools_adapter.go copies them straight
+	// named fields verbatim (internal/tools/kerneladapter/executor.go copies them straight
 	// across) — plain [3]bool rather than internal/permissions.TaintState,
 	// for the same reason DelegationResolution's own doc comment gives:
 	// kernel has no reason to import internal/permissions just to shuttle
@@ -122,7 +122,7 @@ type ToolExecutor interface {
 // `interface{ ResetTurn() }` optional-interface check kernel/loop.go
 // already does for the hook chain's per-turn cap, so an executor with
 // nothing to resume (kernel.NotImplementedToolExecutor) needs no method for
-// it. kernel.PipelineExecutor (tools_adapter.go) implements this by calling
+// it. kerneladapter.PipelineExecutor implements this by calling
 // tools.Pipeline.ExecuteApproved.
 type ApprovedExecutor interface {
 	ExecuteApproved(ctx context.Context, req ToolUseRequest, approvedDigest []byte, rc ExecContext) ToolResult
@@ -138,7 +138,7 @@ type ApprovedExecutor interface {
 // implemented, passes the result here before doing anything else with the
 // rehydrated state — an executor with nothing to seed
 // (kernel.NotImplementedToolExecutor) needs no method for it.
-// kernel.PipelineExecutor (tools_adapter.go) implements this by calling
+// kerneladapter.PipelineExecutor implements this by calling
 // tools.Pipeline.SeedTaint.
 type TaintSeeder interface {
 	SeedTaint(sessionID uuid.UUID, autonomyLevel string, engaged [3]bool)
