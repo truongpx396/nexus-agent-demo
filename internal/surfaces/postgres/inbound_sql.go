@@ -1,4 +1,4 @@
-package store
+package postgres
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// ClaimInboundDelivery is the cheap first line of defense a webhook-facing
+// claimInboundDelivery is the cheap first line of defense a webhook-facing
 // surface (telegram/zalo/email dispatch) takes against a provider's own
 // retry behavior, before any session lookup or run is started: an INSERT
 // racing migrations/0025_inbound_deliveries.sql's UNIQUE (tenant_id,
@@ -21,7 +21,7 @@ import (
 // is the shared source of truth, never per-process memory) — gets
 // claimed=false and must treat the delivery as already handled.
 //
-// This is deliberately simpler than Claim (claims.go, pattern #25,
+// This is deliberately simpler than the effect claim (internal/runctl, pattern #25,
 // resolved by probe or human): a webhook redelivery is an at-least-once
 // INBOUND signal a provider controls, not an outbound side effect whose
 // own outcome can be ambiguous, so a plain insert-once row is the honest
@@ -33,7 +33,7 @@ import (
 // processed. Recovery is the human sending the message again (a new
 // delivery id), which the surface's own conversational continuity picks up
 // from the session, not a second automatic delivery of the original input.
-func ClaimInboundDelivery(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, surfaceID, deliveryID, sessionKey string) (claimed bool, err error) {
+func claimInboundDelivery(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, surfaceID, deliveryID, sessionKey string) (claimed bool, err error) {
 	if deliveryID == "" {
 		// Some providers' inbound payloads carry no stable id at all
 		// (this codebase's own review: Zalo's minimal event shape and a

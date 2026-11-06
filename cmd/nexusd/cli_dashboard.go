@@ -37,7 +37,7 @@ func runDashboard(ctx context.Context, args []string) error {
 	defer pool.Close()
 	st := store.New(pool)
 
-	tenantIDs, err := listTenantIDs(ctx)
+	tenantIDs, err := tenantDirectory().ListTenantIDs(ctx)
 	if err != nil {
 		return fmt.Errorf("list tenants: %w", err)
 	}

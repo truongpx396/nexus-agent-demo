@@ -1,4 +1,4 @@
-package main
+package runctl_test
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/queue"
+	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
 )
 
 // recordingQueue is a queue.Port that only records Enqueue; the sweep uses
@@ -67,8 +68,8 @@ func (f *fakeLiveness) Held(_ context.Context, key string) (bool, error) {
 	return f.held[key], nil
 }
 
-func candidate(key string) orphanCandidate {
-	return orphanCandidate{TenantID: uuid.New(), SessionID: uuid.New(), SessionKey: key}
+func candidate(key string) runctl.Orphan {
+	return runctl.Orphan{TenantID: uuid.New(), SessionID: uuid.New(), SessionKey: key}
 }
 
 // With more than one process, "running in the database" no longer means
@@ -78,7 +79,7 @@ func TestRecoverOrphans_SkipsSessionsAWorkerIsDriving(t *testing.T) {
 	q := &recordingQueue{}
 	live := &fakeLiveness{held: map[string]bool{"b": true}}
 
-	got := recoverOrphans(context.Background(), "test", []orphanCandidate{a, b, c}, live, q)
+	got := runctl.RecoverOrphans(context.Background(), "test", []runctl.Orphan{a, b, c}, live, q)
 
 	if got != 2 {
 		t.Errorf("recovered = %d, want 2", got)
@@ -104,7 +105,7 @@ func TestRecoverOrphans_LeavesASessionWhoseLivenessIsUnknown(t *testing.T) {
 	q := &recordingQueue{}
 	live := &fakeLiveness{broken: map[string]bool{"b": true}}
 
-	got := recoverOrphans(context.Background(), "test", []orphanCandidate{a, b}, live, q)
+	got := runctl.RecoverOrphans(context.Background(), "test", []runctl.Orphan{a, b}, live, q)
 
 	if ids := q.enqueuedSessions(); got != 1 || len(ids) != 1 || ids[0] != a.SessionID {
 		t.Errorf("recovered %d, enqueued %v: want only a", got, ids)
@@ -115,7 +116,7 @@ func TestRecoverOrphans_ContinuesPastAFailedEnqueue(t *testing.T) {
 	a, b := candidate("a"), candidate("b")
 	q := &recordingQueue{failFor: map[uuid.UUID]bool{a.SessionID: true}}
 
-	got := recoverOrphans(context.Background(), "test", []orphanCandidate{a, b}, &fakeLiveness{}, q)
+	got := runctl.RecoverOrphans(context.Background(), "test", []runctl.Orphan{a, b}, &fakeLiveness{}, q)
 
 	if ids := q.enqueuedSessions(); got != 1 || len(ids) != 1 || ids[0] != b.SessionID {
 		t.Errorf("recovered %d, enqueued %v: a failed enqueue must not stop the sweep", got, ids)
@@ -137,12 +138,12 @@ func TestStartOrphanRecovery_RechecksOnceAfterTheDelay(t *testing.T) {
 	orphan := candidate("dead-workers-session")
 	q := &recordingQueue{}
 	var lists atomic.Int32
-	list := func(context.Context) ([]orphanCandidate, error) {
+	list := func(context.Context) ([]runctl.Orphan, error) {
 		lists.Add(1)
-		return []orphanCandidate{orphan}, nil
+		return []runctl.Orphan{orphan}, nil
 	}
 
-	startOrphanRecovery(context.Background(), list, &expiresAfterFirstCheck{}, q, 20*time.Millisecond)
+	runctl.StartRecovery(context.Background(), list, &expiresAfterFirstCheck{}, q, 20*time.Millisecond)
 
 	if ids := q.enqueuedSessions(); len(ids) != 0 {
 		t.Fatalf("the startup sweep enqueued %v for a session whose lock was still held", ids)
@@ -163,12 +164,12 @@ func TestStartOrphanRecovery_RechecksOnceAfterTheDelay(t *testing.T) {
 
 func TestStartOrphanRecovery_NoRecheckOnceTheContextIsCancelled(t *testing.T) {
 	var lists atomic.Int32
-	list := func(context.Context) ([]orphanCandidate, error) {
+	list := func(context.Context) ([]runctl.Orphan, error) {
 		lists.Add(1)
 		return nil, nil
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	startOrphanRecovery(ctx, list, &fakeLiveness{}, &recordingQueue{}, 30*time.Millisecond)
+	runctl.StartRecovery(ctx, list, &fakeLiveness{}, &recordingQueue{}, 30*time.Millisecond)
 	cancel() // shutdown before the recheck is due
 
 	time.Sleep(120 * time.Millisecond)

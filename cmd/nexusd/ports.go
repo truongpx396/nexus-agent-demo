@@ -8,6 +8,7 @@ import (
 	"iter"
 
 	delegatepg "github.com/truongpx396/nexus-agent-demo/internal/delegate/postgres"
+	"github.com/truongpx396/nexus-agent-demo/internal/runs"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -22,7 +23,6 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/retrieval"
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
 	"github.com/truongpx396/nexus-agent-demo/internal/skills"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
 	"github.com/truongpx396/nexus-agent-demo/internal/teams"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools/builtin"
@@ -57,9 +57,9 @@ func onSuspendFunc(approvals *oversight.Approvals) postgres.OnSuspend {
 	}
 }
 
-// onDelegateFunc adapts internal/delegate.Delegations.Bind to the Postgres
-// event log's delegate hook. kernel itself never sees internal/delegate.
-func onDelegateFunc(delegations *delegate.Delegations) postgres.OnDelegate {
+// onDelegateFunc adapts internal/delegate/postgres.Bind to the Postgres event
+// log's delegate hook. kernel itself never sees internal/delegate.
+func onDelegateFunc() postgres.OnDelegate {
 	return func(ctx context.Context, tx pgx.Tx, req kernel.DelegateSuspendRequest) error {
 		return delegatepg.Bind(ctx, tx, req.ChildSessionID, req.ToolUseEventID)
 	}
@@ -247,10 +247,13 @@ func (p *nexusdRunCtlPort) Fork(ctx context.Context, tenantID, sessionID uuid.UU
 // without importing it directly, exactly mirroring kernelRunStarter's own
 // role for kernel.Kernel.Run.
 type nexusdOversightPort struct {
-	approvals   *oversight.Approvals
-	resumer     *oversight.Resumer
-	delegations *delegate.Delegations
-	teams       *teams.Service
+	approvals *oversight.Approvals
+	resumer   *oversight.Resumer
+	// settled is told when an approval's resume leaves a session as far along
+	// as it will go (runctl.Control.NotifySettled).
+	settled interface {
+		NotifySettled(ctx context.Context, tenantID, sessionID uuid.UUID)
+	}
 }
 
 func (p *nexusdOversightPort) GetApproval(ctx context.Context, tenantID, approvalID uuid.UUID) (rest.ApprovalView, error) {
@@ -299,10 +302,10 @@ func (p *nexusdOversightPort) Deny(ctx context.Context, tenantID, approvalID uui
 	return out
 }
 
-// onResumed is README task 8.10's other resume-path hook: a session an
-// ordinary tool approval just resumed may ALSO be a delegation's child —
-// OnChildTerminal is a documented no-op unless it is (the overwhelming
-// majority of approval decisions resolve an ordinary root run).
+// onResumed is the approval path's counterpart of the queue worker's: a
+// session an ordinary tool approval just resumed may ALSO be a delegation's
+// child (README task 8.10) or a team member (task 9.9). Whoever cares is a
+// runctl.SettledObserver, so this neither names nor imports them.
 func (p *nexusdOversightPort) onResumed(ctx context.Context, tenantID uuid.UUID, out rest.ResumeOutcome) {
 	if out.Err != "" || out.SessionID == "" {
 		return
@@ -311,19 +314,7 @@ func (p *nexusdOversightPort) onResumed(ctx context.Context, tenantID uuid.UUID,
 	if err != nil {
 		return
 	}
-	if p.delegations != nil {
-		if err := p.delegations.OnChildTerminal(ctx, tenantID, sessionID); err != nil {
-			log.Error().Err(err).Any("session_id", sessionID).Msg("nexusd: resolve delegation after approval-resumed child failed")
-		}
-	}
-	// An approval-resumed session may ALSO be a team member (README task
-	// 9.9) — OnMemberTerminal is a documented no-op unless it is, mirroring
-	// OnChildTerminal's own call just above.
-	if p.teams != nil {
-		if err := p.teams.OnMemberTerminal(ctx, tenantID, sessionID); err != nil {
-			log.Error().Err(err).Any("session_id", sessionID).Msg("nexusd: resolve team after approval-resumed member failed")
-		}
-	}
+	p.settled.NotifySettled(ctx, tenantID, sessionID)
 }
 
 // drainResume fully consumes a Kernel.Resume generator — the same
@@ -347,19 +338,14 @@ func drainResume(events iter.Seq2[eventlog.Event, error]) rest.ResumeOutcome {
 }
 
 // nexusdSessionLookup implements builtin.SessionUserLookup — the one place
-// platform/connector_fetch re-derives WHO is calling from the durable
-// session row rather than trusting a client-claimed identity.
-type nexusdSessionLookup struct{ store *store.Store }
+// platform/connector_fetch re-derives WHO is calling from the durable session
+// rather than trusting a client-claimed identity.
+type nexusdSessionLookup struct{ reader runs.Reader }
 
 func (l nexusdSessionLookup) UserIDForSession(ctx context.Context, tenantID, sessionID uuid.UUID) (uuid.UUID, error) {
-	var userID uuid.UUID
-	err := l.store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		sess, err := store.GetSession(ctx, tx, sessionID)
-		if err != nil {
-			return err
-		}
-		userID = sess.UserID
-		return nil
-	})
-	return userID, err
+	run, err := l.reader.GetRun(ctx, tenantID, sessionID)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return run.UserID, nil
 }

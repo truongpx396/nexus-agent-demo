@@ -166,7 +166,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	// deliveryID is the inbound provider's own Message-ID — the
 	// provider-native id ClaimDelivery dedupes a redelivered message
 	// against. May legitimately be empty for some inbound-parse providers;
-	// store.ClaimInboundDelivery's own documented empty-string behavior
+	// the inbound-delivery dedup's own documented empty-string behavior
 	// (always claims, never dedupes) applies in that case.
 	deliveryID := msg.MessageID
 

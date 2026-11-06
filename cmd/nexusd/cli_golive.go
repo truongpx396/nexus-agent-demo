@@ -53,7 +53,7 @@ func runGoLive(ctx context.Context, args []string) error {
 	// Item 1: attributable audit log.
 	signer := audit.NewSignerClient(envOr("NEXUS_SIGNERD_SOCKET", defaultSignerdSocket))
 	chain := auditpg.NewChain(signer)
-	tenantIDs, err := listTenantIDs(ctx)
+	tenantIDs, err := tenantDirectory().ListTenantIDs(ctx)
 	if err != nil {
 		return fmt.Errorf("list tenants: %w", err)
 	}

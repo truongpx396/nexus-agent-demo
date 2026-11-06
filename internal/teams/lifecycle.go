@@ -300,3 +300,10 @@ func (s *Service) SweepBackstop(ctx context.Context, tenantID uuid.UUID, backsto
 	}
 	return nil
 }
+
+// OnSessionSettled implements runctl.SettledObserver: a session a worker just
+// drove as far as it would go may be a team member, so it resolves the team. It
+// is OnMemberTerminal, a no-op for every session that is not one.
+func (s *Service) OnSessionSettled(ctx context.Context, tenantID, sessionID uuid.UUID) error {
+	return s.OnMemberTerminal(ctx, tenantID, sessionID)
+}

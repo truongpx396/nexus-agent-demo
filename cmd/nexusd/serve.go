@@ -224,9 +224,9 @@ func serve(ctx context.Context) error {
 		Tools:    kerneladapter.PipelineExecutor{Pipeline: pipeline}, // real tool pipeline, Phase 3
 		Budget:   gate,                                               // real reserve-then-reconcile cost gate, Phase 4
 		Log: postgres.New(st, postgres.Hooks{
-			Receipt:  chainReceiptFunc(chain),     // hash-chained audit receipts, Phase 5 task 5.2
-			Suspend:  onSuspendFunc(approvals),    // durably record an approval on every suspend, Phase 5 task 5.6
-			Delegate: onDelegateFunc(delegations), // bind a delegation to its gating tool_use, Phase 8 task 8.10
+			Receipt:  chainReceiptFunc(chain),  // hash-chained audit receipts, Phase 5 task 5.2
+			Suspend:  onSuspendFunc(approvals), // durably record an approval on every suspend, Phase 5 task 5.6
+			Delegate: onDelegateFunc(),         // bind a delegation to its gating tool_use, Phase 8 task 8.10
 		}),
 		Stuck:        reliability.NewRegistry(stuckDetectionWindow),   // README task 6.8
 		Tracer:       spanExp,                                         // per-run/per-turn/per-tool-call spans, docs/local-llm.md
@@ -267,6 +267,8 @@ func serve(ctx context.Context) error {
 		Store: runctlpg.New(st, keyStore, chain), Approvals: approvals, Inputs: inputs, Kernel: k,
 		System: starter.system, Catalog: catalog, MaxTurns: starter.maxTurns, CatalogManifestDigest: catalogManifestDigest,
 		Queue: queuePort,
+		// Who is told a session settled: a delegation's parent, a team.
+		Observers: []runctl.SettledObserver{delegations, teamsSvc},
 	}
 
 	// teamsSvc.Wire's own doc comment: must land before the first real
@@ -298,7 +300,7 @@ func serve(ctx context.Context) error {
 	// may execute on a different process (internal/queue's worker pool)
 	// than whichever process holds the client's own SSE connection.
 	srv.Bus = redisEventBus{client: redisClient}
-	srv.Oversight = &nexusdOversightPort{approvals: approvals, resumer: resumer, delegations: delegations, teams: teamsSvc}
+	srv.Oversight = &nexusdOversightPort{approvals: approvals, resumer: resumer, settled: ctl}
 	srv.Grants = grants
 	srv.RunCtl = &nexusdRunCtlPort{ctl: ctl}
 	srv.Skills = &nexusdSkillSetPort{config: cfgStore, bundles: admittedSkillBundles}
@@ -338,16 +340,16 @@ func serve(ctx context.Context) error {
 		}
 	}
 
-	stopAnchor := startAnchorLoop(ctx, st, chain)
+	stopAnchor := startAnchorLoop(ctx, tenantDirectory(), auditpg.Scoped{St: st, Chain: chain})
 	defer stopAnchor()
 
-	stopTeamBackstop := startTeamBackstopLoop(ctx, teamsSvc)
+	stopTeamBackstop := startTeamBackstopLoop(ctx, tenantDirectory(), teamsSvc)
 	defer stopTeamBackstop()
 
-	stopIdleConversationSweep := startIdleConversationSweepLoop(ctx, st, ctl)
+	stopIdleConversationSweep := startIdleConversationSweepLoop(ctx, tenantDirectory(), ctl)
 	defer stopIdleConversationSweep()
 
-	stopWorkers := startQueueWorkers(ctx, st, redisClient, queuePort, srv, ctl, delegations, teamsSvc)
+	stopWorkers := startQueueWorkers(ctx, redisClient, queuePort, srv, ctl)
 	defer stopWorkers()
 
 	stopEventBus := startEventBus(ctx, redisClient, srv)
@@ -355,7 +357,7 @@ func serve(ctx context.Context) error {
 
 	// Phase 11: four more thin surfaces over the same kernel (README §11) —
 	// each starts runs through the one starter every surface shares.
-	channels := &MessagingChannels{Store: st, Keys: keyStore}
+	channels := surfpg.NewChannels(st, keyStore)
 	outbox := &surfaces.Outbox{Ledger: surfpg.NewLedger(st, keyStore, chain)}
 
 	// Starter and Resume are the same two values for all three chat surfaces,
@@ -378,7 +380,7 @@ func serve(ctx context.Context) error {
 		Lock:      sessionLock,
 	}
 	emailSrv := &email.Server{
-		Reader: runReader, Dedup: inboundDedup, Launcher: launcher, Resume: resume, Channels: channels,
+		Reader: runReader, Dedup: inboundDedup, Launcher: launcher, Resume: resume, Channels: emailChannels{channels},
 		Outbox:    outbox,
 		RateLimit: email.NewRateLimiter(20, time.Minute),
 		Lock:      sessionLock,
@@ -443,7 +445,7 @@ func serve(ctx context.Context) error {
 // constructed with no config at all"), reconciled against
 // deploy/docker-compose.yml's own PgBouncer service (DEFAULT_POOL_SIZE=20,
 // MAX_CLIENT_CONN=200) — this is the only client pool that dials THROUGH
-// PgBouncer (the admin pools startQueueWorkers/listTenantIDs/etc. construct
+// PgBouncer (the admin pools startQueueWorkers/tenantDirectory/etc. construct
 // connect directly to Postgres, bypassing it entirely), so its own ceiling
 // is what actually has to fit under that budget alongside every other
 // process sharing the same PgBouncer instance.

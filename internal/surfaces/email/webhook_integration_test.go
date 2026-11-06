@@ -95,7 +95,7 @@ func insertTestTenant(t *testing.T, s *store.Store, tenantID uuid.UUID) {
 func newEmailWebhookBody(t *testing.T, from, textBody string) []byte {
 	t.Helper()
 	// No message_id — matches every pre-delivery-dedup test fixture in this
-	// file: store.ClaimInboundDelivery's own documented empty-string
+	// file: the inbound-delivery dedup's own documented empty-string
 	// behavior (always claims, never dedupes) means these keep passing
 	// unmodified. Only a test that specifically exercises dedup needs a
 	// real, distinct MessageID (newEmailWebhookBodyWithMessageID).

@@ -1,6 +1,6 @@
 //go:build integration
 
-package store
+package postgres
 
 import (
 	"context"
@@ -15,6 +15,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
+	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/migrations"
 )
 
@@ -58,7 +59,7 @@ func setupInboundDeliveryEnv(t *testing.T) *pgxpool.Pool {
 		t.Fatalf("connect as migration role: %v", err)
 	}
 	defer migratePool.Close()
-	if _, err := Migrate(ctx, migratePool, migrations.FS); err != nil {
+	if _, err := store.Migrate(ctx, migratePool, migrations.FS); err != nil {
 		t.Fatalf("apply migrations: %v", err)
 	}
 
@@ -77,7 +78,7 @@ func setupInboundDeliveryEnv(t *testing.T) *pgxpool.Pool {
 // see a second claim, no matter how many times it retries.
 func TestClaimInboundDelivery_FirstCallerClaimsLaterCallersDoNot(t *testing.T) {
 	pool := setupInboundDeliveryEnv(t)
-	s := New(pool)
+	s := store.New(pool)
 	tenantID := uuid.New()
 	if err := s.InTenantTx(context.Background(), tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `INSERT INTO tenants (tenant_id, name) VALUES ($1, 'inbound-delivery-test')`, tenantID)
@@ -91,7 +92,7 @@ func TestClaimInboundDelivery_FirstCallerClaimsLaterCallersDoNot(t *testing.T) {
 		var claimed bool
 		if err := s.InTenantTx(context.Background(), tenantID, func(ctx context.Context, tx pgx.Tx) error {
 			var err error
-			claimed, err = ClaimInboundDelivery(ctx, tx, tenantID, "telegram", "update-1", "telegram:999")
+			claimed, err = claimInboundDelivery(ctx, tx, tenantID, "telegram", "update-1", "telegram:999")
 			return err
 		}); err != nil {
 			t.Fatalf("claim attempt %d: %v", i, err)
@@ -109,7 +110,7 @@ func TestClaimInboundDelivery_FirstCallerClaimsLaterCallersDoNot(t *testing.T) {
 	var claimedOther bool
 	if err := s.InTenantTx(context.Background(), tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
-		claimedOther, err = ClaimInboundDelivery(ctx, tx, tenantID, "telegram", "update-2", "telegram:999")
+		claimedOther, err = claimInboundDelivery(ctx, tx, tenantID, "telegram", "update-2", "telegram:999")
 		return err
 	}); err != nil {
 		t.Fatalf("claim different delivery: %v", err)
@@ -125,7 +126,7 @@ func TestClaimInboundDelivery_FirstCallerClaimsLaterCallersDoNot(t *testing.T) {
 // never silently collide on the empty string.
 func TestClaimInboundDelivery_EmptyDeliveryIDNeverDedupes(t *testing.T) {
 	pool := setupInboundDeliveryEnv(t)
-	s := New(pool)
+	s := store.New(pool)
 	tenantID := uuid.New()
 	if err := s.InTenantTx(context.Background(), tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `INSERT INTO tenants (tenant_id, name) VALUES ($1, 'inbound-delivery-test')`, tenantID)
@@ -138,7 +139,7 @@ func TestClaimInboundDelivery_EmptyDeliveryIDNeverDedupes(t *testing.T) {
 		var claimed bool
 		if err := s.InTenantTx(context.Background(), tenantID, func(ctx context.Context, tx pgx.Tx) error {
 			var err error
-			claimed, err = ClaimInboundDelivery(ctx, tx, tenantID, "zalo", "", "zalo:abc")
+			claimed, err = claimInboundDelivery(ctx, tx, tenantID, "zalo", "", "zalo:abc")
 			return err
 		}); err != nil {
 			t.Fatalf("claim attempt %d: %v", i, err)
@@ -155,7 +156,7 @@ func TestClaimInboundDelivery_EmptyDeliveryIDNeverDedupes(t *testing.T) {
 // never both claim it.
 func TestClaimInboundDelivery_ConcurrentCallersExactlyOneWins(t *testing.T) {
 	pool := setupInboundDeliveryEnv(t)
-	s := New(pool)
+	s := store.New(pool)
 	tenantID := uuid.New()
 	if err := s.InTenantTx(context.Background(), tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `INSERT INTO tenants (tenant_id, name) VALUES ($1, 'inbound-delivery-test')`, tenantID)
@@ -175,7 +176,7 @@ func TestClaimInboundDelivery_ConcurrentCallersExactlyOneWins(t *testing.T) {
 			var claimed bool
 			if err := s.InTenantTx(context.Background(), tenantID, func(ctx context.Context, tx pgx.Tx) error {
 				var err error
-				claimed, err = ClaimInboundDelivery(ctx, tx, tenantID, "telegram", "racing-update", "telegram:999")
+				claimed, err = claimInboundDelivery(ctx, tx, tenantID, "telegram", "racing-update", "telegram:999")
 				return err
 			}); err != nil {
 				t.Errorf("claim: %v", err)

@@ -27,6 +27,9 @@ type fakeStore struct {
 	events   []appended
 	minted   int // data keys minted
 
+	history     map[uuid.UUID][]eventlog.Event // what ListEvents returns, per session
+	checkpoints []runctl.Checkpoint
+
 	failAppend error // makes every Append fail
 }
 
@@ -38,22 +41,24 @@ type appended struct {
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{sessions: map[uuid.UUID]eventlog.Session{}, claims: map[uuid.UUID]runctl.Claim{}}
+	return &fakeStore{sessions: map[uuid.UUID]eventlog.Session{}, claims: map[uuid.UUID]runctl.Claim{}, history: map[uuid.UUID][]eventlog.Event{}}
 }
 
 var _ runctl.Store = (*fakeStore)(nil)
 
 type snapshot struct {
-	sessions map[uuid.UUID]eventlog.Session
-	claims   map[uuid.UUID]runctl.Claim
-	events   []appended
-	minted   int
+	sessions    map[uuid.UUID]eventlog.Session
+	claims      map[uuid.UUID]runctl.Claim
+	events      []appended
+	minted      int
+	checkpoints []runctl.Checkpoint
 }
 
 func (f *fakeStore) snap() snapshot {
 	s := snapshot{
 		sessions: map[uuid.UUID]eventlog.Session{}, claims: map[uuid.UUID]runctl.Claim{},
 		events: append([]appended(nil), f.events...), minted: f.minted,
+		checkpoints: append([]runctl.Checkpoint(nil), f.checkpoints...),
 	}
 	for k, v := range f.sessions {
 		s.sessions[k] = v
@@ -69,7 +74,7 @@ func (f *fakeStore) InTenant(ctx context.Context, _ uuid.UUID, fn func(ctx conte
 	defer f.mu.Unlock()
 	before := f.snap()
 	if err := fn(ctx, &fakeTx{f: f}); err != nil {
-		f.sessions, f.claims, f.events, f.minted = before.sessions, before.claims, before.events, before.minted
+		f.sessions, f.claims, f.events, f.minted, f.checkpoints = before.sessions, before.claims, before.events, before.minted, before.checkpoints
 		return err
 	}
 	return nil
@@ -126,7 +131,9 @@ func (t *fakeTx) SetSessionStatus(_ context.Context, id uuid.UUID, status string
 	return nil
 }
 
-func (t *fakeTx) ListEvents(context.Context, uuid.UUID) ([]eventlog.Event, error) { return nil, nil }
+func (t *fakeTx) ListEvents(_ context.Context, id uuid.UUID) ([]eventlog.Event, error) {
+	return t.f.history[id], nil
+}
 
 func (t *fakeTx) NewDEK(context.Context, uuid.UUID) (crypto.DEK, error) {
 	t.f.minted++
@@ -184,6 +191,31 @@ func (t *fakeTx) SetAutonomyLevel(_ context.Context, id uuid.UUID, level string)
 	s.AutonomyLevel = level
 	t.f.sessions[id] = s
 	return nil
+}
+
+func (t *fakeTx) SaveCheckpoint(_ context.Context, c runctl.Checkpoint) (runctl.Checkpoint, error) {
+	c.CheckpointID, c.CreatedAt = uuid.New(), time.Now()
+	t.f.checkpoints = append(t.f.checkpoints, c)
+	return c, nil
+}
+
+func (t *fakeTx) LatestCheckpoint(_ context.Context, id uuid.UUID) (runctl.Checkpoint, bool, error) {
+	for i := len(t.f.checkpoints) - 1; i >= 0; i-- {
+		if t.f.checkpoints[i].SessionID == id {
+			return t.f.checkpoints[i], true, nil
+		}
+	}
+	return runctl.Checkpoint{}, false, nil
+}
+
+func (t *fakeTx) ListStaleAwaitingInput(_ context.Context, olderThan time.Time) ([]uuid.UUID, error) {
+	var out []uuid.UUID
+	for id, s := range t.f.sessions {
+		if s.Status == eventlog.SessionStatusAwaitingInput && s.UpdatedAt.Before(olderThan) {
+			out = append(out, id)
+		}
+	}
+	return out, nil
 }
 
 // fakeQueue records enqueued jobs.

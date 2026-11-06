@@ -48,4 +48,8 @@ type Control struct {
 	// parent's digest exactly (never "diverged" merely because two
 	// unrelated call sites computed it differently).
 	CatalogManifestDigest []byte
+
+	// Observers are told, through NotifySettled, when a worker has driven a
+	// session as far as it will go. Nil is valid: nobody is watching.
+	Observers []SettledObserver
 }

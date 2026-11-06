@@ -6,7 +6,6 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/contentaccess"
@@ -74,17 +73,14 @@ func (a *nexusdBudgetBackend) ReportCost(ctx context.Context, req controlplane.R
 	return a.gate.ReconcileUsage(ctx, res, req.InputUncached, req.InputCacheRead, req.InputCacheWrite, req.OutputTokens, req.Reported)
 }
 
-// nexusdAuditBackend implements controlplane.AuditBackend.
+// nexusdAuditBackend implements controlplane.AuditBackend over the scoped
+// audit chain.
 type nexusdAuditBackend struct {
-	store *store.Store
-	chain *auditpg.Chain
+	audit auditpg.Scoped
 }
 
 func (a *nexusdAuditBackend) EmitReceipt(ctx context.Context, req controlplane.EmitAuditReceiptV1) error {
-	return a.store.InTenantTx(ctx, req.TenantID, func(ctx context.Context, tx pgx.Tx) error {
-		_, err := a.chain.Append(ctx, tx, req.TenantID, req.SessionID, req.Seq, req.EventID, req.EventType, req.PayloadDigest)
-		return err
-	})
+	return a.audit.EmitReceipt(ctx, req.TenantID, req.SessionID, req.Seq, req.EventID, req.EventType, req.PayloadDigest)
 }
 
 // nexusdApprovalBackend implements controlplane.ApprovalBackend.
@@ -125,7 +121,7 @@ func newControlPlane(st *store.Store, gate *cost.Gate, chain *auditpg.Chain, app
 	return controlplane.NewLocalPort(
 		runspg.Sessions{Store: st},
 		newNexusdBudgetBackend(gate),
-		&nexusdAuditBackend{store: st, chain: chain},
+		&nexusdAuditBackend{audit: auditpg.Scoped{St: st, Chain: chain}},
 		&nexusdApprovalBackend{approvals: approvals},
 		&nexusdContentAccessBackend{grants: grants},
 	)

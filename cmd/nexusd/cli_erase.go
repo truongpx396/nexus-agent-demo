@@ -87,7 +87,7 @@ func runErase(ctx context.Context, args []string) error {
 	// A session's tenant isn't known up front from the id alone — and pool
 	// connects as nexus_app, RLS-restricted to whatever app.tenant_id the
 	// CURRENT transaction set, which is nothing yet (same reason
-	// listTenantIDs above connects as the admin superuser instead of
+	// tenantDirectory connects as the admin superuser instead of
 	// through st): resolving "which tenant owns this session" is
 	// necessarily a cross-tenant admin lookup, done here the same way.
 	adminDSN := envOr("NEXUS_ADMIN_DATABASE_URL", envOr("NEXUS_MIGRATE_DATABASE_URL", defaultMigrateDSN))

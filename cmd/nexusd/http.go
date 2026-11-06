@@ -35,7 +35,7 @@ const metricsStaleClaimAfter = 15 * time.Minute
 
 func handleMetrics(reports reporting.Reports) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		tenantIDs, err := listTenantIDs(r.Context())
+		tenantIDs, err := tenantDirectory().ListTenantIDs(r.Context())
 		if err != nil {
 			http.Error(w, "list tenants: "+err.Error(), http.StatusInternalServerError)
 			return

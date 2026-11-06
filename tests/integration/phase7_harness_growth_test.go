@@ -308,7 +308,7 @@ func TestOutbox_FailsPermanentlyAfterCapAndNeverSendsAgain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query delivery status: %v", err)
 	}
-	if status != string(store.DeliveryFailedPermanent) {
+	if status != string(surfaces.DeliveryFailedPermanent) {
 		t.Fatalf("delivery status = %q after %d attempts, want failed_permanent", status, 3)
 	}
 
@@ -323,10 +323,7 @@ func TestOutbox_FailsPermanentlyAfterCapAndNeverSendsAgain(t *testing.T) {
 	// A different (session, seq) that was never attempted stays pending —
 	// distinguishable from this one's failed_permanent (task 7.14's own
 	// wording).
-	if err := rig.st.InTenantTx(ctx, rig.tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		_, _, err := store.OpenOrFindDelivery(ctx, tx, rig.tenantID, sessionID, 2, "rest", "operator")
-		return err
-	}); err != nil {
+	if _, err := ob.Ledger.Open(ctx, rig.tenantID, sessionID, 2, "rest", "operator"); err != nil {
 		t.Fatalf("open a fresh delivery: %v", err)
 	}
 	var pendingStatus string
@@ -336,7 +333,7 @@ func TestOutbox_FailsPermanentlyAfterCapAndNeverSendsAgain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query fresh delivery status: %v", err)
 	}
-	if pendingStatus != string(store.DeliveryPending) {
+	if pendingStatus != string(surfaces.DeliveryPending) {
 		t.Fatalf("fresh delivery status = %q, want pending", pendingStatus)
 	}
 }
