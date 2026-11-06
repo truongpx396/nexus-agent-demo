@@ -240,10 +240,21 @@ func (r *phase6Rig) seedOneEvent(t *testing.T, sessionID uuid.UUID, sealFn kerne
 }
 
 func (r *phase6Rig) control(k *kernel.Kernel, approvals *oversight.Approvals, inputs *oversight.Inputs) *runctl.Control {
-	return &runctl.Control{
-		Store: runctlpg.New(r.st, r.keys, r.chain), Approvals: approvals, Inputs: inputs, Kernel: k,
+	c := &runctl.Control{
+		Store: runctlpg.New(r.st, r.keys, r.chain), Kernel: k,
 		System: "test", MaxTurns: 20,
 	}
+	// Assign only what the test wired. Control.Approvals and Control.Inputs are
+	// interfaces, and a nil *oversight.Inputs stored in one is a NON-nil interface
+	// wrapping a nil pointer, which defeats the "nil means unwired" check and
+	// panics on the first call.
+	if approvals != nil {
+		c.Approvals = approvals
+	}
+	if inputs != nil {
+		c.Inputs = inputs
+	}
+	return c
 }
 
 // newReadPipeline builds a Pipeline whose one tool is the REAL builtin

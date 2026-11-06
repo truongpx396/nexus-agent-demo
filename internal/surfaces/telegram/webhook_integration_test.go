@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -564,7 +566,7 @@ func TestHandleWebhook_ContendedSessionLockDropsDeliveryWithoutStartingARun(t *t
 // Starter standing in for the kernel.
 func newLauncher(st *store.Store, ks *cryptopg.KeyStore, starter runs.Starter) *runs.Service {
 	return &runs.Service{
-		Admit:   controlplane.NewLocalPort(runspg.Sessions{Store: st}, nil, nil, nil, nil),
+		Admit:   controlplane.NewLocalPort(runspg.Sessions{Store: st, Budgets: costpg.CreateBudget}, nil, nil, nil, nil),
 		Keys:    runspg.Keys{Store: st, KeyStore: ks},
 		Starter: starter,
 	}

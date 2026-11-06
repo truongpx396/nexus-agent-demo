@@ -84,7 +84,7 @@ func TestPlan_ZeroTokenRouting(t *testing.T) {
 		Log:      postgres.New(r.st, postgres.Hooks{Receipt: r.receiptFunc()}),
 	}
 	exec := &plan.Executor{Kernel: k, System: "test", MaxTurns: 10}
-	exec.Store = planpg.New(r.st, r.keys, r.chain)
+	exec.Store = planpg.New(r.st, r.keys, r.chain, delegatepg.CreateEnvelope)
 
 	p := plan.Plan{
 		Name: "zero-token-routing", StartStep: "start",
@@ -101,7 +101,7 @@ func TestPlan_ZeroTokenRouting(t *testing.T) {
 		t.Fatalf("Validate: %v", err)
 	}
 
-	lc := &plan.Lifecycle{Store: planpg.New(r.st, r.keys, r.chain)}
+	lc := &plan.Lifecycle{Store: planpg.New(r.st, r.keys, r.chain, delegatepg.CreateEnvelope)}
 	created, err := lc.Create(context.Background(), r.tenantID, p, "test")
 	if err != nil {
 		t.Fatalf("Create: %v", err)

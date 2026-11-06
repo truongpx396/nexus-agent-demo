@@ -15,7 +15,6 @@ import (
 	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
-	delegatepg "github.com/truongpx396/nexus-agent-demo/internal/delegate/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/sealed"
 	"github.com/truongpx396/nexus-agent-demo/internal/plan"
@@ -25,28 +24,40 @@ import (
 
 // Store implements plan.Store over Postgres.
 type Store struct {
-	st     *store.Store
-	sealer *sealed.Sealer
+	st        *store.Store
+	sealer    *sealed.Sealer
+	envelopes EnvelopeWriter
 }
+
+// EnvelopeWriter creates a fan-out envelope row inside the caller's
+// transaction. The fanout_envelopes table belongs to internal/delegate, so the
+// implementation (delegate/postgres.CreateEnvelope) is injected rather than
+// imported: this adapter does not reach into another feature's adapter.
+type EnvelopeWriter func(ctx context.Context, tx pgx.Tx, tenantID, planSessionID uuid.UUID, ceiling cost.Money, childCount int) (uuid.UUID, error)
 
 var _ plan.Store = (*Store)(nil)
 
 // New returns a Store. keys seals each event under the session's own key; chain
 // may be nil, in which case events are appended without a signed receipt (a
-// minimal wiring for tests).
-func New(st *store.Store, keys *cryptopg.KeyStore, chain *auditpg.Chain) *Store {
-	return &Store{st: st, sealer: sealed.NewSealer(keys, chain)}
+// minimal wiring for tests). envelopes creates the fan-out envelope a plan's
+// parallel step reserves its budget in; nil means the plan has no fan-out step,
+// and CreateFanoutEnvelope then refuses.
+func New(st *store.Store, keys *cryptopg.KeyStore, chain *auditpg.Chain, envelopes EnvelopeWriter) *Store {
+	return &Store{st: st, sealer: sealed.NewSealer(keys, chain), envelopes: envelopes}
 }
 
 // InTenant implements plan.Store.
 func (s *Store) InTenant(ctx context.Context, tenantID uuid.UUID, fn func(ctx context.Context, tx plan.Tx) error) error {
 	return s.sealer.InTenant(ctx, s.st, tenantID, func(ctx context.Context, u *sealed.Unit) error {
-		return fn(ctx, &txn{Unit: u})
+		return fn(ctx, &txn{Unit: u, envelopes: s.envelopes})
 	})
 }
 
 // txn is the plan.Tx over one pgx transaction.
-type txn struct{ *sealed.Unit }
+type txn struct {
+	*sealed.Unit
+	envelopes EnvelopeWriter
+}
 
 var _ plan.Tx = (*txn)(nil)
 
@@ -55,7 +66,10 @@ func (t *txn) AppendFirst(ctx context.Context, tenantID, sessionID uuid.UUID, se
 }
 
 func (t *txn) CreateFanoutEnvelope(ctx context.Context, tenantID, planSessionID uuid.UUID, ceiling cost.Money, childCount int) (uuid.UUID, error) {
-	return delegatepg.CreateEnvelope(ctx, t.Tx(), tenantID, planSessionID, ceiling, childCount)
+	if t.envelopes == nil {
+		return uuid.Nil, errors.New("plan: a fan-out envelope was requested but no envelope writer is wired")
+	}
+	return t.envelopes(ctx, t.Tx(), tenantID, planSessionID, ceiling, childCount)
 }
 
 func nullIfEmpty(s string) *string {

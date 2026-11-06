@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sync"
 
+	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
+
 	"github.com/google/uuid"
 
 	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
@@ -119,7 +121,7 @@ func (a *nexusdContentAccessBackend) AuthorizeContentAccess(ctx context.Context,
 // internal/controlplane itself.
 func newControlPlane(st *store.Store, gate *cost.Gate, chain *auditpg.Chain, approvals *oversight.Approvals, grants *contentaccess.Grants) *controlplane.LocalPort {
 	return controlplane.NewLocalPort(
-		runspg.Sessions{Store: st},
+		runspg.Sessions{Store: st, Budgets: costpg.CreateBudget},
 		newNexusdBudgetBackend(gate),
 		&nexusdAuditBackend{audit: auditpg.Scoped{St: st, Chain: chain}},
 		&nexusdApprovalBackend{approvals: approvals},
