@@ -286,7 +286,7 @@ func (s *Server) resumeRun(ctx context.Context, tenantID, sessionID uuid.UUID, c
 }
 
 // drainAndNotify is publishUntilDone's Telegram-side counterpart
-// (internal/surfaces/rest/server.go): the only consumer of a run's event
+// (internal/runs/rest/run_create.go): the only consumer of a run's event
 // channel on this surface (fresh via startRun or resumed via resumeRun —
 // identical either way), delivering EventApprovalRequested AND
 // EventContent through the shared outbox — a human must actually see
@@ -322,7 +322,7 @@ func (s *Server) drainAndNotify(ctx context.Context, tenantID, sessionID uuid.UU
 // (kernel/events.go's contentPayload, appendEvent's own doc comment: the
 // channel this surface reads carries the durable, ciphertext Event, never
 // plaintext) — decrypted here the same way
-// internal/surfaces/rest/run_events.go's toEventDTO already does, the only
+// internal/runs/rest/run_events.go's toEventDTO already does, the only
 // other place in this codebase that decrypts a eventlog.Event outside the
 // kernel itself. A decrypt failure is logged and the event skipped, never
 // crashing the drain loop — this surface has no other way to surface that

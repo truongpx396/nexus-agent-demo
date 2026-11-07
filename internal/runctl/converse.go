@@ -29,7 +29,7 @@ import (
 func (c *Control) ResumeConversation(ctx context.Context, tenantID, sessionID uuid.UUID, input string) (eventlog.Event, error) {
 	var ev eventlog.Event
 	err := c.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
-		// Claim the session first, atomically (store.ClaimAwaitingInput):
+		// Claim the session first, atomically (Tx.ClaimAwaitingInput):
 		// of N concurrent callers (a REST steer, a webhook delivery) exactly
 		// one gets past here, so the human's message is appended and the
 		// continuation queued once, not once per caller.

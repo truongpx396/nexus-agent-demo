@@ -52,6 +52,12 @@ type Tx interface {
 	// reason.
 	SetDelegationResult(ctx context.Context, delegationID uuid.UUID, status Status, result json.RawMessage, reason string) error
 
+	// BindToolUse sets the parent_tool_use_event_id of the pending delegation
+	// naming childSessionID to the tool_use event that gates it. It is an error
+	// if there is no pending delegation for the child, because a suspension
+	// that gates on nothing would never be resumed.
+	BindToolUse(ctx context.Context, childSessionID, toolUseEventID uuid.UUID) error
+
 	// Resolvable reports whether the delegation naming childSessionID, if it has
 	// one, can be resolved: it is bound to its gating tool_use, or it is a
 	// fanout child (whose parent is a plan step rather than a tool_use). A

@@ -1,8 +1,8 @@
 import { Route, Routes } from "react-router-dom";
-import { Header } from "./components/Header";
-import { ChatPage } from "./pages/ChatPage";
-import { Approvals } from "./pages/Approvals";
-import { ApprovalDetail } from "./pages/ApprovalDetail";
+import { Header } from "./shared/ui/Header";
+import { ChatPage } from "./features/chat/ChatPage";
+import { Approvals } from "./features/approvals/Approvals";
+import { ApprovalDetail } from "./features/approvals/ApprovalDetail";
 
 export default function App() {
   return (

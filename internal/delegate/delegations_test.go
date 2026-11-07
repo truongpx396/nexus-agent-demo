@@ -264,3 +264,40 @@ func TestEnvelopeBudgetGate_AnUnreportedCallKeepsItsWholeReservation(t *testing.
 		t.Errorf("remaining = %d, want 4000: usage that was never reported is charged at the worst case", got)
 	}
 }
+
+func TestBindToolUse_BindsThePendingDelegationToTheGatingToolUse(t *testing.T) {
+	f := newFakeStore(t)
+	fanout := uuid.New() // a fanout child is seeded with no tool_use, so there is something to bind
+	_, child, dg := f.seedChild(t, eventlog.SessionStatusRunning, "", delegate.Delegation{FanoutID: &fanout})
+	if f.delegations[dg.DelegationID].ParentToolUseEventID != uuid.Nil {
+		t.Fatal("fixture should start unbound")
+	}
+	d := delegate.NewDelegations(f)
+
+	toolUse := uuid.New()
+	if err := d.BindToolUse(context.Background(), tenant, child.SessionID, toolUse); err != nil {
+		t.Fatalf("BindToolUse: %v", err)
+	}
+	if got := f.delegations[dg.DelegationID].ParentToolUseEventID; got != toolUse {
+		t.Errorf("ParentToolUseEventID = %s, want the gating tool_use %s", got, toolUse)
+	}
+}
+
+// A suspension that gates on nothing would never be resumed, so binding a child
+// that has no pending delegation is an error, not a silent no-op.
+func TestBindToolUse_RefusesWhenNoDelegationIsPending(t *testing.T) {
+	f := newFakeStore(t)
+	d := delegate.NewDelegations(f)
+
+	if err := d.BindToolUse(context.Background(), tenant, uuid.New(), uuid.New()); err == nil {
+		t.Fatal("BindToolUse for a child with no delegation succeeded")
+	}
+
+	_, child, dg := f.seedChild(t, eventlog.SessionStatusCompleted, "done", delegate.Delegation{})
+	resolved := f.delegations[dg.DelegationID]
+	resolved.Status = delegate.StatusReturned
+	f.delegations[dg.DelegationID] = resolved
+	if err := d.BindToolUse(context.Background(), tenant, child.SessionID, uuid.New()); err == nil {
+		t.Fatal("BindToolUse for an already-resolved delegation succeeded")
+	}
+}

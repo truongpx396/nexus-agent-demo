@@ -15,7 +15,7 @@ import "github.com/truongpx396/nexus-agent-demo/internal/surfaces/capability"
 // serves, so it can render structured approval context, accept structured
 // input, and stream events (via its own fetch-based SSE reader, since a
 // browser's native EventSource cannot carry the auth headers this API
-// requires — web/src/lib/sse.ts).
+// requires — web/src/features/chat/sse.ts).
 var Descriptor = capability.Descriptor{
 	SurfaceID:                "web",
 	PrincipalKind:            capability.PrincipalUser,

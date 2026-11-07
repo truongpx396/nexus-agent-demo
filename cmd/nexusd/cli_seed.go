@@ -14,6 +14,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
+	tenancypg "github.com/truongpx396/nexus-agent-demo/internal/tenancy/postgres"
 )
 
 func runSeed(ctx context.Context, args []string) error {
@@ -36,12 +37,7 @@ func runSeed(ctx context.Context, args []string) error {
 
 	s := store.New(pool)
 	err = s.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		_, err := tx.Exec(ctx,
-			`INSERT INTO tenants (tenant_id, name) VALUES ($1, $2)
-			 ON CONFLICT (tenant_id) DO NOTHING`,
-			tenantID, *tenantName,
-		)
-		return err
+		return tenancypg.Register(ctx, tx, tenantID, *tenantName)
 	})
 	if err != nil {
 		return fmt.Errorf("seed tenant: %w", err)

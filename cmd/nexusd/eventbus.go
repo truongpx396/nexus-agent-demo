@@ -12,10 +12,10 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
 	"github.com/truongpx396/nexus-agent-demo/internal/runs"
-	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
+	runsrest "github.com/truongpx396/nexus-agent-demo/internal/runs/rest"
 )
 
-// redisEventBus adapts *redis.Client to rest.EventBus — a single Publish
+// redisEventBus adapts *redis.Client to runsrest.EventBus — a single Publish
 // call is all Redis Pub/Sub needs here; the consumer-group/XADD machinery
 // a durable job queue needs belongs to internal/queue, not this.
 type redisEventBus struct{ client *redis.Client }
@@ -25,7 +25,7 @@ func (b redisEventBus) Publish(ctx context.Context, channel string, payload []by
 }
 
 // startEventBus is this process's one static Redis Pub/Sub subscription,
-// covering every session at once (rest.PublishDelta/PublishEvent's own
+// covering every session at once (runsrest.PublishDelta/PublishEvent's own
 // "nexus:events:*"/"nexus:deltas:*" channel-naming convention) rather than
 // a per-session dynamic subscribe/unsubscribe mirroring rest's own
 // broker.subscribe/unsubscribe lifecycle: that would be the more
@@ -39,29 +39,29 @@ func (b redisEventBus) Publish(ctx context.Context, channel string, payload []by
 // same way internal/queue.AdmissionController's own doc comment defers
 // per-tenant fairness.
 //
-// This goroutine is the ONLY caller of rest.Server.RelayEvent/RelayDelta in
-// the whole binary: a same-process publish (rest.Server.Bus nil) and a
+// This goroutine is the ONLY caller of runsrest.Handler.RelayEvent/RelayDelta in
+// the whole binary: a same-process publish (runsrest.Handler.Bus nil) and a
 // genuinely cross-process worker's publish both get republished to Redis
 // and relayed back through here — one mechanism, not two.
-func startEventBus(ctx context.Context, redisClient *redis.Client, srv *rest.Server) (stop func()) {
+func startEventBus(ctx context.Context, redisClient *redis.Client, runsAPI *runsrest.Handler) (stop func()) {
 	sub := redisClient.PSubscribe(ctx, "nexus:events:*", "nexus:deltas:*")
 	go func() {
 		for msg := range sub.Channel() {
-			sessionID, isDelta, ok := rest.ParseBusChannel(msg.Channel)
+			sessionID, isDelta, ok := runsrest.ParseBusChannel(msg.Channel)
 			if !ok {
 				log.Warn().Str("channel", msg.Channel).Msg("nexusd: event bus: unrecognized channel")
 				continue
 			}
 			if isDelta {
-				var d rest.DeltaDTO
+				var d runsrest.DeltaDTO
 				if err := json.Unmarshal([]byte(msg.Payload), &d); err != nil {
 					log.Error().Err(err).Str("channel", msg.Channel).Msg("nexusd: event bus: unmarshal delta")
 					continue
 				}
-				srv.RelayDelta(sessionID, d)
+				runsAPI.RelayDelta(sessionID, d)
 				continue
 			}
-			var wire rest.EventBusMessage
+			var wire runsrest.EventBusMessage
 			if err := json.Unmarshal([]byte(msg.Payload), &wire); err != nil {
 				log.Error().Err(err).Str("channel", msg.Channel).Msg("nexusd: event bus: unmarshal event")
 				continue
@@ -71,7 +71,7 @@ func startEventBus(ctx context.Context, redisClient *redis.Client, srv *rest.Ser
 				evErr = errors.New(wire.Err)
 			}
 			if wire.Event != nil {
-				srv.RelayEvent(sessionID, *wire.Event, evErr)
+				runsAPI.RelayEvent(sessionID, *wire.Event, evErr)
 			}
 		}
 	}()
@@ -86,7 +86,7 @@ func startEventBus(ctx context.Context, redisClient *redis.Client, srv *rest.Ser
 // startEventBus's single per-process PSUBSCRIBE feeding its broker
 // directly, with Postgres history replay as a backstop for anything
 // published before a client subscribed. telegram/zalo/email have no
-// broker or replay of their own (surfaces_phase11.go's own doc comment:
+// broker or replay of their own (surfaces_wiring.go's own doc comment:
 // RunStarter/Resumer's contract has always been "the returned channel
 // carries every event of the run, closed when it ends") — this is their
 // one-subscription-per-run equivalent, so that contract still holds now
@@ -110,7 +110,7 @@ func startEventBus(ctx context.Context, redisClient *redis.Client, srv *rest.Ser
 // to a terminal event or error) already triggers this internally and
 // calling it again is a harmless no-op.
 func subscribeRunEvents(ctx context.Context, redisClient *redis.Client, sessionID uuid.UUID) (events <-chan runs.Event, cancel func()) {
-	sub := redisClient.Subscribe(ctx, rest.EventsChannel(sessionID))
+	sub := redisClient.Subscribe(ctx, runsrest.EventsChannel(sessionID))
 	if _, err := sub.Receive(ctx); err != nil {
 		log.Error().Err(err).Any("session_id", sessionID).Msg("nexusd: subscribe to run events")
 	}
@@ -119,7 +119,7 @@ func subscribeRunEvents(ctx context.Context, redisClient *redis.Client, sessionI
 		defer close(out)
 		defer func() { _ = sub.Close() }()
 		for msg := range sub.Channel() {
-			var wire rest.EventBusMessage
+			var wire runsrest.EventBusMessage
 			if err := json.Unmarshal([]byte(msg.Payload), &wire); err != nil {
 				log.Error().Err(err).Any("session_id", sessionID).Msg("nexusd: run events: unmarshal")
 				continue

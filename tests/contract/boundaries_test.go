@@ -68,6 +68,7 @@ var infraDeps = []string{
 	"github.com/moby",
 	"github.com/containerd",
 	"github.com/alibaba",
+	"golang.org/x/oauth2",
 }
 
 // noInfra is the rule for a package that is part of the core (a vocabulary, a
@@ -90,11 +91,10 @@ func noInfra(subject, pkg string) boundaryRule {
 func init() {
 	// The core and every feature package that is written against ports. Each is
 	// clean today; this is the ratchet that keeps it so. Deliberately absent:
-	//   - internal/connectors: its public API carries golang.org/x/oauth2 types
-	//     (the protocol library, not a store), so wrapping it is a redesign;
-	//   - internal/skills: ScriptTool's unsandboxed fallback runs os/exec;
 	//   - internal/sandbox: it IS the container adapter for tools.SandboxExec;
-	//   - the REST and MCP surfaces: HTTP is what a driving adapter is for.
+	//   - the REST and MCP surfaces: HTTP is what a driving adapter is for;
+	//   - internal/tools/builtin: the first-party tool catalog, whose shell and
+	//     web tools are the process and HTTP adapters the pipeline calls.
 	for _, s := range []struct{ subject, pkg string }{
 		{"the kernel", "kernel"},
 		{"telemetry vocabulary", "internal/obs"},
@@ -124,6 +124,11 @@ func init() {
 		{"the shared surface primitives", "internal/surfaces"},
 		{"content access grants", "internal/contentaccess"},
 		{"reporting", "internal/reporting"},
+		{"the connectors vault", "internal/connectors"},
+		{"skills", "internal/skills"},
+		{"the delegation tool", "internal/delegate/tool"},
+		{"the board tools", "internal/teams/tool"},
+		{"the retrieval tool", "internal/retrieval/tool"},
 	} {
 		rules = append(rules, noInfra(s.subject, s.pkg))
 	}
@@ -152,6 +157,53 @@ func init() {
 		{"reporting", "internal/reporting"},
 	} {
 		rules = append(rules, noStorage(s.subject, s.pkg))
+	}
+}
+
+func init() {
+	// Each feature's REST binding sits beside the feature (internal/<feature>/rest)
+	// and mounts through the kit in internal/surfaces/rest. A binding is a driving
+	// adapter: it may import its feature's use case and the kit, and nothing that
+	// stores or seals, so it translates HTTP and nothing more.
+	for _, s := range []struct {
+		subject, pkg string
+		// reachesKernel is true where the feature itself runs agent control
+		// flow (oversight resumes a run, runctl drives one), so the kernel is
+		// transitively linked and only a direct import is forbidden.
+		reachesKernel bool
+	}{
+		{"the run REST binding", "internal/runs/rest", false},
+		{"the content-access REST binding", "internal/contentaccess/rest", false},
+		{"the oversight REST binding", "internal/oversight/rest", true},
+		{"the run-control REST binding", "internal/runctl/rest", true},
+	} {
+		rules = append(rules,
+			noStorage(s.subject, s.pkg),
+			boundaryRule{
+				name: s.subject + " must not itself import internal/store, internal/crypto or a database/cache driver",
+				pkg:  modulePrefix + s.pkg,
+				forbidden: []string{
+					modulePrefix + "internal/store",
+					modulePrefix + "internal/crypto",
+					"github.com/jackc/pgx",
+					"github.com/redis",
+				},
+				direct: true,
+			},
+			boundaryRule{
+				name:      s.subject + " must not import the kernel directly",
+				pkg:       modulePrefix + s.pkg,
+				forbidden: []string{modulePrefix + "kernel"},
+				direct:    true,
+			},
+		)
+		if !s.reachesKernel {
+			rules = append(rules, boundaryRule{
+				name:      s.subject + " must not reach the kernel at all",
+				pkg:       modulePrefix + s.pkg,
+				forbidden: []string{modulePrefix + "kernel"},
+			})
+		}
 	}
 }
 

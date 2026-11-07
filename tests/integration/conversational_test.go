@@ -6,7 +6,7 @@
 // sessions" hack: a plain content reply pauses the session
 // (eventlog.SessionStatusAwaitingInput) instead of terminating it, and
 // POST /v1/runs/{id}/steer transparently resumes it in place
-// (internal/surfaces/rest/runctl.go's handleSteerRun) — same session_id,
+// (internal/runctl/rest/handler.go's handleSteerRun) — same session_id,
 // same audit trail, same cost ceiling, same Rule-of-Two taint state across
 // every turn. This file proves the whole stack: the kernel's own
 // pause/resume mechanics (isolated, driving kernel.Kernel directly — the
@@ -19,7 +19,6 @@ import (
 
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -37,9 +36,11 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
+	runctlrest "github.com/truongpx396/nexus-agent-demo/internal/runctl/rest"
 	runspg "github.com/truongpx396/nexus-agent-demo/internal/runs/postgres"
+	runsrest "github.com/truongpx396/nexus-agent-demo/internal/runs/rest"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
-	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
+	restkit "github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
 
@@ -614,54 +615,38 @@ func TestRunCtl_EndIdleConversation(t *testing.T) {
 
 // --- full REST round trip ---
 
-// testRunCtlPort implements rest.RunCtlPort over a real runctl.Control --
-// mirrors cmd/nexusd/ports.go's nexusdRunCtlPort (package main, can't be
-// imported from a test binary), the same duplication rationale
-// testRunStarter's own doc comment gives for testRunStarter vs
-// kernelRunStarter.
-type testRunCtlPort struct {
-	ctl *runctl.Control
-}
+// testController is the run-control endpoints' Controller (internal/runctl/rest)
+// over a real runctl.Control. It differs from production in one way: nothing
+// here is a queue worker. Production's Control.Send, on a paused conversation,
+// appends the message and queues a continuation for a worker to drive
+// (runctl.Control.ResumeConversation's own doc comment); this double plays that
+// worker itself, driving the continuation inline in a goroutine through the same
+// Control.Resume call cmd/nexusd/background.go's queueRunner.Run makes for a real
+// leased job. This test exercises REST's multi-turn wiring and continuity, not
+// queue mechanics (tests/integration/reliability_test.go's own job).
+type testController struct{ *runctl.Control }
 
-func (p *testRunCtlPort) Cancel(ctx context.Context, tenantID, sessionID uuid.UUID, reason string) error {
-	return p.ctl.Cancel(ctx, tenantID, sessionID, reason)
-}
-
-func (p *testRunCtlPort) Steer(ctx context.Context, tenantID, sessionID uuid.UUID, input string) error {
-	_, err := p.ctl.Steer(ctx, tenantID, sessionID, input)
-	return err
-}
-
-func (p *testRunCtlPort) TightenAutonomy(ctx context.Context, tenantID, sessionID uuid.UUID, target string) error {
-	return p.ctl.TightenAutonomy(ctx, tenantID, sessionID, target)
-}
-
-func (p *testRunCtlPort) Fork(context.Context, uuid.UUID, uuid.UUID, int64, string) (rest.ForkView, error) {
-	return rest.ForkView{}, fmt.Errorf("test control plane: Fork not wired")
-}
-
-// ResumeConversation mirrors production's shape (runctl.Control.
-// ResumeConversation now only durably appends the message and enqueues a
-// queue.KindConverse job — internal/runctl/converse.go's own doc comment)
-// but this test double has no queue worker behind it, unlike production's
-// nexusdRunCtlPort (cmd/nexusd/ports.go). It plays that role itself,
-// driving the continuation via the same call cmd/nexusd/background.go's
-// queueRunner.Run makes for a real leased job (Control.Resume), just
-// inline in a goroutine rather than through internal/queue at all — this
-// test is exercising REST's multi-turn wiring/continuity, not queue
-// mechanics (tests/integration/phase6_reliability_test.go's own job).
-func (p *testRunCtlPort) ResumeConversation(ctx context.Context, tenantID, sessionID uuid.UUID, input string) error {
-	if _, err := p.ctl.ResumeConversation(ctx, tenantID, sessionID, input); err != nil {
+func (c testController) Send(ctx context.Context, tenantID, sessionID uuid.UUID, input string) error {
+	var paused bool
+	if err := c.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx runctl.Tx) error {
+		sess, err := tx.GetSession(ctx, sessionID)
+		paused = err == nil && sess.Status == eventlog.SessionStatusAwaitingInput
+		return err
+	}); err != nil {
 		return err
 	}
-	go func() {
-		for ev, err := range p.ctl.Resume(context.WithoutCancel(ctx), tenantID, sessionID) {
-			_ = ev
-			if err != nil {
-				return
+	if err := c.Control.Send(ctx, tenantID, sessionID, input); err != nil {
+		return err
+	}
+	if paused {
+		go func() {
+			for _, err := range c.Resume(context.WithoutCancel(ctx), tenantID, sessionID) {
+				if err != nil {
+					return
+				}
 			}
-		}
-	}()
+		}()
+	}
 	return nil
 }
 
@@ -732,9 +717,10 @@ func TestRESTConversationalSession_MultiTurnSameSessionID(t *testing.T) {
 	verifier := authn.NewDevVerifier(authn.PublicKey(signingKey))
 	token := mustIssueToken(t, issuer, tenantID, userID)
 
-	srv := rest.NewServer(newTestLauncher(st, keyStore, starter), runspg.Reader{Store: st, KeyStore: keyStore})
-	srv.Verifier = verifier
-	srv.RunCtl = &testRunCtlPort{ctl: ctl}
+	srv := restkit.NewServer(verifier,
+		runsrest.NewHandler(newTestLauncher(st, keyStore, starter), runspg.Reader{Store: st, KeyStore: keyStore}),
+		runctlrest.Handler{Control: testController{ctl}},
+	)
 	httpSrv := httptest.NewServer(srv.Handler())
 	defer httpSrv.Close()
 	client := httpSrv.Client()
@@ -806,7 +792,7 @@ func TestRESTConversationalSession_MultiTurnSameSessionID(t *testing.T) {
 	waitForAwaitingInputCount(sessionID, 1)
 
 	// Turn 2 and 3: POST .../steer -- must transparently resume the SAME
-	// session (internal/surfaces/rest/runctl.go's handleSteerRun, routed
+	// session (internal/runctl/rest/handler.go's handleSteerRun, routed
 	// through ResumeConversation because the session is awaiting_input).
 	// waitForAwaitingInputCount (not waitForStatus) between each: it must
 	// block until THIS turn's own pause is durably recorded before the
