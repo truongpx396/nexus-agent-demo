@@ -623,7 +623,7 @@ func TestRunCtl_EndIdleConversation(t *testing.T) {
 // worker itself, driving the continuation inline in a goroutine through the same
 // Control.Resume call cmd/nexusd/background.go's queueRunner.Run makes for a real
 // leased job. This test exercises REST's multi-turn wiring and continuity, not
-// queue mechanics (tests/integration/phase6_reliability_test.go's own job).
+// queue mechanics (tests/integration/reliability_test.go's own job).
 type testController struct{ *runctl.Control }
 
 func (c testController) Send(ctx context.Context, tenantID, sessionID uuid.UUID, input string) error {

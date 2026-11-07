@@ -1,5 +1,13 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import type { Settings } from "./types";
+
+export interface Settings {
+  baseUrl: string;
+  // Bearer token minted out of band (`nexusd token --tenant=<name>`) --
+  // replaces the old dev-mode tenantId/userId header pair (README task
+  // 13.1). The backend derives tenant/user identity from this token's
+  // verified claims, never from anything the client asserts directly.
+  token: string;
+}
 
 const STORAGE_KEY = "nexus-web-settings";
 

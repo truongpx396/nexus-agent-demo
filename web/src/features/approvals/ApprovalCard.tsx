@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { ApiError, denyApproval, grantApproval } from "../../lib/api";
-import { useSettings } from "../../lib/settings";
-import { JsonView } from "../JsonView";
-import type { ApprovalToolContext, ApprovalView } from "../../lib/types";
+import { ApiError } from "../../shared/api/client";
+import { denyApproval, grantApproval } from "./api";
+import { useSettings } from "../../shared/settings/settings";
+import { JsonView } from "../../shared/ui/JsonView";
+import type { ApprovalToolContext, ApprovalView } from "./types";
 
 /** The generic tool-call approval prompt -- ported from ApprovalDetail.tsx's
  * decision-ready rendering, inlined into the chat thread instead of a

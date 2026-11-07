@@ -8,8 +8,8 @@
 // round trip (9.1, 9.8, 9.9) and the leaf bound (9.10).
 //
 // Shares oversightRig/setupPostgresAndPgBouncer/insertTenant/
-// listEventsDirect/hasEventType/contentScript with phase5_oversight_test.go
-// and phase8_orchestration_test.go (same package).
+// listEventsDirect/hasEventType/contentScript with oversight_test.go
+// and orchestration_test.go (same package).
 package integration
 
 import (
@@ -64,7 +64,7 @@ func ceiling(micros int64) cost.Money {
 
 // mustCreateTeamRow and mustCreateCardRow insert directly rather than going
 // through Service.CreateTeam/WriteCard — the pragmatic, honest fixture
-// choice tests/integration/phase8_orchestration_test.go's own
+// choice tests/integration/orchestration_test.go's own
 // mustCreatePendingDelegation already makes for the analogous "I only need
 // the ROW, not the live machinery around it" case.
 func mustCreateTeamRow(t *testing.T, r *oversightRig, teamID, coordinatorSessionID uuid.UUID) {

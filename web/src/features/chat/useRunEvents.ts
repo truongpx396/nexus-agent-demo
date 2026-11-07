@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { eventsURL } from "./api";
 import { readSSEStream, type ConnectionState } from "./sse";
-import type { DeltaFrame, RunEvent, Settings } from "./types";
+import type { DeltaFrame, RunEvent } from "./types";
+import type { Settings } from "../../shared/settings/settings";
 
 /** Live, best-effort preview of the turn currently in flight -- built from
  * `event: delta` SSE frames (DeltaFrame), never from `events`. Reset to null

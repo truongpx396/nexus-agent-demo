@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, NavLink } from "react-router-dom";
-import { useSettings } from "../lib/settings";
-import { useTheme } from "../lib/theme";
+import { useSettings } from "../settings/settings";
+import { useTheme } from "../theme/theme";
 
 const THEME_ICON = { system: "🖥️", light: "☀️", dark: "🌙" };
 const THEME_LABEL = { system: "Theme: system", light: "Theme: light", dark: "Theme: dark" };

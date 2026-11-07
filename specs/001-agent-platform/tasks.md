@@ -187,8 +187,8 @@ foundational deliverable, and the property test for the paired-result invariant 
 
 ### Tests for User Story 4
 
-- [X] T071 [P] [US4] Erasure: replay still works structurally and the chain still verifies in `tests/integration/phase5_oversight_test.go` (bp 5.5; FR-054, SC-010)
-- [X] T072 [P] [US4] Approval transaction: modified grant, mismatch, simulated consent in `tests/integration/phase5_oversight_test.go` (bp 5.6, 5.7, 5.14; FR-056, SC-012, SC-025)
+- [X] T071 [P] [US4] Erasure: replay still works structurally and the chain still verifies in `tests/integration/oversight_test.go` (bp 5.5; FR-054, SC-010)
+- [X] T072 [P] [US4] Approval transaction: modified grant, mismatch, simulated consent in `tests/integration/oversight_test.go` (bp 5.6, 5.7, 5.14; FR-056, SC-012, SC-025)
 - [X] T073 [P] [US4] Adversarial oversight eval cases in `evals/adversarial_test.go`, `evals/corpus_safety.go` (bp 5.14; FR-063, SC-025)
 
 ### Implementation for User Story 4
@@ -219,8 +219,8 @@ foundational deliverable, and the property test for the paired-result invariant 
 
 ### Tests for User Story 5
 
-- [X] T087 [P] [US5] Reliability integration tests — resume after kill, unresolved claims, stuck detection, snapshot deletion — in `tests/integration/phase6_reliability_test.go` (bp 6.4, 6.6; FR-066, FR-068, FR-070, SC-015, SC-016)
-- [X] T088 [P] [US5] Queue tests — reclaim abandoned lease, no double lease, serial-per-session lock — in `internal/queue/worker_test.go`, `tests/integration/phase6_reliability_test.go` (bp 6.1, 6.2; FR-064)
+- [X] T087 [P] [US5] Reliability integration tests — resume after kill, unresolved claims, stuck detection, snapshot deletion — in `tests/integration/reliability_test.go` (bp 6.4, 6.6; FR-066, FR-068, FR-070, SC-015, SC-016)
+- [X] T088 [P] [US5] Queue tests — reclaim abandoned lease, no double lease, serial-per-session lock — in `internal/queue/worker_test.go`, `tests/integration/reliability_test.go` (bp 6.1, 6.2; FR-064)
 - [X] T089 [P] [US5] Unit tests for the previously untested packages in `internal/oversight/`, `internal/audit/chain_test.go`, `internal/runctl/resume_test.go` (bp 14.1; F9; FR-106)
 
 ### Implementation for User Story 5
@@ -253,9 +253,9 @@ foundational deliverable, and the property test for the paired-result invariant 
 
 ### Tests for User Story 6
 
-- [X] T105 [P] [US6] Memory injected at start with a leading audit event; mid-session skill revocation emits `skill_capability_ignored` in `tests/integration/phase7_harness_growth_test.go` (bp 7.1, 7.8; FR-073, FR-076, SC-019)
-- [X] T106 [P] [US6] REST and CLI produce identical event sequences and terminal reasons in `tests/integration/phase7_harness_growth_test.go` (bp 7.15; FR-082, SC-018)
-- [X] T107 [P] [US6] Outbox idempotency and `failed_permanent` in `tests/integration/phase7_harness_growth_test.go` (bp 7.14; FR-081, SC-020)
+- [X] T105 [P] [US6] Memory injected at start with a leading audit event; mid-session skill revocation emits `skill_capability_ignored` in `tests/integration/harness_growth_test.go` (bp 7.1, 7.8; FR-073, FR-076, SC-019)
+- [X] T106 [P] [US6] REST and CLI produce identical event sequences and terminal reasons in `tests/integration/harness_growth_test.go` (bp 7.15; FR-082, SC-018)
+- [X] T107 [P] [US6] Outbox idempotency and `failed_permanent` in `tests/integration/harness_growth_test.go` (bp 7.14; FR-081, SC-020)
 
 ### Implementation for User Story 6
 
@@ -286,8 +286,8 @@ foundational deliverable, and the property test for the paired-result invariant 
 
 ### Tests for User Story 7
 
-- [X] T122 [P] [US7] Zero-token routing; delegation round trip; bounds fail closed through the real chain in `tests/integration/phase8_orchestration_test.go` (bp 8.6, 8.12; FR-084, FR-089, SC-022, SC-023)
-- [X] T123 [P] [US7] Plan eval-gate lifecycle in `tests/integration/phase8_orchestration_test.go` (bp 8.4; FR-086)
+- [X] T122 [P] [US7] Zero-token routing; delegation round trip; bounds fail closed through the real chain in `tests/integration/orchestration_test.go` (bp 8.6, 8.12; FR-084, FR-089, SC-022, SC-023)
+- [X] T123 [P] [US7] Plan eval-gate lifecycle in `tests/integration/orchestration_test.go` (bp 8.4; FR-086)
 - [X] T124 [P] [US7] Delegation unit tests in `internal/delegate/delegations_test.go`
 
 ### Implementation for User Story 7
@@ -318,7 +318,7 @@ foundational deliverable, and the property test for the paired-result invariant 
 ### Tests for User Story 8
 
 - [X] T137 [P] [US8] Gate, regression and statistics tests in `evals/gate_test.go`, `evals/regression_test.go`, `evals/stats_test.go`, `evals/grading_test.go`, `evals/policy_test.go` (bp 10.2; FR-094, SC-026)
-- [X] T138 [P] [US8] Eval-gate and golden-signal integration tests in `tests/integration/phase10_eval_gate_test.go`, `tests/integration/phase10_dashboard_test.go` (bp 10.12; FR-100)
+- [X] T138 [P] [US8] Eval-gate and golden-signal integration tests in `tests/integration/evalgate_test.go`, `tests/integration/reporting_dashboard_test.go` (bp 10.12; FR-100)
 
 ### Implementation for User Story 8
 
@@ -387,7 +387,7 @@ foundational deliverable, and the property test for the paired-result invariant 
 
 ### Tests for User Story 10
 
-- [X] T169 [P] [US10] Claim contention (exactly one winner), read-time taint fold, lifecycle, nested-team denial in `tests/integration/phase9_teams_test.go` (bp 9.4, 9.6, 9.10; FR-113, FR-114, SC-029)
+- [X] T169 [P] [US10] Claim contention (exactly one winner), read-time taint fold, lifecycle, nested-team denial in `tests/integration/teams_test.go` (bp 9.4, 9.6, 9.10; FR-113, FR-114, SC-029)
 
 ### Implementation for User Story 10
 
@@ -411,7 +411,7 @@ foundational deliverable, and the property test for the paired-result invariant 
 
 ### Tests for User Story 11
 
-- [X] T177 [P] [US11] A live OAuth token never appears in any event, log or span in `tests/integration/phase11_secret_leak_test.go` (bp 11 acceptance; FR-118, SC-030)
+- [X] T177 [P] [US11] A live OAuth token never appears in any event, log or span in `tests/integration/connectors_secret_leak_test.go` (bp 11 acceptance; FR-118, SC-030)
 - [X] T178 [P] [US11] Per-surface capability conformance in `internal/surfaces/rest/capability_test.go` (bp 11.8; FR-124)
 
 ### Implementation for User Story 11
@@ -424,8 +424,8 @@ foundational deliverable, and the property test for the paired-result invariant 
 - [X] T184 [P] [US11] Email webhook and SMTP surface in `internal/surfaces/email/webhook.go`, `internal/surfaces/email/sender.go`, `internal/surfaces/email/descriptor.go`, `internal/surfaces/email/ratelimit.go` (bp 11.5; FR-120)
 - [X] T185 [P] [US11] Messaging channel store in `migrations/0021_messaging_channels.sql`, `internal/surfaces/postgres/channels.go` (bp 11.4, 11.5; FR-121)
 - [X] T186 [P] [US11] Cron scheduler surface with a synthetic scheduler principal in `internal/surfaces/cron/scheduler.go`, `internal/surfaces/cron/descriptor.go`, `migrations/0020_cron_schedules.sql` (bp 11.6; FR-122)
-- [X] T187 [US11] Web app descriptor and chat-style UI in `internal/surfaces/web/descriptor.go`, `web/src/pages/ChatPage.tsx`, `web/src/components/chat/ChatThread.tsx`, `web/src/components/chat/ApprovalCard.tsx`, `web/src/components/chat/SubAgentCard.tsx`, `web/src/components/chat/ToolCallCard.tsx`, `web/src/pages/Approvals.tsx`, `web/src/pages/ApprovalDetail.tsx` (bp 11.7; FR-123)
-- [X] T188 [P] [US11] Surface wiring in the composition root in `cmd/nexusd/surfaces_phase11.go` (bp 11.9; FR-124)
+- [X] T187 [US11] Web app descriptor and chat-style UI in `internal/surfaces/web/descriptor.go`, `web/src/features/chat/ChatPage.tsx`, `web/src/features/chat/ChatThread.tsx`, `web/src/features/approvals/ApprovalCard.tsx`, `web/src/features/chat/SubAgentCard.tsx`, `web/src/features/chat/ToolCallCard.tsx`, `web/src/features/approvals/Approvals.tsx`, `web/src/features/approvals/ApprovalDetail.tsx` (bp 11.7; FR-123)
+- [X] T188 [P] [US11] Surface wiring in the composition root in `cmd/nexusd/surfaces_wiring.go` (bp 11.9; FR-124)
 - [X] T189 [P] [US11] Messaging session continuity — deterministic per-peer key, resume `awaiting_input`, deliver the model's reply — in `internal/surfaces/telegram/webhook.go`, `internal/surfaces/zalo/webhook.go`, `internal/surfaces/email/webhook.go` (post-ledger, `7606e15`; FR-121)
 
 **Checkpoint**: every surface the original names, on the same seam.
@@ -440,7 +440,7 @@ foundational deliverable, and the property test for the paired-result invariant 
 
 ### Tests for User Story 12
 
-- [X] T190 [P] [US12] Ingest/index/search/erase, rejected document, tenant isolation in `tests/integration/phase12_retrieval_test.go` (bp 12.8; FR-130, SC-031)
+- [X] T190 [P] [US12] Ingest/index/search/erase, rejected document, tenant isolation in `tests/integration/retrieval_test.go` (bp 12.8; FR-130, SC-031)
 - [X] T191 [P] [US12] AST test: every embedding call is metered in `tests/contract/embedding_metering_test.go` (bp 12 acceptance; FR-128, SC-032)
 
 ### Implementation for User Story 12
@@ -478,7 +478,7 @@ foundational deliverable, and the property test for the paired-result invariant 
 - [X] T206 [P] [US13] Opt-in compose file for Crawl4AI and OpenSandbox in `deploy/docker-compose.agentic.yml` (bp 16.5; FR-133)
 - [X] T207 [P] [US13] `agentic-up` / `agentic-down` and the capabilities doc in `Makefile`, `docs/agentic-capabilities.md` (bp 16.6; FR-133)
 - [X] T208 [P] [US13] Two real skill bundles in `skills/web-research/GUIDE.md`, `skills/sandboxed-code/skill.json`, `skills/sandboxed-code/GUIDE.md`, `cmd/nexusd/cli_seed.go` (bp 16.7; FR-134) — **ledger path drift**: the ledger said `.dev/skills/`; the bundles live in `skills/`
-- [X] T209 [P] [US13] Suggested-prompt chips for crawl, sandboxed shell, skill activation, delegation in `web/src/lib/suggestedPrompts.ts` (bp 16.9; FR-134)
+- [X] T209 [P] [US13] Suggested-prompt chips for crawl, sandboxed shell, skill activation, delegation in `web/src/features/chat/suggestedPrompts.ts` (bp 16.9; FR-134)
 - [X] T254 [P] [US13] Two named `agent_id`/`scope_grant` conventions, `web-researcher` and `sandbox-runner`, over the unmodified `platform/delegate` tool, documented in `docs/agentic-capabilities.md` and `skills/web-research/GUIDE.md` (bp 16.8; FR-134) — added 2026-11-02: the baseline missed this ledger row
 
 **Checkpoint**: seams proven by two real third-party backends.
@@ -529,10 +529,10 @@ foundational deliverable, and the property test for the paired-result invariant 
 
 These shipped after the build ledger was last updated. They are tasked here for completeness; each is already cross-referenced under its story above.
 
-- [X] T228 [P] [US1] Live typing-style preview over SSE, decoupled from the durable log (`OnChunk` → `event: delta`), in `kernel/turns.go`, `internal/runs/rest/broker.go`, `web/src/lib/useRunEvents.ts` (post-ledger, `62f052b`; FR-028)
+- [X] T228 [P] [US1] Live typing-style preview over SSE, decoupled from the durable log (`OnChunk` → `event: delta`), in `kernel/turns.go`, `internal/runs/rest/broker.go`, `web/src/features/chat/useRunEvents.ts` (post-ledger, `62f052b`; FR-028)
 - [X] T229 [P] [US5] Redis Pub/Sub event bus so an SSE client can be served by a different process than the worker in `cmd/nexusd/eventbus.go`, `internal/runs/rest/broker.go` (post-ledger, `2efa4ff`; FR-064)
-- [X] T230 [P] [US11] Session history endpoint and sidebar, and a permissive CORS layer for the bearer-token API, in `internal/runs/rest/sessions_list.go`, `internal/surfaces/rest/server.go`, `web/src/components/Sidebar.tsx` (post-ledger, `227b8f4`; FR-123)
-- [X] T231 [P] [US11] Timeline folding of the flat event log into chat items in `web/src/lib/timeline.ts`, `web/src/lib/useRunEvents.ts` (post-ledger, `227b8f4`; FR-123)
+- [X] T230 [P] [US11] Session history endpoint and sidebar, and a permissive CORS layer for the bearer-token API, in `internal/runs/rest/sessions_list.go`, `internal/surfaces/rest/server.go`, `web/src/features/chat/Sidebar.tsx` (post-ledger, `227b8f4`; FR-123)
+- [X] T231 [P] [US11] Timeline folding of the flat event log into chat items in `web/src/features/chat/timeline.ts`, `web/src/features/chat/useRunEvents.ts` (post-ledger, `227b8f4`; FR-123)
 
 ---
 
@@ -621,13 +621,13 @@ The audit ran against `8e02491`, about seven weeks and 40 pull requests ago. Thi
 | T252 | done | the port, the stale README paths, the terminal-reason count, `.dev/skills`, the "simplified JCS" wording and the `sse.ts` comment are all fixed |
 | T253 | done | the alias table is in [../README.md](../README.md#legacy-task-number-aliases) |
 
-- [ ] T244 Test `Control.Fork` end to end — a fork at a past sequence with an override runs with external effects disabled, inherits no approvals, has its own budget and audit chain, and reports digest divergence — and the REST and CLI fork paths, in `tests/integration/phase6_reliability_test.go`, `internal/runctl/fork.go`, `internal/runctl/rest/handler.go` per SC-017 (US5) (missing)
+- [ ] T244 Test `Control.Fork` end to end — a fork at a past sequence with an override runs with external effects disabled, inherits no approvals, has its own budget and audit chain, and reports digest divergence — and the REST and CLI fork paths, in `tests/integration/reliability_test.go`, `internal/runctl/fork.go`, `internal/runctl/rest/handler.go` per SC-017 (US5) (missing)
 - [ ] T245 Test tamper detection — alter, delete and reorder a receipt and drop one to open a gap, through the owner connection, and assert `Verify` reports each as a break or gap — in a new `tests/integration/audit_tamper_test.go`, `internal/audit/verify.go` per SC-011 (US4) (missing)
 - [ ] T246 Test that a run under a per-task ceiling terminates `cost_exhausted` *before* the overspending provider call and that the recorded `budget_decision` names the refusing budget in `tests/integration/cost_ceiling_test.go` per SC-007 (US3) (missing)
 - [ ] T247 Test that a past call's cost is recomputed to the exact minor unit from the price version in force at the time, across a price change, in `internal/cost/pricebook_test.go`, `internal/cost/record.go` per SC-008 (US3) (missing)
-- [ ] T248 Test that a run suspended for approval or input makes zero provider calls while suspended and that `suspended_ms` is excluded from active time in `tests/integration/phase5_oversight_test.go` per SC-013 (US4) (missing)
-- [ ] T249 Pin SC-024 and SC-021 with named tests — the same plan and input take the same branch twice with the transition log naming the predicate that fired; a child cannot return a result that clears the parent's untrusted leg — in `tests/integration/phase8_orchestration_test.go` per SC-024, SC-021 (US7) (partial)
+- [ ] T248 Test that a run suspended for approval or input makes zero provider calls while suspended and that `suspended_ms` is excluded from active time in `tests/integration/oversight_test.go` per SC-013 (US4) (missing)
+- [ ] T249 Pin SC-024 and SC-021 with named tests — the same plan and input take the same branch twice with the transition log naming the predicate that fired; a child cannot return a result that clears the parent's untrusted leg — in `tests/integration/orchestration_test.go` per SC-024, SC-021 (US7) (partial)
 - [ ] T250 Automate optional-stack non-interference — start and stop each opt-in compose file and assert the core services stay up and `platform/shell` degrades with a warning — in a new `scripts/check-stack-isolation.sh`, `Makefile` per SC-033 (US13, US14) (partial)
 - [ ] T251 Give an operator a way to invoke `TaintState.Rebaseline` (a run-control action and CLI command that clears only the untrusted leg, audited), since nothing outside tests calls it today, in `internal/permissions/ruleoftwo.go`, `internal/runctl/autonomy.go`, `internal/surfaces/cli/cli.go` per FR-039 (US2) (partial)
-- [X] T252 Fix documentation drift: the default port (`:8085`), the stale README paths, the terminal-reason count (10, not 8), the `.dev/skills/` path, the "simplified JCS" wording and the stale `X-Nexus-*` header comment, in `CLAUDE.md`, `README.md`, `.env.example`, `internal/tools/execute.go`, `web/src/lib/sse.ts`, `specs/001-agent-platform/plan.md` (done)
+- [X] T252 Fix documentation drift: the default port (`:8085`), the stale README paths, the terminal-reason count (10, not 8), the `.dev/skills/` path, the "simplified JCS" wording and the stale `X-Nexus-*` header comment, in `CLAUDE.md`, `README.md`, `.env.example`, `internal/tools/execute.go`, `web/src/features/chat/sse.ts`, `specs/001-agent-platform/plan.md` (done)
 - [X] T253 Record the legacy task-number aliases (`13.8`–`13.15` → `14.1`–`15.4`) in `specs/README.md`, so code comments that cite them resolve; `tests/contract/specs_test.go` enforces it, per research.md alias table (done)

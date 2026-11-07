@@ -1,4 +1,4 @@
-import { findTaint } from "../lib/taint";
+import { findTaint } from "./taint";
 
 /** Renders a small row of pills for a Rule-of-Two taint shape, if one is
  * present in the given event body. Renders nothing otherwise. */

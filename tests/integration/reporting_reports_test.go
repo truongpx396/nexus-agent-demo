@@ -17,7 +17,7 @@ import (
 )
 
 // TestReports_ToolCallCountsAndModelSpend pins the two /metrics breakdowns that
-// had no test of their own (the golden signals have phase10_dashboard_test.go):
+// had no test of their own (the golden signals have reporting_dashboard_test.go):
 // tool_use events group by tool_id, cost_records group by model and currency
 // with the four token classes split out, and neither leaks another tenant's rows.
 func TestReports_ToolCallCountsAndModelSpend(t *testing.T) {

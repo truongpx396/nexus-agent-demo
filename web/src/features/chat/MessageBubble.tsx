@@ -1,5 +1,5 @@
-import { renderMarkdown } from "../../lib/markdown";
-import type { TimelineItem } from "../../lib/timeline";
+import { renderMarkdown } from "./markdown";
+import type { TimelineItem } from "./timeline";
 
 type Props = { item: Extract<TimelineItem, { kind: "user" | "assistant" | "system" }> };
 

@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
-import { listSessions } from "../lib/api";
-import { loadRecentRuns } from "../lib/recentRuns";
-import { useSettings } from "../lib/settings";
-import type { SessionSummary } from "../lib/types";
+import { listSessions } from "./api";
+import { loadRecentRuns } from "./recentRuns";
+import { useSettings } from "../../shared/settings/settings";
+import type { SessionSummary } from "./types";
 
 const POLL_INTERVAL_MS = 8000;
 

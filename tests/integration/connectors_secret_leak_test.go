@@ -48,7 +48,7 @@ import (
 // grep match is unambiguous.
 const liveTestToken = "LIVE-OAUTH-TOKEN-do-not-leak-8f3e9c21" //nolint:gosec // a fake fixture value this test asserts never leaks, not a real credential
 
-// alwaysDeferModel is tests/integration/phase6_reliability_test.go's own
+// alwaysDeferModel is tests/integration/reliability_test.go's own
 // (package-level, reused here rather than redeclared).
 
 // setupSecretLeakEnv is this file's own postgres-only rig (no PgBouncer,

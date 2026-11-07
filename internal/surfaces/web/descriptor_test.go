@@ -4,7 +4,7 @@ import "testing"
 
 // TestDescriptor_ClaimsFullFidelity is this surface's conformance
 // statement (README task 11.8): the web app is documented as a
-// full-fidelity REST client (web/README.md, web/src/lib/sse.ts's
+// full-fidelity REST client (web/README.md, web/src/features/chat/sse.ts's
 // fetch-based SSE reader), so unlike the chat/scheduler surfaces its
 // Descriptor claims real support for approval context, structured input,
 // and streaming rather than degrading to a fallback.

@@ -51,19 +51,40 @@ surface-agnostic all along. **No Go code was changed to build this.**
   cards, a recursively-nested sub-agent view for `platform/delegate`, inline
   approval/clarification cards, and a citations panel for `platform/retrieve`
   results. The sidebar's session list comes from `GET /v1/sessions`
-  (`src/lib/timeline.ts` is the event-log → chat-timeline translation).
+  (`src/features/chat/timeline.ts` is the event-log → chat-timeline translation).
 - **Approvals** (`/approvals`, `/approvals/:id`) — a secondary, tenant-wide
   view over `GET /v1/approvals`, independent of any one thread; renders the
   *decision-ready* `context` field (`tool_id` / `effect_class` / `input`),
   never a bare approval UUID. Grant (with optional modified-input JSON) and
   Deny actions.
 
+## Layout
+
+The source is packaged by feature, mirroring the backend's own packages, not by
+kind of file:
+
+- `src/features/chat/` — the chat feature: the page, thread, message and tool
+  cards, the sidebar, the run timeline and the live-event hook, plus its REST
+  client (`api.ts`, for `internal/runs/rest` and `internal/runctl/rest`) and its
+  wire types (`types.ts`).
+- `src/features/approvals/` — human oversight: the approvals pages, the inline
+  approval and clarification cards the chat thread renders, and their REST client
+  and types (for `internal/oversight/rest`). The chat feature imports from here;
+  nothing here imports from chat.
+- `src/shared/` — what no one feature owns: the REST client every feature's
+  `api.ts` is built on (`api/client.ts`), the settings and theme providers, and
+  the generic UI (`ui/`).
+- `src/App.tsx`, `src/main.tsx` and `src/index.css` — the shell and the one global
+  stylesheet. The stylesheet is not split per feature: several of its classes are
+  composed at runtime (the `status-*` pills), and splitting it safely needs visual
+  regression tests this repo does not have.
+
 ### SSE without `EventSource`
 
 Auth is a bearer token (`Authorization: Bearer <token>`, minted with
 `nexusd token --tenant=<name>`), read fresh per request. The browser's
 native `EventSource` API cannot set custom headers, so it can't be used
-against this endpoint. Instead, `src/lib/sse.ts` + `src/lib/useRunEvents.ts`
+against this endpoint. Instead, `src/features/chat/sse.ts` + `src/features/chat/useRunEvents.ts`
 implement SSE-over-`fetch`: they open the stream with `fetch(url, {
 headers })`, read `response.body.getReader()`, and manually parse
 `event: <type>\ndata: <json>\n\n` frames out of the decoded text.

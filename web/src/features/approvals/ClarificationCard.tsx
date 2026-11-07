@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { ApiError, denyApproval, grantApproval } from "../../lib/api";
-import { useSettings } from "../../lib/settings";
-import type { ApprovalView } from "../../lib/types";
+import { ApiError } from "../../shared/api/client";
+import { denyApproval, grantApproval } from "./api";
+import { useSettings } from "../../shared/settings/settings";
+import type { ApprovalView } from "./types";
 
 interface ClarificationInput {
   question?: string;

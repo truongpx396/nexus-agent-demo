@@ -1,6 +1,6 @@
 import { useParams } from "react-router-dom";
-import { ChatThread } from "../components/chat/ChatThread";
-import { Sidebar } from "../components/Sidebar";
+import { ChatThread } from "./ChatThread";
+import { Sidebar } from "./Sidebar";
 
 export function ChatPage() {
   const { id } = useParams<{ id: string }>();

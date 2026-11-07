@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { ApiError, listApprovals } from "../lib/api";
-import { useSettings } from "../lib/settings";
-import type { ApprovalView } from "../lib/types";
+import { ApiError } from "../../shared/api/client";
+import { listApprovals } from "./api";
+import { useSettings } from "../../shared/settings/settings";
+import type { ApprovalView } from "./types";
 
 const POLL_INTERVAL_MS = 5000;
 

@@ -6,7 +6,7 @@
 // budget_decisions (cost-ceiling breach rate), cost_records (cache-read
 // rate), approvals + events (approval latency + mismatch rate, taint-
 // transition rate), claims (unresolved in-flight count). Shares
-// setupOversightRig/insertTenant with phase5_oversight_test.go (same
+// setupOversightRig/insertTenant with oversight_test.go (same
 // package).
 package integration
 

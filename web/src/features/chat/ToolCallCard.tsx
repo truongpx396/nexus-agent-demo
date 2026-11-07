@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { JsonView } from "../JsonView";
-import type { TimelineItem } from "../../lib/timeline";
+import { JsonView } from "../../shared/ui/JsonView";
+import type { TimelineItem } from "./timeline";
 import { CitationsPanel } from "./CitationsPanel";
 
 type ToolItem = Extract<TimelineItem, { kind: "tool" }>;

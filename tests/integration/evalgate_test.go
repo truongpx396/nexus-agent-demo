@@ -7,7 +7,7 @@
 // row — the seam plan.EvalGate's own doc comment names ("cmd/nexusd wires
 // the real evals.Report-backed gate in") but that, before this file, had
 // no test exercising it at all (Phase 8 shipped the hook; nothing ever
-// called it). Shares setupOversightRig with phase5_oversight_test.go (same
+// called it). Shares setupOversightRig with oversight_test.go (same
 // package).
 package integration
 

@@ -11,7 +11,7 @@
 // durable-suspend-and-resume shape.
 //
 // Shares oversightRig/setupPostgresAndPgBouncer/insertTenant/newFakeSigner
-// with phase5_oversight_test.go (same package).
+// with oversight_test.go (same package).
 package integration
 
 import (

@@ -86,7 +86,7 @@ func startEventBus(ctx context.Context, redisClient *redis.Client, runsAPI *runs
 // startEventBus's single per-process PSUBSCRIBE feeding its broker
 // directly, with Postgres history replay as a backstop for anything
 // published before a client subscribed. telegram/zalo/email have no
-// broker or replay of their own (surfaces_phase11.go's own doc comment:
+// broker or replay of their own (surfaces_wiring.go's own doc comment:
 // RunStarter/Resumer's contract has always been "the returned channel
 // carries every event of the run, closed when it ends") — this is their
 // one-subscription-per-run equivalent, so that contract still holds now

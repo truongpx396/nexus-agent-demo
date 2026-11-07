@@ -140,7 +140,7 @@ func (r *Retriever) Search(ctx context.Context, tenantID, sessionID uuid.UUID, q
 // its own pure function so it is unit-testable without a live Postgres —
 // the rest of Search is a thin embed-then-query wrapper around this and
 // internal/retrieval's own SQL, exercised together in
-// tests/integration/phase12_retrieval_test.go.
+// tests/integration/retrieval_test.go.
 func screenClean(results []ScoredChunk) []ScoredChunk {
 	clean := make([]ScoredChunk, 0, len(results))
 	for _, c := range results {

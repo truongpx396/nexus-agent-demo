@@ -134,7 +134,7 @@ make verify-chain                                                        # audit
 | Plan eval gate advances lifecycle; no tagged cases fails closed | **Auto** `TestPlanEvalGate_*` |
 | The same plan and input run twice take the same branch, and the transition log names the predicate that fired | **No named check** — `TestPlan_ZeroTokenRouting` covers the zero-token half; determinism of the branch is not asserted by name (T249) — SC-024 |
 | Delegation round trip; bounds fail closed through the real chain | **Auto** `TestDelegate_RoundTrip`, `TestDelegate_BoundsFailClosed_ThroughTheRealChain` — SC-022 |
-| A child cannot return a clean-looking summary (taint ascends from the child's own events) | **Auto**, per `phase8_orchestration_test.go`'s header ("taint-ascend fold across a real spawn/resolve round trip"); no test is *named* for it — SC-021 |
+| A child cannot return a clean-looking summary (taint ascends from the child's own events) | **Auto**, per `orchestration_test.go`'s header ("taint-ascend fold across a real spawn/resolve round trip"); no test is *named* for it — SC-021 |
 
 ## 9. US8 — the release gate and go-live
 

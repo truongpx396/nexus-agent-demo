@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ApiError, denyApproval, getApproval, grantApproval } from "../lib/api";
-import { useSettings } from "../lib/settings";
-import type { ApprovalToolContext, ApprovalView } from "../lib/types";
-import { JsonView } from "../components/JsonView";
+import { ApiError } from "../../shared/api/client";
+import { denyApproval, getApproval, grantApproval } from "./api";
+import { useSettings } from "../../shared/settings/settings";
+import type { ApprovalToolContext, ApprovalView } from "./types";
+import { JsonView } from "../../shared/ui/JsonView";
 
 export function ApprovalDetail() {
   const { id } = useParams<{ id: string }>();
