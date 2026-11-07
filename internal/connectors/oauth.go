@@ -18,57 +18,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"golang.org/x/oauth2"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/config"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 )
-
-// Provider is one OAuth2 authorization-code provider this DEPLOYMENT
-// recognizes — a small, operator-configured, process-wide registry
-// (cmd/nexusd wires it from env vars), never a runtime user-editable list.
-// Which providers EXIST is platform config; which providers a given TENANT
-// may actually use is config.TenantConfig.AdmittedConnectorProviders — the
-// vetted, per-tenant catalog docs/constitution.md requires
-// ("Connectors MUST attach only through the vetted, per-tenant ...
-// catalog"). Two distinct admission checks, on purpose: existing-but-not-
-// admitted-here and admitted-but-doesn't-exist are different failures, both
-// fail closed.
-type Provider struct {
-	Name         string
-	Endpoint     oauth2.Endpoint
-	ClientID     string
-	ClientSecret string
-	Scopes       []string
-	RedirectURL  string
-}
-
-// Registry is the static set of recognized providers.
-type Registry struct {
-	providers map[string]Provider
-}
-
-func NewRegistry(providers ...Provider) *Registry {
-	m := make(map[string]Provider, len(providers))
-	for _, p := range providers {
-		m[p.Name] = p
-	}
-	return &Registry{providers: m}
-}
-
-func (r *Registry) oauth2Config(name string) (oauth2.Config, bool) {
-	p, ok := r.providers[name]
-	if !ok {
-		return oauth2.Config{}, false
-	}
-	return oauth2.Config{
-		ClientID:     p.ClientID,
-		ClientSecret: p.ClientSecret,
-		Endpoint:     p.Endpoint,
-		Scopes:       p.Scopes,
-		RedirectURL:  p.RedirectURL,
-	}, true
-}
 
 // Vault is the per-user OAuth token vault: Connections (migrations/
 // 0018_oauth_connections.sql) holds the sealed tokens, and States — a
@@ -80,8 +33,16 @@ type Vault struct {
 	Config      config.Loader
 	Connections Connections
 	States      StateStore
-	Providers   *Registry
-	StateTTL    time.Duration // default 5 minutes
+	// Providers is the OAuth2 protocol for the providers this deployment
+	// recognises (cmd/nexusd wires it from env vars, never a runtime
+	// user-editable list). Which providers EXIST is platform config; which a
+	// given TENANT may use is config.TenantConfig.AdmittedConnectorProviders —
+	// the vetted, per-tenant catalog docs/constitution.md requires ("Connectors
+	// MUST attach only through the vetted, per-tenant ... catalog"). Two distinct
+	// admission checks, on purpose: existing-but-not-admitted-here and
+	// admitted-but-doesn't-exist are different failures, both fail closed.
+	Providers Authorizer
+	StateTTL  time.Duration // default 5 minutes
 }
 
 // stateRecord is what BeginAuth stashes in Redis under the state token —
@@ -114,9 +75,8 @@ func (v *Vault) BeginAuth(ctx context.Context, tenantID, userID uuid.UUID, provi
 	if !cfg.HasConnectorProvider(providerName) {
 		return "", fmt.Errorf("connectors: provider %q is not admitted for tenant %s", providerName, tenantID)
 	}
-	oc, ok := v.Providers.oauth2Config(providerName)
-	if !ok {
-		return "", fmt.Errorf("connectors: unrecognized provider %q", providerName)
+	if !v.Providers.Known(providerName) {
+		return "", fmt.Errorf("%w %q", ErrUnknownProvider, providerName)
 	}
 
 	state, err := randomState()
@@ -134,7 +94,7 @@ func (v *Vault) BeginAuth(ctx context.Context, tenantID, userID uuid.UUID, provi
 	if err := v.States.Put(ctx, state, raw, ttl); err != nil {
 		return "", err
 	}
-	return oc.AuthCodeURL(state), nil
+	return v.Providers.AuthCodeURL(providerName, state)
 }
 
 // HandleCallback completes the authorization-code exchange for state/code,
@@ -161,11 +121,10 @@ func (v *Vault) HandleCallback(ctx context.Context, state, code string) error {
 		return fmt.Errorf("connectors: state user_id: %w", err)
 	}
 
-	oc, ok := v.Providers.oauth2Config(rec.Provider)
-	if !ok {
-		return fmt.Errorf("connectors: unrecognized provider %q", rec.Provider)
+	if !v.Providers.Known(rec.Provider) {
+		return fmt.Errorf("%w %q", ErrUnknownProvider, rec.Provider)
 	}
-	tok, err := oc.Exchange(ctx, code)
+	tok, err := v.Providers.Exchange(ctx, rec.Provider, code)
 	if err != nil {
 		return fmt.Errorf("connectors: exchange code: %w", err)
 	}
@@ -181,7 +140,7 @@ func aadLabel(userID uuid.UUID, providerName string) string {
 	return userID.String() + "|" + providerName
 }
 
-func (v *Vault) persist(ctx context.Context, tenantID, userID uuid.UUID, providerName string, tok *oauth2.Token) error {
+func (v *Vault) persist(ctx context.Context, tenantID, userID uuid.UUID, providerName string, tok Token) error {
 	var expiresAt *time.Time
 	if !tok.Expiry.IsZero() {
 		e := tok.Expiry
@@ -207,26 +166,25 @@ func (v *Vault) persist(ctx context.Context, tenantID, userID uuid.UUID, provide
 // transparently refreshing (and re-sealing) it first if it has expired.
 // Callers: ONLY a connector tool's own Call — never logged, never placed in
 // an event payload, never returned in a tools.Result.Output.
-func (v *Vault) Token(ctx context.Context, tenantID, userID uuid.UUID, providerName string) (*oauth2.Token, error) {
-	oc, ok := v.Providers.oauth2Config(providerName)
-	if !ok {
-		return nil, fmt.Errorf("connectors: unrecognized provider %q", providerName)
+func (v *Vault) Token(ctx context.Context, tenantID, userID uuid.UUID, providerName string) (Token, error) {
+	if !v.Providers.Known(providerName) {
+		return Token{}, fmt.Errorf("%w %q", ErrUnknownProvider, providerName)
 	}
 
 	conn, err := v.Connections.Load(ctx, tenantID, userID, providerName)
 	if err != nil {
-		return nil, err
+		return Token{}, err
 	}
 	aad := aadLabel(userID, providerName)
 	access, err := crypto.Open(conn.DEK, conn.SealedAccess, tenantID.String(), aad)
 	if err != nil {
-		return nil, fmt.Errorf("open access token: %w", err)
+		return Token{}, fmt.Errorf("open access token: %w", err)
 	}
-	tok := &oauth2.Token{AccessToken: string(access)}
+	tok := Token{AccessToken: string(access)}
 	if len(conn.SealedRefresh) > 0 {
 		refresh, err := crypto.Open(conn.DEK, conn.SealedRefresh, tenantID.String(), aad)
 		if err != nil {
-			return nil, fmt.Errorf("open refresh token: %w", err)
+			return Token{}, fmt.Errorf("open refresh token: %w", err)
 		}
 		tok.RefreshToken = string(refresh)
 	}
@@ -235,13 +193,13 @@ func (v *Vault) Token(ctx context.Context, tenantID, userID uuid.UUID, providerN
 	}
 
 	if !tok.Valid() && tok.RefreshToken != "" {
-		fresh, err := oc.TokenSource(ctx, tok).Token()
+		fresh, err := v.Providers.Refresh(ctx, providerName, tok)
 		if err != nil {
-			return nil, fmt.Errorf("connectors: refresh token: %w", err)
+			return Token{}, fmt.Errorf("connectors: refresh token: %w", err)
 		}
 		if fresh.AccessToken != tok.AccessToken {
 			if err := v.persist(ctx, tenantID, userID, providerName, fresh); err != nil {
-				return nil, fmt.Errorf("connectors: persist refreshed token: %w", err)
+				return Token{}, fmt.Errorf("connectors: persist refreshed token: %w", err)
 			}
 		}
 		return fresh, nil
@@ -252,7 +210,7 @@ func (v *Vault) Token(ctx context.Context, tenantID, userID uuid.UUID, providerN
 // AccessToken is Token's narrow projection for a caller (a connector Tool)
 // that only ever needs the bearer value for an outbound Authorization
 // header, never the refresh token or expiry — the smallest interface a
-// builtin tool can depend on without importing golang.org/x/oauth2 itself.
+// builtin tool can depend on without importing this package's Token.
 func (v *Vault) AccessToken(ctx context.Context, tenantID, userID uuid.UUID, providerName string) (string, error) {
 	tok, err := v.Token(ctx, tenantID, userID, providerName)
 	if err != nil {

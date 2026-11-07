@@ -68,6 +68,7 @@ var infraDeps = []string{
 	"github.com/moby",
 	"github.com/containerd",
 	"github.com/alibaba",
+	"golang.org/x/oauth2",
 }
 
 // noInfra is the rule for a package that is part of the core (a vocabulary, a
@@ -90,11 +91,10 @@ func noInfra(subject, pkg string) boundaryRule {
 func init() {
 	// The core and every feature package that is written against ports. Each is
 	// clean today; this is the ratchet that keeps it so. Deliberately absent:
-	//   - internal/connectors: its public API carries golang.org/x/oauth2 types
-	//     (the protocol library, not a store), so wrapping it is a redesign;
-	//   - internal/skills: ScriptTool's unsandboxed fallback runs os/exec;
 	//   - internal/sandbox: it IS the container adapter for tools.SandboxExec;
-	//   - the REST and MCP surfaces: HTTP is what a driving adapter is for.
+	//   - the REST and MCP surfaces: HTTP is what a driving adapter is for;
+	//   - internal/tools/builtin: the first-party tool catalog, whose shell and
+	//     web tools are the process and HTTP adapters the pipeline calls.
 	for _, s := range []struct{ subject, pkg string }{
 		{"the kernel", "kernel"},
 		{"telemetry vocabulary", "internal/obs"},
@@ -124,6 +124,8 @@ func init() {
 		{"the shared surface primitives", "internal/surfaces"},
 		{"content access grants", "internal/contentaccess"},
 		{"reporting", "internal/reporting"},
+		{"the connectors vault", "internal/connectors"},
+		{"skills", "internal/skills"},
 	} {
 		rules = append(rules, noInfra(s.subject, s.pkg))
 	}

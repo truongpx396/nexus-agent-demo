@@ -18,6 +18,7 @@ import (
 	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/config"
 	"github.com/truongpx396/nexus-agent-demo/internal/connectors"
+	connoauth "github.com/truongpx396/nexus-agent-demo/internal/connectors/oauth2"
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/delegate"
@@ -200,9 +201,9 @@ func newToolPipeline(st *store.Store, cfgStore config.Loader, keyStore *cryptopg
 // NEXUS_OAUTH_PROVIDERS registers nothing — the honest empty default this
 // codebase's other optional integrations (skills signing, sandboxing) also
 // use.
-func newConnectorRegistry() *connectors.Registry {
+func newConnectorRegistry() *connoauth.Registry {
 	names := strings.Split(envOr("NEXUS_OAUTH_PROVIDERS", ""), ",")
-	var providers []connectors.Provider
+	var providers []connoauth.Provider
 	for _, name := range names {
 		name = strings.TrimSpace(name)
 		if name == "" {
@@ -217,7 +218,7 @@ func newConnectorRegistry() *connectors.Registry {
 		if raw := envOr("NEXUS_OAUTH_"+upper+"_SCOPES", ""); raw != "" {
 			scopes = strings.Split(raw, ",")
 		}
-		providers = append(providers, connectors.Provider{
+		providers = append(providers, connoauth.Provider{
 			Name:         name,
 			ClientID:     clientID,
 			ClientSecret: envOr("NEXUS_OAUTH_"+upper+"_CLIENT_SECRET", ""),
@@ -229,7 +230,7 @@ func newConnectorRegistry() *connectors.Registry {
 			},
 		})
 	}
-	return connectors.NewRegistry(providers...)
+	return connoauth.NewRegistry(providers...)
 }
 
 // devSkillsSigningPubkey is the public half of the fixed, deterministic

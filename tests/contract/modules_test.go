@@ -32,7 +32,7 @@ var adapterDirs = map[string]bool{
 	"postgres": true, "redis": true, "inmem": true, "sealed": true,
 	"otlp": true, "langfuse": true, "profiling": true, "exechook": true, "httphook": true,
 	"kerneladapter": true, "anthropic": true, "litellm": true, "fake": true, "wire": true,
-	"signerkey": true, "costtest": true, "logtest": true,
+	"signerkey": true, "costtest": true, "logtest": true, "oauth2": true,
 }
 
 // persistenceKit is the shared way every feature's Postgres adapter reaches its

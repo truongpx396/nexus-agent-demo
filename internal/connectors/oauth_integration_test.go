@@ -24,6 +24,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/config"
 	configpg "github.com/truongpx396/nexus-agent-demo/internal/config/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/connectors"
+	connoauth "github.com/truongpx396/nexus-agent-demo/internal/connectors/oauth2"
 	connectorspg "github.com/truongpx396/nexus-agent-demo/internal/connectors/postgres"
 	connectorsredis "github.com/truongpx396/nexus-agent-demo/internal/connectors/redis"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
@@ -161,7 +162,7 @@ func TestVault_BeginAuthRefusesUnadmittedProvider(t *testing.T) {
 	}
 	v := &connectors.Vault{
 		Config: configpg.NewStore(s), Connections: connectorspg.NewConnections(s, cryptopg.NewKeyStore(kek)), States: connectorsredis.NewStates(redisClient),
-		Providers: connectors.NewRegistry(connectors.Provider{Name: "acme", Endpoint: oauth2.Endpoint{AuthURL: "https://acme.example/authorize", TokenURL: "https://acme.example/token"}}), //nolint:gosec // fixture endpoints, no credential
+		Providers: connoauth.NewRegistry(connoauth.Provider{Name: "acme", Endpoint: oauth2.Endpoint{AuthURL: "https://acme.example/authorize", TokenURL: "https://acme.example/token"}}), //nolint:gosec // fixture endpoints, no credential
 	}
 	if _, err := v.BeginAuth(context.Background(), tenantID, uuid.New(), "acme"); err == nil {
 		t.Fatal("BeginAuth for an unadmitted provider succeeded, want a refusal")
@@ -184,7 +185,7 @@ func TestVault_FullRoundTrip_BeginAuthCallbackThenToken(t *testing.T) {
 	}
 	v := &connectors.Vault{
 		Config: configpg.NewStore(s), Connections: connectorspg.NewConnections(s, cryptopg.NewKeyStore(kek)), States: connectorsredis.NewStates(redisClient),
-		Providers: connectors.NewRegistry(connectors.Provider{Name: "acme", Endpoint: oauth2.Endpoint{AuthURL: "https://acme.example/authorize", TokenURL: tokenSrv.URL}, ClientID: "client-1", ClientSecret: "secret-1"}),
+		Providers: connoauth.NewRegistry(connoauth.Provider{Name: "acme", Endpoint: oauth2.Endpoint{AuthURL: "https://acme.example/authorize", TokenURL: tokenSrv.URL}, ClientID: "client-1", ClientSecret: "secret-1"}),
 	}
 
 	redirectURL, err := v.BeginAuth(context.Background(), tenantID, userID, "acme")
@@ -267,7 +268,7 @@ func TestVault_TokenRefreshesWhenExpired(t *testing.T) {
 	}
 	v := &connectors.Vault{
 		Config: configpg.NewStore(s), Connections: connectorspg.NewConnections(s, cryptopg.NewKeyStore(kek)), States: connectorsredis.NewStates(redisClient),
-		Providers: connectors.NewRegistry(connectors.Provider{Name: "acme", Endpoint: oauth2.Endpoint{AuthURL: "https://acme.example/authorize", TokenURL: tokenSrv.URL}, ClientID: "client-1", ClientSecret: "secret-1"}),
+		Providers: connoauth.NewRegistry(connoauth.Provider{Name: "acme", Endpoint: oauth2.Endpoint{AuthURL: "https://acme.example/authorize", TokenURL: tokenSrv.URL}, ClientID: "client-1", ClientSecret: "secret-1"}),
 	}
 
 	redirectURL, err := v.BeginAuth(context.Background(), tenantID, userID, "acme")

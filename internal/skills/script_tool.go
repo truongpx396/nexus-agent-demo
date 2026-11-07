@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
-	"time"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/tools"
 )
@@ -14,17 +12,24 @@ import (
 // task 7.5: "a bundled script registers as a real tool through the ordinary
 // gates or the bundle is refused") — dispatched, permission-chained, and
 // audited exactly like any builtin tool, never given a privileged execution
-// path of its own. Runs through rc.Sandbox when set, exactly like
-// builtin.Shell; otherwise a local, unsandboxed os/exec, for tests and any
-// caller that hasn't wired one. Registered under the "skill" namespace
-// (never "platform") so a bundle's tool identity is visibly distinct from a
-// first-party builtin.
+// path of its own. Registered under the "skill" namespace (never "platform") so
+// a bundle's tool identity is visibly distinct from a first-party builtin.
+//
+// A script runs only through rc.Sandbox. Unlike builtin.Shell, which falls back
+// to a local process on a machine with no sandbox configured, there is no
+// fallback here: this package starts no processes, and an admitted third-party
+// bundle's script is not what an operator expects to run unconfined because
+// NEXUS_SANDBOX happens to be unset. With no sandbox the call is refused with a
+// reason the model and the operator can both read.
 type ScriptTool struct {
 	SkillID     string
 	Description string
 	Content     []byte
-	Timeout     time.Duration
 }
+
+// ReasonNoSandbox is the Result.Reason of a script call that was refused because
+// the run has no sandbox to execute it in.
+const ReasonNoSandbox = "skill_script_requires_sandbox: set NEXUS_SANDBOX=docker or opensandbox to run skill scripts"
 
 func (s ScriptTool) ID() tools.ToolRef {
 	return tools.ToolRef{Namespace: "skill", Name: s.SkillID, Version: "v1"}
@@ -57,44 +62,22 @@ func (ScriptTool) CheckPermissions(context.Context, json.RawMessage, tools.RunCo
 func (ScriptTool) ValidateInput(context.Context, json.RawMessage, tools.RunContext) error { return nil }
 
 func (s ScriptTool) Call(ctx context.Context, _ json.RawMessage, rc tools.RunContext) (tools.Result, error) {
-	if rc.Sandbox != nil {
-		output, exitCode, breach, err := rc.Sandbox.Exec(ctx, string(s.Content))
-		if err != nil {
-			return tools.Result{IsError: true, Reason: err.Error()}, nil
-		}
-		out, merr := json.Marshal(map[string]string{"output": output})
-		if merr != nil {
-			return tools.Result{}, merr
-		}
-		if breach != "" {
-			return tools.Result{Output: out, IsError: true, Reason: "sandbox_breach: " + breach}, nil
-		}
-		if exitCode != 0 {
-			return tools.Result{Output: out, IsError: true, Reason: fmt.Sprintf("exit status %d", exitCode)}, nil
-		}
-		return tools.Result{Output: out}, nil
+	if rc.Sandbox == nil {
+		return tools.Result{IsError: true, Reason: ReasonNoSandbox}, nil
 	}
-
-	timeout := s.Timeout
-	if timeout <= 0 {
-		timeout = 30 * time.Second
-	}
-	cctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	cmd := exec.CommandContext(cctx, "/bin/sh", "-c", string(s.Content)) //nolint:gosec // s.Content is admitted skill-bundle content, run exactly like builtin.Shell runs an arbitrary command — internal/permissions bounds it, not this call site
-	if rc.WorkspaceDir != "" {
-		cmd.Dir = rc.WorkspaceDir
-	}
-	cmd.WaitDelay = 500 * time.Millisecond // see builtin.Shell's identical field for why
-	output, runErr := cmd.CombinedOutput()
-
-	out, err := json.Marshal(map[string]string{"output": string(output)})
+	output, exitCode, breach, err := rc.Sandbox.Exec(ctx, string(s.Content))
 	if err != nil {
-		return tools.Result{}, err
+		return tools.Result{IsError: true, Reason: err.Error()}, nil
 	}
-	if runErr != nil {
-		return tools.Result{Output: out, IsError: true, Reason: runErr.Error()}, nil
+	out, merr := json.Marshal(map[string]string{"output": output})
+	if merr != nil {
+		return tools.Result{}, merr
+	}
+	if breach != "" {
+		return tools.Result{Output: out, IsError: true, Reason: "sandbox_breach: " + breach}, nil
+	}
+	if exitCode != 0 {
+		return tools.Result{Output: out, IsError: true, Reason: fmt.Sprintf("exit status %d", exitCode)}, nil
 	}
 	return tools.Result{Output: out}, nil
 }
