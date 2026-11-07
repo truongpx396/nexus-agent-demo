@@ -54,11 +54,14 @@ type erasurePayload struct {
 // EraseTenant performs task 5.4's erasure transaction for every session
 // belonging to tenantID: shred every active key, hard-delete every
 // derived artifact for those sessions in the SAME transaction, and
-// append one EventErasure per affected session (chained via chain, if
+// append one EventErasure per affected session (chained via Eraser.Chain, if
 // non-nil — nil is valid for tests with no audit chain wired). The caller
 // (store.Store.InTenantTx) commits tx; ReconcileDerivedArtifacts is the
 // backstop proving no derived row outlives its source even so.
 func (e Eraser) EraseTenant(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, reason string) (crypto.ErasureResult, error) {
+	if e.Artifacts == nil {
+		return crypto.ErasureResult{}, errNoArtifacts
+	}
 	keyIDs, err := ShredTenant(ctx, tx, tenantID)
 	if err != nil {
 		return crypto.ErasureResult{}, err
@@ -79,6 +82,9 @@ func (e Eraser) EraseTenant(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, 
 // the same in-transaction derived-artifact hard-delete + EventErasure as
 // EraseTenant.
 func (e Eraser) EraseSession(ctx context.Context, tx pgx.Tx, tenantID, sessionID uuid.UUID, reason string) (crypto.ErasureResult, error) {
+	if e.Artifacts == nil {
+		return crypto.ErasureResult{}, errNoArtifacts
+	}
 	rows, err := tx.Query(ctx, `SELECT DISTINCT key_id FROM events WHERE session_id = $1 AND key_id != $2`, sessionID, crypto.ErasureKeyID)
 	if err != nil {
 		return crypto.ErasureResult{}, fmt.Errorf("crypto: find keys for session %s: %w", sessionID, err)
@@ -117,9 +123,6 @@ func (e Eraser) EraseSession(ctx context.Context, tx pgx.Tx, tenantID, sessionID
 }
 
 func (e Eraser) finish(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, sessionIDs []uuid.UUID, shreddedKeyIDs []string, reason string) (crypto.ErasureResult, error) {
-	if e.Artifacts == nil {
-		return crypto.ErasureResult{}, errNoArtifacts
-	}
 	var artifacts []crypto.DerivedArtifact
 	if len(sessionIDs) > 0 {
 		var err error
@@ -185,11 +188,13 @@ func (e Eraser) ReconcileDerivedArtifacts(ctx context.Context, tx pgx.Tx) ([]cry
 	if e.Artifacts == nil {
 		return nil, errNoArtifacts
 	}
+	// encryption_keys.key_id is a uuid and events.key_id is text (it also holds
+	// the non-uuid erasure marker), so the join compares them as text.
 	rows, err := tx.Query(ctx, `
 		SELECT DISTINCT e.session_id FROM events e
 		WHERE NOT EXISTS (
 		  SELECT 1 FROM events e2
-		  JOIN encryption_keys ek ON ek.key_id = e2.key_id
+		  JOIN encryption_keys ek ON ek.key_id::text = e2.key_id
 		  WHERE e2.session_id = e.session_id AND ek.status = 'active'
 		)`)
 	if err != nil {

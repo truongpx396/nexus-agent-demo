@@ -547,3 +547,114 @@ func TestErasure_StructuralReplayAndChainSurviveShredding(t *testing.T) {
 	// this test, which only asserts EraseSession's own transactional
 	// contract.
 }
+
+// TestErasure_ReconcileTombstonesOnlyArtifactsWhoseSessionIsFullyShredded is the
+// backstop task 5.4 names, across the seam erasure now has: crypto decides which
+// sessions are fully shredded, the artifact owner (tools/postgres) tombstones
+// their artifacts. A session whose key is still active keeps its artifact, and a
+// second pass finds nothing more to do.
+func TestErasure_ReconcileTombstonesOnlyArtifactsWhoseSessionIsFullyShredded(t *testing.T) {
+	rig := setupOversightRig(t)
+	ctx := context.Background()
+	eraser := cryptopg.Eraser{Chain: rig.chain, Artifacts: toolspg.DerivedArtifacts{}}
+
+	runSession := func() uuid.UUID {
+		sessionID := uuid.New()
+		rig.createSession(t, sessionID, uuid.New(), "autonomous")
+		prov := fake.New(fake.Script{Chunks: []fake.ChunkSpec{{Kind: "content", Text: "hello"}, {Kind: "done", Done: "stop"}}})
+		k := &kernel.Kernel{
+			Provider: provider.Wrap([]provider.Provider{prov}), Tools: kernel.NotImplementedToolExecutor{},
+			Budget: kernel.NoopBudgetGate{}, Log: postgres.New(rig.st, postgres.Hooks{Chain: rig.chain}),
+		}
+		runToCompletion(t, k, &kernel.RunState{TenantID: rig.tenantID, SessionID: sessionID, Seal: rig.seal(t, sessionID)},
+			kernel.RunConfig{System: "test", ModelID: "fake", MaxTurns: 5, Input: "hi"})
+		return sessionID
+	}
+	addArtifact := func(sessionID uuid.UUID, path string) {
+		t.Helper()
+		if err := rig.st.InTenantTx(ctx, rig.tenantID, func(ctx context.Context, tx pgx.Tx) error {
+			_, err := tx.Exec(ctx, `INSERT INTO derived_artifacts (artifact_id, tenant_id, session_id, kind, path) VALUES ($1,$2,$3,'blob',$4)`,
+				uuid.New(), rig.tenantID, sessionID, path)
+			return err
+		}); err != nil {
+			t.Fatalf("insert derived artifact: %v", err)
+		}
+	}
+	tombstoned := func(sessionID uuid.UUID) (live, gone int) {
+		t.Helper()
+		if err := rig.st.InTenantTx(ctx, rig.tenantID, func(ctx context.Context, tx pgx.Tx) error {
+			return tx.QueryRow(ctx, `SELECT count(*) FILTER (WHERE deleted_at IS NULL), count(*) FILTER (WHERE deleted_at IS NOT NULL) FROM derived_artifacts WHERE session_id = $1`, sessionID).Scan(&live, &gone)
+		}); err != nil {
+			t.Fatalf("count artifacts: %v", err)
+		}
+		return live, gone
+	}
+
+	shredded, active := runSession(), runSession()
+	addArtifact(shredded, "/spill/shredded.blob")
+	addArtifact(active, "/spill/active.blob")
+
+	// Shred the first session's keys directly, so its artifact outlives them: the
+	// gap the synchronous erasure missed and Reconcile exists to close.
+	if err := rig.st.InTenantTx(ctx, rig.tenantID, func(ctx context.Context, tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `SELECT DISTINCT key_id FROM events WHERE session_id = $1 AND key_id != $2`, shredded, crypto.ErasureKeyID)
+		if err != nil {
+			return err
+		}
+		var keyIDs []string
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				return err
+			}
+			keyIDs = append(keyIDs, id)
+		}
+		rows.Close()
+		for _, id := range keyIDs {
+			if err := cryptopg.Shred(ctx, tx, id); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("shred the session's keys: %v", err)
+	}
+
+	var found []crypto.DerivedArtifact
+	if err := rig.st.InTenantTx(ctx, rig.tenantID, func(ctx context.Context, tx pgx.Tx) error {
+		var err error
+		found, err = eraser.ReconcileDerivedArtifacts(ctx, tx)
+		return err
+	}); err != nil {
+		t.Fatalf("ReconcileDerivedArtifacts: %v", err)
+	}
+	if len(found) != 1 || found[0].SessionID != shredded || found[0].Path != "/spill/shredded.blob" {
+		t.Fatalf("reconciled %+v, want exactly the artifact of the fully shredded session", found)
+	}
+	if live, gone := tombstoned(shredded); live != 0 || gone != 1 {
+		t.Errorf("shredded session's artifact: %d live, %d tombstoned; want it tombstoned, not deleted (the row proves the gap was found)", live, gone)
+	}
+	if live, gone := tombstoned(active); live != 1 || gone != 0 {
+		t.Errorf("active session's artifact: %d live, %d tombstoned; want it untouched", live, gone)
+	}
+
+	var second []crypto.DerivedArtifact
+	if err := rig.st.InTenantTx(ctx, rig.tenantID, func(ctx context.Context, tx pgx.Tx) error {
+		var err error
+		second, err = eraser.ReconcileDerivedArtifacts(ctx, tx)
+		return err
+	}); err != nil {
+		t.Fatalf("second ReconcileDerivedArtifacts: %v", err)
+	}
+	if len(second) != 0 {
+		t.Errorf("a second pass reconciled %+v, want nothing: the first closed the gap", second)
+	}
+
+	// An Eraser with no artifact store must refuse rather than skip the step.
+	if err := rig.st.InTenantTx(ctx, rig.tenantID, func(ctx context.Context, tx pgx.Tx) error {
+		_, err := cryptopg.Eraser{Chain: rig.chain}.ReconcileDerivedArtifacts(ctx, tx)
+		return err
+	}); err == nil {
+		t.Error("an Eraser with no ArtifactStore reconciled without error")
+	}
+}
