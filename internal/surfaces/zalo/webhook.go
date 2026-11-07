@@ -306,7 +306,7 @@ func (s *Server) drainAndNotify(ctx context.Context, tenantID, sessionID uuid.UU
 
 // notificationPayload mirrors internal/surfaces/telegram's own (its doc
 // comment) — decrypts EventContent the same way
-// internal/surfaces/rest/run_events.go's toEventDTO does.
+// internal/runs/rest/run_events.go's toEventDTO does.
 func (s *Server) notificationPayload(ctx context.Context, opener runs.EventOpener, sessionID uuid.UUID, ev eventlog.Event) (payload []byte, ok bool) {
 	switch ev.Type { //nolint:exhaustive // only these two event types are ever worth notifying a chat user about
 	case eventlog.EventApprovalRequested:

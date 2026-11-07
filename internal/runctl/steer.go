@@ -64,3 +64,36 @@ func (c *Control) Steer(ctx context.Context, tenantID, sessionID uuid.UUID, inpu
 	}
 	return ev, nil
 }
+
+// Send delivers a human's message to a session and leaves it to the
+// appropriate path to act on it: a conversational session paused in
+// awaiting_input is continued (ResumeConversation, which appends the message
+// and queues the continuation), and anything else is steered (Steer, which
+// nudges a task that is already under way). Steer alone has nothing to steer in
+// a paused conversation and refuses it, so a caller that does not know which
+// state the session is in, as the REST steer endpoint does not, asks Send.
+//
+// The status is read first and acted on after, in separate transactions, as the
+// REST handler this replaces did. If the session moves between the two, the
+// path chosen refuses it (ResumeConversation claims the session atomically,
+// Steer rejects a paused one), so the message is never appended twice or into
+// the wrong state.
+func (c *Control) Send(ctx context.Context, tenantID, sessionID uuid.UUID, input string) error {
+	var status string
+	if err := c.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
+		sess, err := tx.GetSession(ctx, sessionID)
+		if err != nil {
+			return err
+		}
+		status = sess.Status
+		return nil
+	}); err != nil {
+		return err
+	}
+	if status == eventlog.SessionStatusAwaitingInput {
+		_, err := c.ResumeConversation(ctx, tenantID, sessionID, input)
+		return err
+	}
+	_, err := c.Steer(ctx, tenantID, sessionID, input)
+	return err
+}

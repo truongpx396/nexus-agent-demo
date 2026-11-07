@@ -3,6 +3,8 @@ package rest
 import (
 	"net/http"
 	"time"
+
+	restkit "github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
 )
 
 // listSessionsLimit bounds GET /v1/sessions -- a sidebar has no reason to
@@ -24,13 +26,13 @@ type sessionSummary struct {
 
 // handleListSessions is GET /v1/sessions: the calling principal's own root
 // sessions, newest first -- the web UI's session sidebar.
-func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
-	tenantID, userID, ok := s.principal(w, r)
+func (h *Handler) handleListSessions(w http.ResponseWriter, r *http.Request) {
+	tenantID, userID, ok := restkit.Principal(w, r)
 	if !ok {
 		return
 	}
 
-	runList, err := s.Reader.ListRuns(r.Context(), tenantID, userID, listSessionsLimit)
+	runList, err := h.Reader.ListRuns(r.Context(), tenantID, userID, listSessionsLimit)
 	if err != nil {
 		http.Error(w, "list sessions: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -43,5 +45,5 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 			CreatedAt: run.CreatedAt, AutonomyLevel: run.AutonomyLevel,
 		}
 	}
-	writeJSON(w, http.StatusOK, views)
+	restkit.WriteJSON(w, http.StatusOK, views)
 }

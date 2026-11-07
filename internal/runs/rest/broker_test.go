@@ -53,7 +53,7 @@ func TestParseBusChannel_RoundTripsEventsAndDeltas(t *testing.T) {
 
 func TestPublishEvent_WithBusSet_PublishesTheWireShapeRelayEventExpects(t *testing.T) {
 	bus := &fakeBus{}
-	s := &Server{broker: newBroker(), Bus: bus}
+	s := &Handler{broker: newBroker(), Bus: bus}
 	sessionID := uuid.New()
 	tenantID := uuid.New()
 	ev := eventlog.Event{EventID: uuid.New(), SessionID: sessionID, TenantID: tenantID, Type: eventlog.EventContent, Seq: 3}
@@ -81,7 +81,7 @@ func TestPublishEvent_WithBusSet_PublishesTheWireShapeRelayEventExpects(t *testi
 
 func TestPublishEvent_WithBusSet_CarriesTheErrorAsAString(t *testing.T) {
 	bus := &fakeBus{}
-	s := &Server{broker: newBroker(), Bus: bus}
+	s := &Handler{broker: newBroker(), Bus: bus}
 	sessionID := uuid.New()
 	runErr := errors.New("seal event payload: boom")
 
@@ -101,7 +101,7 @@ func TestPublishEvent_WithBusSet_CarriesTheErrorAsAString(t *testing.T) {
 
 func TestPublishDelta_WithBusSet_PublishesToTheDeltasChannel(t *testing.T) {
 	bus := &fakeBus{}
-	s := &Server{broker: newBroker(), Bus: bus}
+	s := &Handler{broker: newBroker(), Bus: bus}
 	sessionID := uuid.New()
 	d := DeltaDTO{Kind: "content", Text: "hello"}
 
@@ -132,7 +132,7 @@ func TestPublishDelta_WithBusSet_PublishesToTheDeltasChannel(t *testing.T) {
 // right after, exactly like the old same-process broker.publish +
 // closeSession pairing did.
 func TestRelayEvent_ClosesLocalSubscribersOnTerminal(t *testing.T) {
-	s := &Server{broker: newBroker()}
+	s := &Handler{broker: newBroker()}
 	sessionID := uuid.New()
 	ch, unsubscribe := s.broker.subscribe(sessionID)
 	defer unsubscribe()
@@ -160,7 +160,7 @@ func TestRelayEvent_ClosesLocalSubscribersOnTerminal(t *testing.T) {
 }
 
 func TestRelayDelta_FeedsTheLocalBroker(t *testing.T) {
-	s := &Server{broker: newBroker()}
+	s := &Handler{broker: newBroker()}
 	sessionID := uuid.New()
 	ch, unsubscribe := s.broker.subscribe(sessionID)
 	defer unsubscribe()

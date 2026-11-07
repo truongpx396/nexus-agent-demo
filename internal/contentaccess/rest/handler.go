@@ -1,3 +1,9 @@
+// Package rest is the REST binding of content-access grants (README task 5.11):
+// request a grant, and read a session's content under one. A thin translator
+// over internal/contentaccess, which decides who may read what and records an
+// audited receipt for every grant and every read.
+//
+// The routes mount through the kit in internal/surfaces/rest.
 package rest
 
 import (
@@ -6,7 +12,23 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/truongpx396/nexus-agent-demo/internal/contentaccess"
+	restkit "github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
 )
+
+// Handler serves the grant endpoints. Grants is mandatory.
+type Handler struct {
+	Grants *contentaccess.Grants
+}
+
+var _ restkit.Module = Handler{}
+
+// Routes implements restkit.Module.
+func (h Handler) Routes(r restkit.Router) {
+	r.Handle("POST /v1/sessions/{id}/content-access-grants", h.handleRequestContentAccessGrant)
+	r.Handle("GET /v1/sessions/{id}/content-access-grants/read", h.handleReadUnderGrant)
+}
 
 // Content access grants (README task 5.11) — the only path to plaintext
 // outside a run's own audience. Distinct from handleEvents above (this
@@ -29,8 +51,8 @@ type grantView struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
-func (s *Server) handleRequestContentAccessGrant(w http.ResponseWriter, r *http.Request) {
-	tenantID, _, ok := s.principal(w, r)
+func (h Handler) handleRequestContentAccessGrant(w http.ResponseWriter, r *http.Request) {
+	tenantID, _, ok := restkit.Principal(w, r)
 	if !ok {
 		return
 	}
@@ -54,19 +76,19 @@ func (s *Server) handleRequestContentAccessGrant(w http.ResponseWriter, r *http.
 		return
 	}
 
-	gr, err := s.Grants.RequestGrant(r.Context(), tenantID, sessionID, granteeID, req.Reason, time.Duration(req.TTLSeconds)*time.Second)
+	gr, err := h.Grants.RequestGrant(r.Context(), tenantID, sessionID, granteeID, req.Reason, time.Duration(req.TTLSeconds)*time.Second)
 	if err != nil {
 		http.Error(w, "request grant: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusCreated, grantView{
+	restkit.WriteJSON(w, http.StatusCreated, grantView{
 		GrantID: gr.GrantID.String(), SessionID: gr.SessionID.String(), GranteeID: gr.GranteeID.String(),
 		Reason: gr.Reason, ExpiresAt: gr.ExpiresAt,
 	})
 }
 
-func (s *Server) handleReadUnderGrant(w http.ResponseWriter, r *http.Request) {
-	tenantID, userID, ok := s.principal(w, r)
+func (h Handler) handleReadUnderGrant(w http.ResponseWriter, r *http.Request) {
+	tenantID, userID, ok := restkit.Principal(w, r)
 	if !ok {
 		return
 	}
@@ -80,10 +102,10 @@ func (s *Server) handleReadUnderGrant(w http.ResponseWriter, r *http.Request) {
 	// handleRequestContentAccessGrant, where an admin names a DIFFERENT
 	// principal to authorize, a read is always "show ME what I was
 	// granted," never "show me what someone else was granted."
-	dtos, err := s.Grants.Read(r.Context(), tenantID, sessionID, userID)
+	dtos, err := h.Grants.Read(r.Context(), tenantID, sessionID, userID)
 	if err != nil {
 		http.Error(w, "read under grant: "+err.Error(), http.StatusForbidden)
 		return
 	}
-	writeJSON(w, http.StatusOK, dtos)
+	restkit.WriteJSON(w, http.StatusOK, dtos)
 }

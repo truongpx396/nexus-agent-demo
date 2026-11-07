@@ -161,7 +161,7 @@ func (b *broker) publish(sessionID uuid.UUID, p published) {
 // subscribed to (the common case for a queue-resumed run with no attached
 // client) makes this a no-op, not an error.
 //
-// With s.Bus set (cmd/nexusd always sets it), this publishes to Redis
+// With h.Bus set (cmd/nexusd always sets it), this publishes to Redis
 // instead of calling the local broker directly — startEventBus's own
 // subscriber loop is what actually calls RelayDelta, so a same-process
 // caller and a cross-process worker go through the exact same path. Unlike
@@ -172,9 +172,9 @@ func (b *broker) publish(sessionID uuid.UUID, p published) {
 // ever sees lock tokens, cost counters, and OAuth CSRF state). Acceptable
 // only because Redis is already assumed private-network/trusted, the same
 // assumption this deployment's session lock and cost gate already lean on.
-func (s *Server) PublishDelta(sessionID uuid.UUID, d DeltaDTO) {
-	if s.Bus == nil {
-		s.broker.publish(sessionID, published{Delta: &d})
+func (h *Handler) PublishDelta(sessionID uuid.UUID, d DeltaDTO) {
+	if h.Bus == nil {
+		h.broker.publish(sessionID, published{Delta: &d})
 		return
 	}
 	raw, err := json.Marshal(d)
@@ -182,7 +182,7 @@ func (s *Server) PublishDelta(sessionID uuid.UUID, d DeltaDTO) {
 		log.Error().Err(err).Any("session_id", sessionID).Msg("rest: marshal delta for bus")
 		return
 	}
-	if err := s.Bus.Publish(context.Background(), DeltasChannel(sessionID), raw); err != nil {
+	if err := h.Bus.Publish(context.Background(), DeltasChannel(sessionID), raw); err != nil {
 		log.Error().Err(err).Any("session_id", sessionID).Msg("rest: publish delta to bus")
 	}
 }
@@ -198,23 +198,23 @@ func (s *Server) PublishDelta(sessionID uuid.UUID, d DeltaDTO) {
 // happens first (kernel/loop.go); everything this method does is a
 // delivery/side-effect optimization on top of that, never a second source
 // of truth.
-func (s *Server) PublishEvent(tenantID, sessionID uuid.UUID, e eventlog.Event, evErr error) {
-	if s.Bus == nil {
-		s.RelayEvent(sessionID, e, evErr)
+func (h *Handler) PublishEvent(tenantID, sessionID uuid.UUID, e eventlog.Event, evErr error) {
+	if h.Bus == nil {
+		h.RelayEvent(sessionID, e, evErr)
 	} else if raw, err := json.Marshal(EventBusMessage{Event: &e, Err: errString(evErr)}); err != nil {
 		log.Error().Err(err).Any("session_id", sessionID).Msg("rest: marshal event for bus")
-	} else if err := s.Bus.Publish(context.Background(), EventsChannel(sessionID), raw); err != nil {
+	} else if err := h.Bus.Publish(context.Background(), EventsChannel(sessionID), raw); err != nil {
 		log.Error().Err(err).Any("session_id", sessionID).Msg("rest: publish event to bus")
 	}
 
 	if evErr != nil {
 		return
 	}
-	if s.Outbox != nil && s.OutboxSender != nil && e.Type == eventlog.EventApprovalRequested {
-		s.deliverApprovalNotification(sessionID, e)
+	if h.Outbox != nil && h.OutboxSender != nil && e.Type == eventlog.EventApprovalRequested {
+		h.deliverApprovalNotification(sessionID, e)
 	}
-	if s.Exporter != nil && e.Type == eventlog.EventTerminal {
-		s.emitTerminalSpan(tenantID, sessionID)
+	if h.Exporter != nil && e.Type == eventlog.EventTerminal {
+		h.emitTerminalSpan(tenantID, sessionID)
 	}
 }
 
@@ -238,15 +238,15 @@ func errString(err error) string {
 // on terminal-event-observed, not on channel-closed, is what keeps an SSE
 // client waiting correctly across however long the queued turn loop
 // actually takes, on whichever process runs it.
-func (s *Server) RelayEvent(sessionID uuid.UUID, e eventlog.Event, evErr error) {
-	s.broker.publish(sessionID, published{Event: e, Err: evErr})
+func (h *Handler) RelayEvent(sessionID uuid.UUID, e eventlog.Event, evErr error) {
+	h.broker.publish(sessionID, published{Event: e, Err: evErr})
 	if evErr == nil && e.Type == eventlog.EventTerminal {
-		s.broker.closeSession(sessionID)
+		h.broker.closeSession(sessionID)
 	}
 }
 
-func (s *Server) RelayDelta(sessionID uuid.UUID, d DeltaDTO) {
-	s.broker.publish(sessionID, published{Delta: &d})
+func (h *Handler) RelayDelta(sessionID uuid.UUID, d DeltaDTO) {
+	h.broker.publish(sessionID, published{Delta: &d})
 }
 
 // closeSession closes every remaining subscriber channel for sessionID and

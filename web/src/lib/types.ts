@@ -20,7 +20,7 @@ export interface CreateRunRequest {
   autonomy?: Autonomy | "";
   budget_usd?: string;
   // conversational opts the session into pause-not-terminate semantics
-  // (internal/surfaces/rest/run_create.go's own doc comment on
+  // (internal/runs/rest/run_create.go's own doc comment on
   // createRunRequest.Conversational): a plain reply suspends the session
   // awaiting the next message ("awaiting_input" status) instead of ending
   // the run, and POST .../steer transparently resumes it in place. The web
@@ -54,7 +54,7 @@ export interface RunEvent {
   body?: unknown;
 }
 
-// DeltaDTO, internal/surfaces/rest/broker.go -- a live, best-effort preview
+// DeltaDTO, internal/runs/rest/broker.go -- a live, best-effort preview
 // chunk sent as its own `event: delta` SSE frame, never replayed from
 // history and never carrying an event_id/seq the way RunEvent does (that's
 // what makes it structurally distinguishable from one). Kind == "reasoning"
@@ -67,7 +67,7 @@ export interface DeltaFrame {
   tool_name?: string;
 }
 
-// sessionSummary, internal/surfaces/rest/sessions_list.go -- one row of
+// sessionSummary, internal/runs/rest/sessions_list.go -- one row of
 // GET /v1/sessions (the web UI's session sidebar).
 export interface SessionSummary {
   run_id: string;
@@ -77,7 +77,7 @@ export interface SessionSummary {
   autonomy_level: string;
 }
 
-// ApprovalView, internal/surfaces/rest/oversight.go.
+// ApprovalView, internal/oversight/rest/handler.go.
 export interface ApprovalView {
   approval_id: string;
   session_id: string;
@@ -89,7 +89,7 @@ export interface ApprovalView {
   created_at: string;
 }
 
-// ResumeOutcome, internal/surfaces/rest/oversight.go -- the response for
+// ResumeOutcome, internal/oversight/rest/handler.go -- the response for
 // grant/deny.
 export interface ResumeOutcome {
   session_id: string;
@@ -97,7 +97,7 @@ export interface ResumeOutcome {
   error?: string;
 }
 
-// ForkView, internal/surfaces/rest/runctl.go.
+// ForkView, internal/runctl/rest/handler.go.
 export interface ForkView {
   session_id: string;
   digest_diverged: boolean;

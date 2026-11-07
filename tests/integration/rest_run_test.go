@@ -44,8 +44,9 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
 	"github.com/truongpx396/nexus-agent-demo/internal/runs"
 	runspg "github.com/truongpx396/nexus-agent-demo/internal/runs/postgres"
+	runsrest "github.com/truongpx396/nexus-agent-demo/internal/runs/rest"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
-	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
+	restkit "github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 	"github.com/truongpx396/nexus-agent-demo/migrations"
 )
@@ -342,8 +343,7 @@ func TestRESTRunEndToEnd(t *testing.T) {
 	token := mustIssueToken(t, issuer, tenantID, userID)
 	wrongUserToken := mustIssueToken(t, issuer, tenantID, uuid.New())
 
-	srv := rest.NewServer(newTestLauncher(st, keyStore, starter), runspg.Reader{Store: st, KeyStore: keyStore})
-	srv.Verifier = verifier
+	srv := restkit.NewServer(verifier, runsrest.NewHandler(newTestLauncher(st, keyStore, starter), runspg.Reader{Store: st, KeyStore: keyStore}))
 	httpSrv := httptest.NewServer(srv.Handler())
 	defer httpSrv.Close()
 

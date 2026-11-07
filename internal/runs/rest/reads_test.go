@@ -13,6 +13,8 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/runs"
+	restkit "github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
+	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest/resttest"
 )
 
 // fakeReader is a runs.Reader with no database behind it, so these tests pin
@@ -48,14 +50,12 @@ func (f *fakeReader) Open(_ context.Context, e eventlog.Event) ([]byte, error) {
 
 func readsServer(t *testing.T, tenantID, userID uuid.UUID, r *fakeReader) http.Handler {
 	t.Helper()
-	s := NewServer(nil, r)
-	s.Verifier = fakeVerifier{wantToken: "good", tenantID: tenantID, userID: userID}
-	return s.Handler()
+	return restkit.NewServer(resttest.Verifier{TenantID: tenantID, UserID: userID}, NewHandler(nil, r)).Handler()
 }
 
 func get(h http.Handler, path string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodGet, path, nil)
-	req.Header.Set("Authorization", "Bearer good")
+	req.Header.Set("Authorization", "Bearer "+resttest.Token)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec

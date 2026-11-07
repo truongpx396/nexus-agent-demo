@@ -157,6 +157,53 @@ func init() {
 	}
 }
 
+func init() {
+	// Each feature's REST binding sits beside the feature (internal/<feature>/rest)
+	// and mounts through the kit in internal/surfaces/rest. A binding is a driving
+	// adapter: it may import its feature's use case and the kit, and nothing that
+	// stores or seals, so it translates HTTP and nothing more.
+	for _, s := range []struct {
+		subject, pkg string
+		// reachesKernel is true where the feature itself runs agent control
+		// flow (oversight resumes a run, runctl drives one), so the kernel is
+		// transitively linked and only a direct import is forbidden.
+		reachesKernel bool
+	}{
+		{"the run REST binding", "internal/runs/rest", false},
+		{"the content-access REST binding", "internal/contentaccess/rest", false},
+		{"the oversight REST binding", "internal/oversight/rest", true},
+		{"the run-control REST binding", "internal/runctl/rest", true},
+	} {
+		rules = append(rules,
+			noStorage(s.subject, s.pkg),
+			boundaryRule{
+				name: s.subject + " must not itself import internal/store, internal/crypto or a database/cache driver",
+				pkg:  modulePrefix + s.pkg,
+				forbidden: []string{
+					modulePrefix + "internal/store",
+					modulePrefix + "internal/crypto",
+					"github.com/jackc/pgx",
+					"github.com/redis",
+				},
+				direct: true,
+			},
+			boundaryRule{
+				name:      s.subject + " must not import the kernel directly",
+				pkg:       modulePrefix + s.pkg,
+				forbidden: []string{modulePrefix + "kernel"},
+				direct:    true,
+			},
+		)
+		if !s.reachesKernel {
+			rules = append(rules, boundaryRule{
+				name:      s.subject + " must not reach the kernel at all",
+				pkg:       modulePrefix + s.pkg,
+				forbidden: []string{modulePrefix + "kernel"},
+			})
+		}
+	}
+}
+
 var rules = []boundaryRule{
 	{
 		name: "kernel must not import surfaces, controlplane, the tool pipeline, an adapter of its own ports, or reach the database or cache",

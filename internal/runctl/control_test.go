@@ -260,3 +260,38 @@ func TestResolveClaim_RecordsTheResolutionWithItsEvent(t *testing.T) {
 		t.Errorf("events = %v, want the claim then its resolution", types)
 	}
 }
+
+func TestSend_ContinuesAPausedConversationAndSteersARunningOne(t *testing.T) {
+	c, f, q := newControl()
+
+	paused := f.seedSession(eventlog.SessionStatusAwaitingInput, "supervised")
+	if err := c.Send(context.Background(), tenant, paused.SessionID, "and then?"); err != nil {
+		t.Fatalf("Send to a paused conversation: %v", err)
+	}
+	if f.sessions[paused.SessionID].Status != eventlog.SessionStatusRunning || len(q.jobs) != 1 {
+		t.Errorf("paused conversation: status %s, %d queued jobs; want it running again with its continuation queued", f.sessions[paused.SessionID].Status, len(q.jobs))
+	}
+
+	running := f.seedSession(eventlog.SessionStatusRunning, "supervised")
+	before := len(f.events)
+	if err := c.Send(context.Background(), tenant, running.SessionID, "also check the logs"); err != nil {
+		t.Fatalf("Send to a running session: %v", err)
+	}
+	if len(f.events) != before+1 || len(q.jobs) != 1 {
+		t.Errorf("running session: %d new events, %d queued jobs; want its message appended and nothing queued (a live run picks it up)", len(f.events)-before, len(q.jobs))
+	}
+}
+
+func TestSend_RefusesAnEndedOrUnknownSession(t *testing.T) {
+	c, f, q := newControl()
+	ended := f.seedSession(eventlog.SessionStatusCompleted, "supervised")
+	if err := c.Send(context.Background(), tenant, ended.SessionID, "too late"); err == nil {
+		t.Error("Send to a completed session succeeded")
+	}
+	if err := c.Send(context.Background(), tenant, uuid.New(), "who?"); err == nil {
+		t.Error("Send to a session that does not exist succeeded")
+	}
+	if len(f.events) != 0 || len(q.jobs) != 0 {
+		t.Errorf("a refused Send left %d events and %d jobs", len(f.events), len(q.jobs))
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/runs"
+	restkit "github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
 )
 
 type getRunResponse struct {
@@ -17,8 +18,8 @@ type getRunResponse struct {
 	TerminalReason *string `json:"terminal_reason,omitempty"`
 }
 
-func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
-	tenantID, userID, ok := s.principal(w, r)
+func (h *Handler) handleGetRun(w http.ResponseWriter, r *http.Request) {
+	tenantID, userID, ok := restkit.Principal(w, r)
 	if !ok {
 		return
 	}
@@ -28,7 +29,7 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	run, ok := s.ownedRun(w, r, tenantID, userID, id)
+	run, ok := h.ownedRun(w, r, tenantID, userID, id)
 	if !ok {
 		return
 	}
@@ -42,8 +43,8 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 // the tenant, 403 for one that belongs to another user, 500 for a real read
 // failure. Reporting a failed read as "not found" would hide an outage behind
 // a client error.
-func (s *Server) ownedRun(w http.ResponseWriter, r *http.Request, tenantID, userID, id uuid.UUID) (runs.RunView, bool) {
-	run, err := s.getSession(r.Context(), tenantID, id)
+func (h *Handler) ownedRun(w http.ResponseWriter, r *http.Request, tenantID, userID, id uuid.UUID) (runs.RunView, bool) {
+	run, err := h.getSession(r.Context(), tenantID, id)
 	switch {
 	case errors.Is(err, runs.ErrNotFound):
 		http.Error(w, "run not found", http.StatusNotFound)
@@ -58,6 +59,6 @@ func (s *Server) ownedRun(w http.ResponseWriter, r *http.Request, tenantID, user
 	return run, true
 }
 
-func (s *Server) getSession(ctx context.Context, tenantID, sessionID uuid.UUID) (runs.RunView, error) {
-	return s.Reader.GetRun(ctx, tenantID, sessionID)
+func (h *Handler) getSession(ctx context.Context, tenantID, sessionID uuid.UUID) (runs.RunView, error) {
+	return h.Reader.GetRun(ctx, tenantID, sessionID)
 }

@@ -43,12 +43,13 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
 	runspg "github.com/truongpx396/nexus-agent-demo/internal/runs/postgres"
+	runsrest "github.com/truongpx396/nexus-agent-demo/internal/runs/rest"
 	"github.com/truongpx396/nexus-agent-demo/internal/skills"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/cli"
 	surfpg "github.com/truongpx396/nexus-agent-demo/internal/surfaces/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
+	restkit "github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools/builtin"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
@@ -378,8 +379,8 @@ func TestRESTAndCLI_ProduceIdenticalEventSequencesAndTerminalReason(t *testing.T
 	issuer := authn.NewDevIssuer(signingKey)
 	token := mustIssueToken(t, issuer, tenantID, userID)
 
-	srv := rest.NewServer(newTestLauncher(st, keyStore, starter), runspg.Reader{Store: st, KeyStore: keyStore})
-	srv.Verifier = authn.NewDevVerifier(authn.PublicKey(signingKey))
+	srv := restkit.NewServer(authn.NewDevVerifier(authn.PublicKey(signingKey)),
+		runsrest.NewHandler(newTestLauncher(st, keyStore, starter), runspg.Reader{Store: st, KeyStore: keyStore}))
 	httpSrv := httptest.NewServer(srv.Handler())
 	defer httpSrv.Close()
 

@@ -106,7 +106,7 @@ foundational deliverable, and the property test for the paired-result invariant 
 - [X] T032 [P] [US1] Anthropic adapter (HTTP, hand-rolled) in `internal/provider/anthropic/anthropic.go`, `internal/provider/anthropic/request.go`, `internal/provider/anthropic/response.go`, `internal/provider/anthropic/stream.go` (bp 2.8; FR-022)
 - [X] T033 [P] [US1] Deterministic router by data label and difficulty, decision persisted on the session, in `internal/provider/router.go` (bp 2.8; FR-023)
 - [X] T034 [P] [US1] Failover taxonomy; commit after the first chunk; never fail over on context overflow, in `internal/provider/failover.go` (bp 2.9; FR-024)
-- [X] T035 [US1] REST surface — create (202), get, SSE events (audience-gated), list sessions — in `internal/surfaces/rest/server.go`, `internal/surfaces/rest/run_create.go`, `internal/surfaces/rest/run_get.go`, `internal/surfaces/rest/run_events.go`, `internal/surfaces/rest/sessions_list.go` (bp 2.10; FR-026)
+- [X] T035 [US1] REST surface — create (202), get, SSE events (audience-gated), list sessions — in `internal/surfaces/rest/server.go`, `internal/runs/rest/run_create.go`, `internal/runs/rest/run_get.go`, `internal/runs/rest/run_events.go`, `internal/runs/rest/sessions_list.go` (bp 2.10; FR-026)
 - [X] T036 [US1] The single composition point that builds a `RunState`/`RunConfig`: `kernelRunStarter` in `cmd/nexusd/runner.go` (FR-015)
 - [X] T037 [P] [US1] State rehydration from the log in `kernel/rehydrate.go` (FR-006)
 - [X] T038 [P] [US1] Metered-call helpers split out of `kernel/turns.go` into `kernel/metering.go` (post-ledger, `903fe3d`; a pure move)
@@ -202,10 +202,10 @@ foundational deliverable, and the property test for the paired-result invariant 
 - [X] T080 [US4] Durable suspend at zero token cost, resume on the approval event in `internal/oversight/resume.go`, `kernel/loop.go` (bp 5.8; FR-057)
 - [X] T081 [P] [US4] Input requests — schema-declared, `on_expiry`, zero authorization — in `internal/oversight/input.go` (bp 5.9; FR-058)
 - [X] T082 [P] [US4] `Invalidate` on cancel, terminal, reap, ceiling breach and steer-into-suspension in `internal/oversight/invalidate.go` (bp 5.10; FR-059)
-- [X] T083 [P] [US4] Content-access grants with a receipt on grant and every read in `internal/contentaccess/grants.go`, `migrations/0009_content_access_grants.sql`, `internal/surfaces/rest/grants.go` (bp 5.11; FR-060)
+- [X] T083 [P] [US4] Content-access grants with a receipt on grant and every read in `internal/contentaccess/grants.go`, `migrations/0009_content_access_grants.sql`, `internal/contentaccess/rest/handler.go` (bp 5.11; FR-060)
 - [X] T084 [US4] Docker sandbox — `--network none`, CPU/memory/PID/wall limits, per-session workspace, breach → terminate and reclaim — in `internal/sandbox/sandbox.go`, `internal/sandbox/session.go`, `migrations/0010_sandbox.sql` (bp 5.12; FR-061)
 - [X] T085 [P] [US4] Egress allowlist for `web_fetch`; connector/MCP endpoints in the sandbox deny set in `internal/tools/builtin/web_fetch.go` (bp 5.13; FR-062)
-- [X] T086 [P] [US4] Approval REST endpoints in `internal/surfaces/rest/oversight.go` (bp 5.6; FR-055)
+- [X] T086 [P] [US4] Approval REST endpoints in `internal/oversight/rest/handler.go` (bp 5.6; FR-055)
 
 **Checkpoint**: an agent a security review survives — with the caveats recorded in spec *Known deviations* 5.
 
@@ -236,7 +236,7 @@ foundational deliverable, and the property test for the paired-result invariant 
 - [X] T098 [US5] Run control — steer, cancel (sole producer of `aborted`), resume, tighten autonomy — in `internal/runctl/steer.go`, `internal/runctl/cancel.go`, `internal/runctl/resume.go`, `internal/runctl/autonomy.go`, `internal/runctl/types.go`, `internal/eventlog/sealed/unit.go` (bp 6.9; FR-071)
 - [X] T099 [P] [US5] Pure replay in `internal/runctl/replay.go` (bp 6.10; FR-072)
 - [X] T100 [P] [US5] Fork — effects disabled, no inherited approvals, own budget/audit chain, digest divergence — in `internal/runctl/fork.go` (bp 6.11; FR-072)
-- [X] T101 [P] [US5] Run-control REST endpoints in `internal/surfaces/rest/runctl.go` (bp 6.9; FR-071)
+- [X] T101 [P] [US5] Run-control REST endpoints in `internal/runctl/rest/handler.go` (bp 6.9; FR-071)
 - [X] T102 [P] [US5] Conversational sessions — `awaiting_input` pause, in-place resume, idle sweep to `idle_timeout` — in `internal/runctl/converse.go`, `migrations/0023_conversational_sessions.sql`, `cmd/nexusd/background.go` (post-ledger, `2975d08`; FR-029)
 - [X] T103 [P] [US5] Durable Rule-of-Two taint — `taint_transition` appended after `tool_result`, restored on every resume path — in `kernel/rehydrate.go`, `internal/tools/pipeline.go` (post-ledger, `08a86b7`; FR-039)
 - [X] T104 [P] [US5] Per-peer session-key lookup for resuming conversations in `internal/store/session.go` (post-ledger, `7606e15`; FR-121)
@@ -529,9 +529,9 @@ foundational deliverable, and the property test for the paired-result invariant 
 
 These shipped after the build ledger was last updated. They are tasked here for completeness; each is already cross-referenced under its story above.
 
-- [X] T228 [P] [US1] Live typing-style preview over SSE, decoupled from the durable log (`OnChunk` → `event: delta`), in `kernel/turns.go`, `internal/surfaces/rest/broker.go`, `web/src/lib/useRunEvents.ts` (post-ledger, `62f052b`; FR-028)
-- [X] T229 [P] [US5] Redis Pub/Sub event bus so an SSE client can be served by a different process than the worker in `cmd/nexusd/eventbus.go`, `internal/surfaces/rest/broker.go` (post-ledger, `2efa4ff`; FR-064)
-- [X] T230 [P] [US11] Session history endpoint and sidebar, and a permissive CORS layer for the bearer-token API, in `internal/surfaces/rest/sessions_list.go`, `internal/surfaces/rest/server.go`, `web/src/components/Sidebar.tsx` (post-ledger, `227b8f4`; FR-123)
+- [X] T228 [P] [US1] Live typing-style preview over SSE, decoupled from the durable log (`OnChunk` → `event: delta`), in `kernel/turns.go`, `internal/runs/rest/broker.go`, `web/src/lib/useRunEvents.ts` (post-ledger, `62f052b`; FR-028)
+- [X] T229 [P] [US5] Redis Pub/Sub event bus so an SSE client can be served by a different process than the worker in `cmd/nexusd/eventbus.go`, `internal/runs/rest/broker.go` (post-ledger, `2efa4ff`; FR-064)
+- [X] T230 [P] [US11] Session history endpoint and sidebar, and a permissive CORS layer for the bearer-token API, in `internal/runs/rest/sessions_list.go`, `internal/surfaces/rest/server.go`, `web/src/components/Sidebar.tsx` (post-ledger, `227b8f4`; FR-123)
 - [X] T231 [P] [US11] Timeline folding of the flat event log into chat items in `web/src/lib/timeline.ts`, `web/src/lib/useRunEvents.ts` (post-ledger, `227b8f4`; FR-123)
 
 ---
@@ -621,7 +621,7 @@ The audit ran against `8e02491`, about seven weeks and 40 pull requests ago. Thi
 | T252 | done | the port, the stale README paths, the terminal-reason count, `.dev/skills`, the "simplified JCS" wording and the `sse.ts` comment are all fixed |
 | T253 | done | the alias table is in [../README.md](../README.md#legacy-task-number-aliases) |
 
-- [ ] T244 Test `Control.Fork` end to end — a fork at a past sequence with an override runs with external effects disabled, inherits no approvals, has its own budget and audit chain, and reports digest divergence — and the REST and CLI fork paths, in `tests/integration/phase6_reliability_test.go`, `internal/runctl/fork.go`, `internal/surfaces/rest/runctl.go` per SC-017 (US5) (missing)
+- [ ] T244 Test `Control.Fork` end to end — a fork at a past sequence with an override runs with external effects disabled, inherits no approvals, has its own budget and audit chain, and reports digest divergence — and the REST and CLI fork paths, in `tests/integration/phase6_reliability_test.go`, `internal/runctl/fork.go`, `internal/runctl/rest/handler.go` per SC-017 (US5) (missing)
 - [ ] T245 Test tamper detection — alter, delete and reorder a receipt and drop one to open a gap, through the owner connection, and assert `Verify` reports each as a break or gap — in a new `tests/integration/audit_tamper_test.go`, `internal/audit/verify.go` per SC-011 (US4) (missing)
 - [ ] T246 Test that a run under a per-task ceiling terminates `cost_exhausted` *before* the overspending provider call and that the recorded `budget_decision` names the refusing budget in `tests/integration/cost_ceiling_test.go` per SC-007 (US3) (missing)
 - [ ] T247 Test that a past call's cost is recomputed to the exact minor unit from the price version in force at the time, across a price change, in `internal/cost/pricebook_test.go`, `internal/cost/record.go` per SC-008 (US3) (missing)

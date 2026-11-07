@@ -98,7 +98,7 @@ func (c *Control) Fork(ctx context.Context, tenantID, parentSessionID uuid.UUID,
 
 	systemPromptVersion := overrides.SystemPromptVersion
 	if systemPromptVersion == "" {
-		systemPromptVersion = "phase2-v1" // matches internal/surfaces/rest/server.go's own hardcoded default — see that file's own doc comment on why: no per-tenant config store exists yet
+		systemPromptVersion = "phase2-v1" // matches internal/runs/launch.go's own hardcoded default — no per-tenant config store exists yet
 	}
 	childDigest := harness.Digest(harness.Config{
 		SystemPromptVersion:   systemPromptVersion,

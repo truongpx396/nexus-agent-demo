@@ -110,7 +110,7 @@ function ComposeOnly() {
  * kernel.RunConfig.Conversational's pause-not-terminate semantics mean a
  * plain reply suspends the session ("awaiting_input" status) rather than
  * ending it, and POST .../steer transparently resumes it in place
- * (internal/surfaces/rest/runctl.go's handleSteerRun). runId never changes
+ * (internal/runctl/rest/handler.go's handleSteerRun). runId never changes
  * as the conversation grows, and there is no client-side chaining: the
  * live SSE subscription (useRunEvents) simply keeps delivering events
  * across turns for as long as the session stays open.

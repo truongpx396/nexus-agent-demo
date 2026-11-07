@@ -11,6 +11,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/runs"
+	restkit "github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
 )
 
 // eventDTO is what an SSE frame's data carries: enough structure to render
@@ -31,8 +32,8 @@ type eventDTO struct {
 	Body      json.RawMessage `json:"body,omitempty"`
 }
 
-func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
-	tenantID, userID, ok := s.principal(w, r)
+func (h *Handler) handleEvents(w http.ResponseWriter, r *http.Request) {
+	tenantID, userID, ok := restkit.Principal(w, r)
 	if !ok {
 		return
 	}
@@ -41,7 +42,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid run id", http.StatusBadRequest)
 		return
 	}
-	if _, ok := s.ownedRun(w, r, tenantID, userID, id); !ok {
+	if _, ok := h.ownedRun(w, r, tenantID, userID, id); !ok {
 		return
 	}
 
@@ -63,10 +64,10 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	// replay actually sent and discarding anything from the live channel at
 	// or below it: seq is strictly sequential per session (store.Append),
 	// so "already replayed" is exactly "seq <= lastSeq", no gaps possible.
-	ch, unsubscribe := s.broker.subscribe(id)
+	ch, unsubscribe := h.broker.subscribe(id)
 	defer unsubscribe()
 
-	opener := s.Reader.EventOpener(tenantID)
+	opener := h.Reader.EventOpener(tenantID)
 	write := func(e eventlog.Event) bool {
 		dto, derr := toEventDTO(r.Context(), opener, e)
 		if derr != nil {
@@ -79,7 +80,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		return e.Type != eventlog.EventTerminal
 	}
 
-	history, err := s.Reader.Events(r.Context(), tenantID, id)
+	history, err := h.Reader.Events(r.Context(), tenantID, id)
 	if err != nil {
 		writeSSEFrame(w, "error", map[string]string{"error": err.Error()})
 		flusher.Flush()

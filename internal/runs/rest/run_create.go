@@ -13,6 +13,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/runs"
+	restkit "github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
 )
 
 type createRunRequest struct {
@@ -47,12 +48,12 @@ type createRunResponse struct {
 	RunID string `json:"run_id"`
 }
 
-func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 	// Task 7.13: the turn-submitting principal, resolved fresh from THIS
 	// request — resolvePrincipal reads the same headers principal() does,
 	// typed as capability.Principal, since starting a run is the clearest
 	// "submitting one turn" action this surface has.
-	principal, perr := s.resolvePrincipal(r)
+	principal, perr := restkit.ResolvePrincipal(r)
 	if perr != nil {
 		http.Error(w, perr.Error(), http.StatusUnauthorized)
 		return
@@ -80,9 +81,9 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var skillSetDigest []byte
-	if s.Skills != nil {
+	if h.Skills != nil {
 		var derr error
-		skillSetDigest, derr = s.Skills.Digest(r.Context(), tenantID)
+		skillSetDigest, derr = h.Skills.Digest(r.Context(), tenantID)
 		if derr != nil {
 			http.Error(w, "resolve skill set digest: "+derr.Error(), http.StatusInternalServerError)
 			return
@@ -96,20 +97,20 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 	// can never silently disagree (mcp.Port.Resolve's own doc comment).
 	var mcpCatalog []provider.ToolSchema
 	var mcpCatalogDigest []byte
-	if s.MCP != nil {
+	if h.MCP != nil {
 		var derr error
-		mcpCatalog, mcpCatalogDigest, derr = s.MCP.Resolve(r.Context(), tenantID, userID)
+		mcpCatalog, mcpCatalogDigest, derr = h.MCP.Resolve(r.Context(), tenantID, userID)
 		if derr != nil {
 			http.Error(w, "resolve MCP catalog: "+derr.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
 
-	if s.Launcher == nil {
+	if h.Launcher == nil {
 		http.Error(w, "server misconfigured: no run launcher wired", http.StatusInternalServerError)
 		return
 	}
-	launched, err := s.Launcher.Launch(r.Context(), runs.LaunchRequest{
+	launched, err := h.Launcher.Launch(r.Context(), runs.LaunchRequest{
 		TenantID: tenantID, UserID: userID, SurfaceID: "rest", Input: req.Input,
 		DataLabel: provider.DataLabel(req.DataLabel), Difficulty: provider.Difficulty(req.Difficulty), Autonomy: autonomy,
 		BudgetUSD: req.BudgetUSD, Conversational: req.Conversational,
@@ -124,7 +125,7 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "create run: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	go s.publishUntilDone(tenantID, launched.SessionID, launched.Events)
+	go h.publishUntilDone(tenantID, launched.SessionID, launched.Events)
 
 	w.Header().Set("content-type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
@@ -132,7 +133,7 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 }
 
 // publishUntilDone drains the runs.Starter's event channel, publishing each
-// event via s.PublishEvent (broker.go) — the same call cmd/nexusd's
+// event via h.PublishEvent (broker.go) — the same call cmd/nexusd's
 // queueRunner.Run makes for a queued job's own events, so this package's
 // synchronous fast path and a queued run driven by an entirely different
 // process converge on identical delivery/side-effect handling. It no longer
@@ -142,9 +143,9 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 // terminal event exists — closing is RelayEvent's job now, triggered by
 // observing an actual EventTerminal, wherever (and whenever) it's actually
 // published from.
-func (s *Server) publishUntilDone(tenantID, sessionID uuid.UUID, events <-chan runs.Event) {
+func (h *Handler) publishUntilDone(tenantID, sessionID uuid.UUID, events <-chan runs.Event) {
 	for re := range events {
-		s.PublishEvent(tenantID, sessionID, re.Event, re.Err)
+		h.PublishEvent(tenantID, sessionID, re.Event, re.Err)
 	}
 }
 
@@ -156,8 +157,8 @@ func (s *Server) publishUntilDone(tenantID, sessionID uuid.UUID, events <-chan r
 // wired in. TerminalReason is read from the session row (a plaintext
 // column, eventlog.Session's own field — never the sealed event payload), so
 // this needs no decrypt path of its own.
-func (s *Server) emitTerminalSpan(tenantID, sessionID uuid.UUID) {
-	sess, err := s.getSession(context.Background(), tenantID, sessionID)
+func (h *Handler) emitTerminalSpan(tenantID, sessionID uuid.UUID) {
+	sess, err := h.getSession(context.Background(), tenantID, sessionID)
 	if err != nil {
 		log.Error().Err(err).Any("session_id", sessionID).Msg("rest: emit terminal span: load session")
 		return
@@ -166,7 +167,7 @@ func (s *Server) emitTerminalSpan(tenantID, sessionID uuid.UUID) {
 	if sess.TerminalReason != nil {
 		attrs["terminal_reason"] = *sess.TerminalReason
 	}
-	if err := s.Exporter.Emit("run.terminal", attrs); err != nil {
+	if err := h.Exporter.Emit("run.terminal", attrs); err != nil {
 		log.Error().Err(err).Any("session_id", sessionID).Msg("rest: emit terminal span")
 	}
 }
@@ -178,7 +179,7 @@ func (s *Server) emitTerminalSpan(tenantID, sessionID uuid.UUID) {
 // deliberately minimal (session id + tool id, both already-plaintext
 // structural fields on eventlog.Event) — never the event's own sealed
 // payload, which this package has no decrypt path for anyway.
-func (s *Server) deliverApprovalNotification(sessionID uuid.UUID, ev eventlog.Event) {
+func (h *Handler) deliverApprovalNotification(sessionID uuid.UUID, ev eventlog.Event) {
 	toolID := ""
 	if ev.ToolID != nil {
 		toolID = *ev.ToolID
@@ -189,7 +190,7 @@ func (s *Server) deliverApprovalNotification(sessionID uuid.UUID, ev eventlog.Ev
 		return
 	}
 	const operatorRecipient = "operator" // no per-tenant notification-target config exists yet (Phase 11's connector/OAuth work); one fixed recipient is the honest interim
-	if err := s.Outbox.Deliver(context.Background(), ev.TenantID, sessionID, ev.Seq, Descriptor.SurfaceID, operatorRecipient, payload, s.OutboxSender); err != nil {
+	if err := h.Outbox.Deliver(context.Background(), ev.TenantID, sessionID, ev.Seq, restkit.Descriptor.SurfaceID, operatorRecipient, payload, h.OutboxSender); err != nil {
 		log.Error().Err(err).Any("session_id", sessionID).Any("seq", ev.Seq).Msg("rest: deliver approval notification")
 	}
 }

@@ -3,9 +3,7 @@ package main
 import (
 	"context"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
-	"iter"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/runs"
 
@@ -14,13 +12,10 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/config"
 	"github.com/truongpx396/nexus-agent-demo/internal/delegate"
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
 	"github.com/truongpx396/nexus-agent-demo/internal/retrieval"
-	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
 	"github.com/truongpx396/nexus-agent-demo/internal/skills"
-	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
 	"github.com/truongpx396/nexus-agent-demo/internal/teams"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools/builtin"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
@@ -166,13 +161,12 @@ func (logSender) Send(_ context.Context, surfaceID, recipient string, payload []
 	return nil
 }
 
-// nexusdSkillSetPort is the only implementation of rest.SkillSetPort this
+// nexusdSkillSetPort is the only implementation of runsrest.SkillSetPort this
 // binary ships (README task 7.6) — resolves one tenant's admitted skill set
 // (internal/config) against the process-wide trusted bundle set
 // (newToolPipeline's admittedSkillBundles) into a SkillSet digest, at
-// session-creation time. internal/surfaces/rest never imports
-// internal/skills or internal/config directly, mirroring every other Port
-// in this file.
+// session-creation time. internal/runs/rest never imports internal/skills or
+// internal/config directly, mirroring every other Port in this file.
 type nexusdSkillSetPort struct {
 	config  config.Loader
 	bundles []skills.SkillBundle
@@ -184,144 +178,6 @@ func (p *nexusdSkillSetPort) Digest(ctx context.Context, tenantID uuid.UUID) ([]
 		return nil, fmt.Errorf("load tenant config for skill set digest: %w", err)
 	}
 	return skills.BuildSkillSet(p.bundles, cfg.AdmittedSkillIDs).Digest, nil
-}
-
-// nexusdRunCtlPort is the only implementation of rest.RunCtlPort this
-// binary ships — the seam that lets internal/surfaces/rest drive
-// internal/runctl (which itself imports kernel) without importing it
-// directly, mirroring nexusdOversightPort's own role one struct down.
-type nexusdRunCtlPort struct {
-	ctl *runctl.Control
-}
-
-func (p *nexusdRunCtlPort) Cancel(ctx context.Context, tenantID, sessionID uuid.UUID, reason string) error {
-	return p.ctl.Cancel(ctx, tenantID, sessionID, reason)
-}
-
-func (p *nexusdRunCtlPort) Steer(ctx context.Context, tenantID, sessionID uuid.UUID, input string) error {
-	_, err := p.ctl.Steer(ctx, tenantID, sessionID, input)
-	return err
-}
-
-// ResumeConversation durably appends the human's next message and queues
-// the continuation (runctl.Control.ResumeConversation's own doc comment) —
-// it no longer drains a live generator itself; whichever worker picks up
-// the queued job publishes its own events through the Redis-backed bus
-// (cmd/nexusd's startEventBus), same as any other queued run.
-func (p *nexusdRunCtlPort) ResumeConversation(ctx context.Context, tenantID, sessionID uuid.UUID, input string) error {
-	_, err := p.ctl.ResumeConversation(ctx, tenantID, sessionID, input)
-	return err
-}
-
-func (p *nexusdRunCtlPort) TightenAutonomy(ctx context.Context, tenantID, sessionID uuid.UUID, target string) error {
-	return p.ctl.TightenAutonomy(ctx, tenantID, sessionID, target)
-}
-
-func (p *nexusdRunCtlPort) Fork(ctx context.Context, tenantID, sessionID uuid.UUID, atSeq int64, modelOverride string) (rest.ForkView, error) {
-	result, err := p.ctl.Fork(ctx, tenantID, sessionID, atSeq, runctl.ForkOverrides{ModelID: modelOverride})
-	if err != nil {
-		return rest.ForkView{}, err
-	}
-	return rest.ForkView{
-		SessionID: result.SessionID.String(), DigestDiverged: result.DigestDiverged,
-		ParentDigest: hex.EncodeToString(result.ParentDigest), ChildDigest: hex.EncodeToString(result.ChildDigest),
-	}, nil
-}
-
-// nexusdOversightPort is the only implementation of rest.OversightPort this
-// binary ships — the seam that lets internal/surfaces/rest drive
-// internal/oversight (which itself imports kernel for Kernel.Resume)
-// without importing it directly, exactly mirroring kernelRunStarter's own
-// role for kernel.Kernel.Run.
-type nexusdOversightPort struct {
-	approvals *oversight.Approvals
-	resumer   *oversight.Resumer
-	// settled is told when an approval's resume leaves a session as far along
-	// as it will go (runctl.Control.NotifySettled).
-	settled interface {
-		NotifySettled(ctx context.Context, tenantID, sessionID uuid.UUID)
-	}
-}
-
-func (p *nexusdOversightPort) GetApproval(ctx context.Context, tenantID, approvalID uuid.UUID) (rest.ApprovalView, error) {
-	ap, err := p.approvals.Get(ctx, tenantID, approvalID)
-	if err != nil {
-		return rest.ApprovalView{}, err
-	}
-	return toApprovalView(ap), nil
-}
-
-func (p *nexusdOversightPort) ListPendingApprovals(ctx context.Context, tenantID uuid.UUID) ([]rest.ApprovalView, error) {
-	aps, err := p.approvals.ListPending(ctx, tenantID)
-	if err != nil {
-		return nil, err
-	}
-	views := make([]rest.ApprovalView, len(aps))
-	for i, ap := range aps {
-		views[i] = toApprovalView(ap)
-	}
-	return views, nil
-}
-
-func toApprovalView(ap oversight.Approval) rest.ApprovalView {
-	ctxJSON, _ := json.Marshal(ap.Context) //nolint:errcheck // ContextPackage is always marshalable (json.RawMessage + strings)
-	return rest.ApprovalView{
-		ApprovalID: ap.ApprovalID.String(), SessionID: ap.SessionID.String(), ToolID: ap.ToolID,
-		AskKind: ap.AskKind, Status: string(ap.Status), Context: ctxJSON, ExpiresAt: ap.ExpiresAt, CreatedAt: ap.CreatedAt,
-	}
-}
-
-func (p *nexusdOversightPort) Grant(ctx context.Context, tenantID, approvalID uuid.UUID, decidedBy string) rest.ResumeOutcome {
-	out := drainResume(p.resumer.Grant(ctx, tenantID, approvalID, decidedBy))
-	p.onResumed(ctx, tenantID, out)
-	return out
-}
-
-func (p *nexusdOversightPort) GrantModified(ctx context.Context, tenantID, approvalID uuid.UUID, decidedBy string, modifiedInput json.RawMessage) rest.ResumeOutcome {
-	out := drainResume(p.resumer.GrantModified(ctx, tenantID, approvalID, decidedBy, modifiedInput))
-	p.onResumed(ctx, tenantID, out)
-	return out
-}
-
-func (p *nexusdOversightPort) Deny(ctx context.Context, tenantID, approvalID uuid.UUID, decidedBy, reason string) rest.ResumeOutcome {
-	out := drainResume(p.resumer.Deny(ctx, tenantID, approvalID, decidedBy, reason))
-	p.onResumed(ctx, tenantID, out)
-	return out
-}
-
-// onResumed is the approval path's counterpart of the queue worker's: a
-// session an ordinary tool approval just resumed may ALSO be a delegation's
-// child (README task 8.10) or a team member (task 9.9). Whoever cares is a
-// runctl.SettledObserver, so this neither names nor imports them.
-func (p *nexusdOversightPort) onResumed(ctx context.Context, tenantID uuid.UUID, out rest.ResumeOutcome) {
-	if out.Err != "" || out.SessionID == "" {
-		return
-	}
-	sessionID, err := uuid.Parse(out.SessionID)
-	if err != nil {
-		return
-	}
-	p.settled.NotifySettled(ctx, tenantID, sessionID)
-}
-
-// drainResume fully consumes a Kernel.Resume generator — the same
-// drain-into-a-summary kernelRunStarter's own goroutine does for
-// Kernel.Run, except synchronous: an approval decision's HTTP response
-// waits for the resumed run to finish (or suspend again), rather than
-// handing back a channel the way a fresh run's 202 does. See rest.
-// ResumeOutcome's own doc comment for why that's an acceptable trade for
-// this endpoint.
-func drainResume(events iter.Seq2[eventlog.Event, error]) rest.ResumeOutcome {
-	var out rest.ResumeOutcome
-	for ev, err := range events {
-		if err != nil {
-			out.Err = err.Error()
-			return out
-		}
-		out.SessionID = ev.SessionID.String()
-		out.EventsAppended++
-	}
-	return out
 }
 
 // nexusdSessionLookup implements builtin.SessionUserLookup — the one place

@@ -30,7 +30,7 @@ func Shred(ctx context.Context, tx pgx.Tx, keyID string) error {
 }
 
 // ShredTenant shreds every active key belonging to tenantID, returning the
-// key IDs it shredded. handleCreateRun (internal/surfaces/rest/server.go)
+// key IDs it shredded. handleCreateRun (internal/runs/rest/run_create.go)
 // mints one fresh crypto.DEK per SESSION, not one shared per tenant, so tenant-wide
 // erasure is "every session's key," not a single row.
 func ShredTenant(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) ([]string, error) {
