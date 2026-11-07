@@ -126,6 +126,9 @@ func init() {
 		{"reporting", "internal/reporting"},
 		{"the connectors vault", "internal/connectors"},
 		{"skills", "internal/skills"},
+		{"the delegation tool", "internal/delegate/tool"},
+		{"the board tools", "internal/teams/tool"},
+		{"the retrieval tool", "internal/retrieval/tool"},
 	} {
 		rules = append(rules, noInfra(s.subject, s.pkg))
 	}

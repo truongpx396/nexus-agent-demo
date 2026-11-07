@@ -4,7 +4,7 @@
 // named acceptance criteria: 8.6 (zero-token routing: no Provider.Stream
 // call happens while a plan evaluates a transition) and 8.12 (delegation
 // bounds fail closed, enforced through the REAL permission chain — the
-// unit-level fakes in internal/tools/builtin/delegate_test.go already cover
+// unit-level fakes in internal/delegate/tool/delegate_test.go already cover
 // CheckPermissions' own logic; this file proves the same thing end to end,
 // against a real Postgres-backed Delegations ledger). Also covers 8.11's
 // taint-ascend fold across a real spawn/resolve round trip and 8.10's
@@ -33,6 +33,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/delegate"
+	delegatetool "github.com/truongpx396/nexus-agent-demo/internal/delegate/tool"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
@@ -42,7 +43,6 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools"
-	"github.com/truongpx396/nexus-agent-demo/internal/tools/builtin"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools/kerneladapter"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
@@ -145,19 +145,6 @@ func TestPlan_ZeroTokenRouting(t *testing.T) {
 	}
 }
 
-// spawnerAdapter translates builtin.SpawnRequest to delegate.SpawnRequest —
-// the one place a real binary (or, here, a test) bridges the two packages'
-// deliberately independent request shapes (internal/tools/builtin/
-// delegate.go's own doc comment on why they're kept separate).
-type spawnerAdapter struct{ d *delegate.Delegations }
-
-func (a spawnerAdapter) Spawn(ctx context.Context, req builtin.SpawnRequest) (uuid.UUID, error) {
-	return a.d.Spawn(ctx, delegate.SpawnRequest{
-		TenantID: req.TenantID, ParentSessionID: req.ParentSessionID,
-		AgentID: req.AgentID, Task: req.Task, ScopeGrant: req.ScopeGrant, ReturnSchema: req.ReturnSchema,
-	})
-}
-
 func onDelegateFunc(d *delegate.Delegations) postgres.DelegateFunc {
 	return func(ctx context.Context, req kernel.DelegateSuspendRequest) error {
 		return d.BindToolUse(ctx, req.TenantID, req.ChildSessionID, req.ToolUseEventID)
@@ -183,7 +170,7 @@ func buildDelegationRig(t *testing.T, r *oversightRig, prov provider.Provider, t
 	}
 
 	d := delegate.NewDelegations(delegatepg.New(r.st, r.keys, r.chain))
-	del := builtin.Delegate{Ledger: d, Spawner: spawnerAdapter{d}, Registry: reg}
+	del := delegatetool.Delegate{Ledger: d, Spawner: d, Registry: reg}
 	if err := reg.Register(del); err != nil {
 		t.Fatalf("register delegate: %v", err)
 	}

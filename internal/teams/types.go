@@ -58,11 +58,11 @@ const (
 // MaxDepth mirrors internal/delegate.MaxDepth exactly (task 9.10: "no
 // recursive teams, no depth workaround through a side door") — duplicated
 // as a plain value, not imported, the same decoupling
-// internal/tools/builtin/delegate.go's own maxDelegationDepth already
+// internal/delegate/tool/delegate.go's own maxDelegationDepth already
 // chooses over importing internal/delegate for one constant. A session may
 // create a team only if its OWN depth + 1 does not exceed this bound, which
 // is also exactly the bound that already stops a depth-1 team member from
-// then calling platform/delegate (internal/tools/builtin/delegate.go's own
+// then calling platform/delegate (internal/delegate/tool/delegate.go's own
 // CheckPermissions re-derives depth independently and denies there too) —
 // one shared number, enforced twice, never a single "is this a leaf" flag
 // that a new call site could forget to check.

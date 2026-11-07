@@ -97,6 +97,7 @@ var allowedFeatureImports = map[string][]string{
 	"internal/contentaccess/rest": {"internal/contentaccess", "internal/surfaces/rest"},
 	"internal/cost":               {"internal/provider"},
 	"internal/crypto":             {"internal/eventlog"},
+	"internal/delegate/tool":      {"internal/delegate", "internal/tools"},
 	"internal/delegate":           {"internal/cost", "internal/crypto", "internal/eventlog", "internal/obs", "internal/provider", "internal/runstate", "kernel"},
 	"internal/evalgate":           {"evals", "internal/plan"}, // the one bridge from the plan lifecycle to the release gate
 	"internal/ingest":             {"internal/crypto", "internal/tools"},
@@ -108,6 +109,7 @@ var allowedFeatureImports = map[string][]string{
 	"internal/promptctx":          {"internal/provider"},
 	"internal/queue":              {"internal/reliability"},
 	"internal/reporting":          {"internal/obs"},
+	"internal/retrieval/tool":     {"internal/retrieval", "internal/tools"},
 	"internal/retrieval":          {"internal/cost", "internal/ingest", "internal/memory", "internal/provider", "internal/tools"},
 	"internal/runctl/rest":        {"internal/runctl", "internal/surfaces/rest"},
 	"internal/runctl":             {"internal/crypto", "internal/eventlog", "internal/harness", "internal/oversight", "internal/permissions", "internal/provider", "internal/queue", "internal/runstate", "internal/tools", "kernel"},
@@ -123,6 +125,7 @@ var allowedFeatureImports = map[string][]string{
 	"internal/surfaces/telegram":  {"internal/eventlog", "internal/runs", "internal/surfaces", "internal/surfaces/capability"},
 	"internal/surfaces/web":       {"internal/surfaces/capability"},
 	"internal/surfaces/zalo":      {"internal/eventlog", "internal/runs", "internal/surfaces", "internal/surfaces/capability"},
+	"internal/teams/tool":         {"internal/teams", "internal/tools"},
 	"internal/teams":              {"internal/cost", "internal/crypto", "internal/eventlog", "internal/memory", "internal/provider", "internal/runstate", "kernel"},
 	"internal/tools":              {"internal/hooks", "internal/permissions"},
 	"internal/tools/builtin":      {"internal/skills", "internal/tools"},

@@ -1,4 +1,10 @@
-package builtin
+// Package tool is the model-facing binding of delegation: the platform/delegate
+// tool through which an agent hands a task to a child agent (README task 8.9). A
+// thin translator over internal/delegate, the way internal/delegate's postgres
+// package is its storage binding and internal/<feature>/rest its HTTP one: the
+// tool re-derives every bound and re-verifies scope before it calls the
+// feature, and the feature does the spawning.
+package tool
 
 import (
 	"context"
@@ -7,45 +13,20 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/truongpx396/nexus-agent-demo/internal/delegate"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools"
 )
 
 var delegateRef = tools.ToolRef{Namespace: "platform", Name: "delegate", Version: "v1"}
 
-// Bound thresholds mirror internal/delegate.MaxDepth/MaxConcurrent/MaxPerRun
-// (README task 8.12) — duplicated as plain values, not imported, so this
-// tool's own CheckPermissions logic stays unit-testable with plain Go fakes
-// and no live Postgres, the same decoupling *ActivateSkill already gets
-// from SkillResolver/SkillEvents rather than importing internal/skills'
-// concrete Catalog type.
-const (
-	maxDelegationDepth       = 1
-	maxConcurrentDelegations = 3
-	maxDelegationsPerRun     = 16
-)
-
-// DelegationSpawner is the lookup Call needs — satisfied structurally by a
-// small cmd/nexusd adapter over *internal/delegate.Delegations.Spawn.
+// DelegationSpawner is the lookup Call needs — satisfied directly by
+// *delegate.Delegations.
 type DelegationSpawner interface {
-	Spawn(ctx context.Context, req SpawnRequest) (childSessionID uuid.UUID, err error)
-}
-
-// SpawnRequest is Delegate's own view of what Spawn needs — deliberately
-// primitive-typed (no uuid.UUID beyond TenantID/ParentSessionID, no
-// internal/delegate types) so this package never needs to import
-// internal/delegate at all.
-type SpawnRequest struct {
-	TenantID        uuid.UUID
-	ParentSessionID uuid.UUID
-	AgentID         string
-	Task            string
-	ScopeGrant      []string
-	ReturnSchema    json.RawMessage
+	Spawn(ctx context.Context, req delegate.SpawnRequest) (childSessionID uuid.UUID, err error)
 }
 
 // DelegationLedger is the bounds lookup CheckPermissions needs — satisfied
-// structurally by *internal/delegate.Delegations (ParentContext/CountForRoot
-// already have exactly this shape).
+// directly by *delegate.Delegations (ParentContext/CountForRoot).
 type DelegationLedger interface {
 	ParentContext(ctx context.Context, tenantID, sessionID uuid.UUID) (depth int, rootSessionID uuid.UUID, err error)
 	CountForRoot(ctx context.Context, tenantID, rootSessionID uuid.UUID) (open, total int, err error)
@@ -128,18 +109,18 @@ func (d Delegate) CheckPermissions(ctx context.Context, in json.RawMessage, rc t
 	if err != nil {
 		return tools.PermissionResult{Decision: "deny", Reason: "delegation bounds lookup failed (fail closed): " + err.Error()}
 	}
-	if depth+1 > maxDelegationDepth {
+	if depth+1 > delegate.MaxDepth {
 		return tools.PermissionResult{Decision: "deny", Reason: fmt.Sprintf("delegation depth bound exceeded: a session at depth %d may not delegate further", depth)}
 	}
 	open, total, err := d.Ledger.CountForRoot(ctx, rc.TenantID, root)
 	if err != nil {
 		return tools.PermissionResult{Decision: "deny", Reason: "delegation bounds lookup failed (fail closed): " + err.Error()}
 	}
-	if open >= maxConcurrentDelegations {
-		return tools.PermissionResult{Decision: "deny", Reason: fmt.Sprintf("concurrent delegation bound exceeded: %d already open (max %d)", open, maxConcurrentDelegations)}
+	if open >= delegate.MaxConcurrent {
+		return tools.PermissionResult{Decision: "deny", Reason: fmt.Sprintf("concurrent delegation bound exceeded: %d already open (max %d)", open, delegate.MaxConcurrent)}
 	}
-	if total >= maxDelegationsPerRun {
-		return tools.PermissionResult{Decision: "deny", Reason: fmt.Sprintf("per-run delegation bound exceeded: %d already created (max %d)", total, maxDelegationsPerRun)}
+	if total >= delegate.MaxPerRun {
+		return tools.PermissionResult{Decision: "deny", Reason: fmt.Sprintf("per-run delegation bound exceeded: %d already created (max %d)", total, delegate.MaxPerRun)}
 	}
 
 	if d.Registry == nil {
@@ -174,7 +155,7 @@ func (d Delegate) Call(ctx context.Context, in json.RawMessage, rc tools.RunCont
 	if d.Spawner == nil {
 		return tools.Result{IsError: true, Reason: "delegation spawner not wired"}, nil
 	}
-	childID, err := d.Spawner.Spawn(ctx, SpawnRequest{
+	childID, err := d.Spawner.Spawn(ctx, delegate.SpawnRequest{
 		TenantID: rc.TenantID, ParentSessionID: rc.SessionID,
 		AgentID: req.AgentID, Task: req.Task, ScopeGrant: req.ScopeGrant, ReturnSchema: req.ReturnSchema,
 	})

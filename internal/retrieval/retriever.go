@@ -54,7 +54,7 @@ type Retriever struct {
 // verdict is anything but clean gets a documents row recording that (so an
 // operator can see WHY nothing was indexed) but contributes zero chunks —
 // the same fail-closed "never surfaced" posture a flagged board card gets
-// (internal/tools/builtin/board.go).
+// (internal/teams/tool/board.go).
 func (r *Retriever) IndexDocument(ctx context.Context, tenantID, sessionID uuid.UUID, sourceName, mimeType string, data []byte) (Document, error) {
 	doc, err := ingest.Convert(sourceName, mimeType, data)
 	if err != nil {

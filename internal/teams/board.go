@@ -12,7 +12,7 @@ import (
 // TeamIDFor resolves sessionID's own team_id — the ONLY input the four
 // board tools' CheckPermissions/Call ever trust to decide which team a
 // session may touch (never taken from a tool's own input; see
-// internal/tools/builtin/board.go's own doc comment).
+// internal/teams/tool/board.go's own doc comment).
 func (s *Service) TeamIDFor(ctx context.Context, tenantID, sessionID uuid.UUID) (uuid.UUID, bool, error) {
 	var id uuid.UUID
 	var ok bool
@@ -91,7 +91,7 @@ func (s *Service) foldCardRead(ctx context.Context, tenantID, readerSessionID uu
 }
 
 // WriteCardRequest is WriteCard's own input — deliberately primitive-typed
-// (no Card, no internal state) so a caller (internal/tools/builtin.WriteCard)
+// (no Card, no internal state) so a caller (internal/teams/tool.WriteCard)
 // never needs to construct anything but plain values.
 type WriteCardRequest struct {
 	TenantID           uuid.UUID

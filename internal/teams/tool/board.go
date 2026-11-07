@@ -1,4 +1,10 @@
-package builtin
+// Package tool is the model-facing binding of agent teams: the four board tools
+// (read_board, claim_card, write_card, update_card_status) through which the
+// members of a team coordinate over the shared board (README task 9.x). A thin
+// translator over internal/teams: which team a session may touch, who may claim
+// a card, and the screening of a card's body are the feature's; the tools
+// present the board to the model and never take a team or tenant from its input.
+package tool
 
 import (
 	"context"
@@ -17,15 +23,11 @@ var (
 	updateCardStatusRef = tools.ToolRef{Namespace: "platform", Name: "update_card_status", Version: "v1"}
 )
 
-// BoardCard is this package's own view of one board_cards row —
-// deliberately primitive-typed (no internal/teams.Card, no [3]bool taint
-// state) so this package never needs to import internal/teams at all, the
-// same decoupling SpawnRequest already gets from internal/delegate's own
-// shape (internal/tools/builtin/delegate.go's own doc comment on why).
-// Flagged, not Body, is what a caller checks: a flagged card's Body is
-// already redacted to "" by the wiring layer before it ever reaches here
-// (task 9.7 — never surfaced, not even as a non-empty-but-untrusted string
-// this tool would have to remember not to trust).
+// BoardCard is the tools' own view of one board_cards row — what the model is
+// shown: primitive-typed, with no taint state. Flagged, not Body, is what a
+// caller checks: a flagged card's Body is already redacted to "" by the
+// adapter (task 9.7 — never surfaced, not even as a non-empty-but-untrusted
+// string a tool would have to remember not to trust).
 type BoardCard struct {
 	CardID             string
 	Title              string
@@ -39,15 +41,13 @@ type BoardCard struct {
 // decide which team a session may touch — never taken from the tool's own
 // input (a card_id or team_id argument would be an attacker-controlled
 // cross-team probe; there is no such argument anywhere in this file).
-// Satisfied structurally by *internal/teams.Service.TeamIDFor.
+// Satisfied directly by *teams.Service.TeamIDFor.
 type TeamResolver interface {
 	TeamIDFor(ctx context.Context, tenantID, sessionID uuid.UUID) (teamID uuid.UUID, ok bool, err error)
 }
 
-// BoardReader is ReadBoard's own lookup — satisfied by
-// *internal/teams.Service.ReadBoard via a thin adapter at the wiring layer
-// (cmd/nexusd's own translation, the same shape nexusdDelegationSpawner
-// already provides for Delegate).
+// BoardReader is ReadBoard's own lookup — satisfied by Tools' adapter over
+// *teams.Service.ReadBoard.
 type BoardReader interface {
 	ReadBoard(ctx context.Context, tenantID, teamID, readerSessionID uuid.UUID) ([]BoardCard, error)
 }

@@ -22,12 +22,14 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/delegate"
+	delegatetool "github.com/truongpx396/nexus-agent-demo/internal/delegate/tool"
 	"github.com/truongpx396/nexus-agent-demo/internal/hooks"
 	"github.com/truongpx396/nexus-agent-demo/internal/permissions"
 	"github.com/truongpx396/nexus-agent-demo/internal/permissions/safety"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/retrieval"
 	retrievalpg "github.com/truongpx396/nexus-agent-demo/internal/retrieval/postgres"
+	retrievaltool "github.com/truongpx396/nexus-agent-demo/internal/retrieval/tool"
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
 	runspg "github.com/truongpx396/nexus-agent-demo/internal/runs/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/sandbox"
@@ -36,6 +38,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/mcp"
 	mcppg "github.com/truongpx396/nexus-agent-demo/internal/surfaces/mcp/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/teams"
+	teamstool "github.com/truongpx396/nexus-agent-demo/internal/teams/tool"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools/builtin"
 	toolspg "github.com/truongpx396/nexus-agent-demo/internal/tools/postgres"
@@ -105,19 +108,14 @@ func newToolPipeline(st *store.Store, cfgStore config.Loader, keyStore *cryptopg
 			},
 		},
 		builtin.ReadSkillFile{Catalog: skillCatalog},
-		builtin.Delegate{
-			Ledger:   delegations,
-			Spawner:  nexusdDelegationSpawner{delegations: delegations},
-			Registry: reg,
-		},
-		builtin.ReadBoard{Resolver: nexusdBoardAdapter{teams: teamsSvc}, Reader: nexusdBoardAdapter{teams: teamsSvc}},
-		builtin.ClaimCard{Resolver: nexusdBoardAdapter{teams: teamsSvc}, Claimer: nexusdBoardAdapter{teams: teamsSvc}},
-		builtin.WriteCard{Resolver: nexusdBoardAdapter{teams: teamsSvc}, Writer: nexusdBoardAdapter{teams: teamsSvc}},
-		builtin.UpdateCardStatus{Resolver: nexusdBoardAdapter{teams: teamsSvc}, Updater: nexusdBoardAdapter{teams: teamsSvc}},
-		builtin.ConnectorFetch{Tokens: vault, Sessions: nexusdSessionLookup{reader: runspg.Reader{Store: st, KeyStore: keyStore}}, AllowedHosts: webFetchAllowlist},
-		builtin.Retrieve{Searcher: nexusdRetrieverAdapter{retriever: retriever}},
-		builtin.AskClarification{},
+		delegatetool.Delegate{Ledger: delegations, Spawner: delegations, Registry: reg},
 	}
+	builtinTools = append(builtinTools, teamstool.Tools(teamsSvc)...)
+	builtinTools = append(builtinTools,
+		builtin.ConnectorFetch{Tokens: vault, Sessions: nexusdSessionLookup{reader: runspg.Reader{Store: st, KeyStore: keyStore}}, AllowedHosts: webFetchAllowlist},
+		retrievaltool.NewRetrieve(retriever),
+		builtin.AskClarification{},
+	)
 	// platform/web_crawl (README specs/README.md Phase 16, task 16.1) is
 	// registered only when NEXUS_CRAWL4AI_URL is actually configured — the
 	// same "absent means off" convention newConnectorRegistry already uses
