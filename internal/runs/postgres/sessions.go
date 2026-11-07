@@ -2,13 +2,13 @@ package postgres
 
 import (
 	"context"
+	"errors"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/controlplane"
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
-	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
@@ -20,7 +20,20 @@ import (
 // with no way to enforce the ceiling it asked for.
 type Sessions struct {
 	Store *store.Store
+
+	// Budgets writes the session-scoped budget row in the same transaction as
+	// the session. It is injected, not imported: the budgets table belongs to
+	// internal/cost, and this adapter must not reach into another feature's
+	// adapter. cmd/nexusd passes costpg.CreateBudget. A request that asks for a
+	// ceiling while this is nil is refused, never admitted without one.
+	Budgets BudgetWriter
 }
+
+// BudgetWriter creates one budget row inside the caller's transaction.
+// cost/postgres.CreateBudget is the implementation.
+type BudgetWriter func(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, scope cost.BudgetScope, scopeRef *uuid.UUID, ceiling cost.Money) (cost.Budget, error)
+
+var errNoBudgetWriter = errors.New("runs: a budget ceiling was requested but no budget writer is wired")
 
 var _ controlplane.SessionStore = Sessions{}
 
@@ -34,6 +47,10 @@ func (s Sessions) CreateSession(ctx context.Context, req controlplane.AdmitRunV1
 			return controlplane.AdmitRunResultV1{Admitted: false, Reason: "invalid budget_usd: " + err.Error()}, nil
 		}
 		budgetCeiling = &amount
+	}
+
+	if budgetCeiling != nil && s.Budgets == nil {
+		return controlplane.AdmitRunResultV1{}, errNoBudgetWriter
 	}
 
 	sessionKey := req.SessionKey
@@ -51,7 +68,7 @@ func (s Sessions) CreateSession(ctx context.Context, req controlplane.AdmitRunV1
 			return err
 		}
 		if budgetCeiling != nil {
-			if _, err := costpg.CreateBudget(ctx, tx, req.TenantID, cost.BudgetScopeSession, &req.SessionID, *budgetCeiling); err != nil {
+			if _, err := s.Budgets(ctx, tx, req.TenantID, cost.BudgetScopeSession, &req.SessionID, *budgetCeiling); err != nil {
 				return err
 			}
 		}

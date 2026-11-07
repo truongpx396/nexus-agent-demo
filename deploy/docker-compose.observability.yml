@@ -14,7 +14,7 @@
 # place: every target this file scrapes or tails is reached over a
 # published host port or a bind-mounted file (Prometheus reaches nexusd's
 # `/metrics` over `host.docker.internal`; nexusd/signerd PUSH profiles to
-# Pyroscope over ITS published host port, `internal/obs/pyroscope.go`),
+# Pyroscope over ITS published host port, `internal/obs/profiling/pyroscope.go`),
 # because nexusd/signerd are documented to run as plain host processes
 # (docs/local-llm.md's own "Ollama runs natively" reasoning), not compose
 # services, by default. Everything Grafana itself reaches by container DNS
@@ -49,7 +49,7 @@
 # file already runs rather than a second one. A THIRD, also independently
 # opt-in "profiling" profile adds Grafana Pyroscope — continuous CPU/memory/
 # goroutine/mutex/block profiling pushed straight from nexusd/signerd's own
-# process (internal/obs/pyroscope.go, github.com/grafana/pyroscope-go), not
+# process (internal/obs/profiling/pyroscope.go, github.com/grafana/pyroscope-go), not
 # scraped, so it needs no host-network reachability trick the way
 # Prometheus's /metrics target does. `make observability-up`'s own
 # footprint/behavior is unchanged by either Tempo's or Pyroscope's presence

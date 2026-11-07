@@ -174,7 +174,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	sessionKey := "zalo:" + ev.Sender.ID
 	// deliveryID is Zalo's own msg_id — the provider-native id ClaimDelivery
 	// dedupes a redelivered event against. Existing test fixtures don't set
-	// this field, so it defaults to "" and store.ClaimInboundDelivery's own
+	// this field, so it defaults to "" and the inbound-delivery dedup's own
 	// documented empty-string behavior (always claims, never dedupes)
 	// applies — intentional, not a gap this change introduces.
 	deliveryID := ev.Message.MsgID

@@ -70,6 +70,19 @@ type Tx interface {
 
 	// SetAutonomyLevel pins the session's autonomy level.
 	SetAutonomyLevel(ctx context.Context, sessionID uuid.UUID, level string) error
+
+	// SaveCheckpoint appends a checkpoint row (README task 6.3) and returns it
+	// with its id and creation time filled in.
+	SaveCheckpoint(ctx context.Context, c Checkpoint) (Checkpoint, error)
+
+	// LatestCheckpoint returns the session's most recent checkpoint, if any. No
+	// runtime path reads it yet: it is the recovery fast path a later resume
+	// will consult, kept here so the port is the whole of the table's contract.
+	LatestCheckpoint(ctx context.Context, sessionID uuid.UUID) (Checkpoint, bool, error)
+
+	// ListStaleAwaitingInput returns the sessions that have sat in
+	// awaiting_input since before olderThan (the idle-conversation sweep's query).
+	ListStaleAwaitingInput(ctx context.Context, olderThan time.Time) ([]uuid.UUID, error)
 }
 
 // Store runs a unit of work in a tenant's scope: it opens the unit, calls fn

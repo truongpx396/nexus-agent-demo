@@ -30,7 +30,7 @@ Each story is a `MUST` in [the constitution](../../.specify/memory/constitution.
 
 ### User Story 2 - Telemetry has no content channel (Priority: P1)
 
-**Current state**: `NEXUS_TRACE_CONTENT=true` (`cmd/nexusd/serve.go`) turns on `kernel.TraceContent`, which calls `Span.SetContent`; the OTLP and Langfuse exporters write that content **bypassing the attribute allowlist** (`internal/obs/otlp.go`). `TestKernelTracerContentOptIn` (`tests/integration/tracer_test.go`) asserts that behaviour. The docs call it a "sanctioned exception".
+**Current state**: `NEXUS_TRACE_CONTENT=true` (`cmd/nexusd/serve.go`) turns on `kernel.TraceContent`, which calls `Span.SetContent`; the OTLP and Langfuse exporters write that content **bypassing the attribute allowlist** (`internal/obs/otlp/exporter.go`). `TestKernelTracerContentOptIn` (`tests/integration/tracer_test.go`) asserts that behaviour. The docs call it a "sanctioned exception".
 
 **Why this priority**: the constitution says telemetry is "a content-free signal class enforced by a deny-by-default attribute allowlist, and **no flag may admit content to it**", and that plaintext is inspectable only through an audited, expiring content-access grant that emits a receipt on grant and on every read. This one is a violation, not a gap, so it changes what is allowed.
 

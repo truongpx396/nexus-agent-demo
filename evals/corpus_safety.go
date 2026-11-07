@@ -18,7 +18,7 @@ import (
 // not shared with internal/permissions' own chain_test.go helpers
 // (unexported to that package, and a handful of duplicated lines is cheaper
 // than a shared test-fixture package for two callers — this codebase's own
-// standing choice, e.g. internal/obs/grant.go's appendEvent).
+// standing choice, e.g. internal/contentaccess/grants.go's appendEvent).
 func AdversarialPermissionCorpus() []PermissionScenarioCase {
 	return []PermissionScenarioCase{
 		{

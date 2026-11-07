@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/controlplane"
+	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
@@ -40,7 +41,7 @@ func TestSessions_CreateSession(t *testing.T) {
 	if err := insertTenant(ctx, st, tenantID); err != nil {
 		t.Fatalf("insert tenant: %v", err)
 	}
-	sessions := runspg.Sessions{Store: st}
+	sessions := runspg.Sessions{Store: st, Budgets: costpg.CreateBudget}
 
 	t.Run("a caller-supplied session key is stored, and the conversational flag with it", func(t *testing.T) {
 		req := admitReq(tenantID)
@@ -165,7 +166,7 @@ func TestReader(t *testing.T) {
 	admit := func(tenantID, userID uuid.UUID) uuid.UUID {
 		req := admitReq(tenantID)
 		req.UserID = userID
-		if res, err := (runspg.Sessions{Store: st}).CreateSession(ctx, req); err != nil || !res.Admitted {
+		if res, err := (runspg.Sessions{Store: st, Budgets: costpg.CreateBudget}).CreateSession(ctx, req); err != nil || !res.Admitted {
 			t.Fatalf("CreateSession = %+v, %v", res, err)
 		}
 		return req.SessionID
@@ -206,7 +207,7 @@ func TestReader(t *testing.T) {
 			req := admitReq(tenantID)
 			req.UserID = user
 			req.SessionKey = key
-			if res, err := (runspg.Sessions{Store: st}).CreateSession(ctx, req); err != nil || !res.Admitted {
+			if res, err := (runspg.Sessions{Store: st, Budgets: costpg.CreateBudget}).CreateSession(ctx, req); err != nil || !res.Admitted {
 				t.Fatalf("CreateSession = %+v, %v", res, err)
 			}
 			return req.SessionID

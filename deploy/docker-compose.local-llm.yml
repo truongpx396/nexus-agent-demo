@@ -189,7 +189,7 @@ services:
   # `docker compose --profile langfuse-lite up` (make langfuse-lite-up): the
   # pre-ClickHouse Langfuse v2 topology — one web container plus its own
   # Postgres, no worker/ClickHouse/MinIO/Redis. Only usable now that nexusd
-  # has a native-ingestion exporter (internal/obs/langfuse.go,
+  # has a native-ingestion exporter (internal/obs/langfuse/exporter.go,
   # NEXUS_LANGFUSE_HOST) — v2 predates OTLP ingestion entirely, so the
   # "langfuse" profile's own OTLP wiring (NEXUS_OTLP_*) does not work here.
   # Same LANGFUSE_INIT_* public/secret keypair as the full "langfuse"

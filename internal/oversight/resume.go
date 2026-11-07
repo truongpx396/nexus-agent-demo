@@ -12,6 +12,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools"
+	"github.com/truongpx396/nexus-agent-demo/internal/tools/kerneladapter"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
 
@@ -169,11 +170,11 @@ func errSeq(err error) iter.Seq2[eventlog.Event, error] {
 
 // ExecutorFor is a small convenience cmd/nexusd can use to assert, at wiring
 // time, that the configured tools.Pipeline actually implements
-// kernel.ApprovedExecutor (via kernel.PipelineExecutor) before handing it to
+// kernel.ApprovedExecutor (via kerneladapter.PipelineExecutor) before handing it to
 // a Resumer — Resume itself only discovers a missing implementation at the
 // first call (kernel/loop.go's Resume, "does not implement
 // ApprovedExecutor"), and failing at startup is friendlier than failing on
 // a tenant's first approval.
 func ExecutorFor(p *tools.Pipeline) kernel.ApprovedExecutor {
-	return kernel.PipelineExecutor{Pipeline: p}
+	return kerneladapter.PipelineExecutor{Pipeline: p}
 }

@@ -10,6 +10,7 @@ package integration
 
 import (
 	runctlpg "github.com/truongpx396/nexus-agent-demo/internal/runctl/postgres"
+	"github.com/truongpx396/nexus-agent-demo/internal/tools/kerneladapter"
 
 	"context"
 	"encoding/json"
@@ -174,7 +175,7 @@ func TestRuleOfTwo_TaintStateSurvivesASimulatedProcessRestart(t *testing.T) {
 	pipelineA := newTaintTestPipeline(t)
 	kA := &kernel.Kernel{
 		Provider: provider.Wrap([]provider.Provider{fakeProvider}),
-		Tools:    kernel.PipelineExecutor{Pipeline: pipelineA},
+		Tools:    kerneladapter.PipelineExecutor{Pipeline: pipelineA},
 		Budget:   kernel.NoopBudgetGate{},
 		Log:      postgres.New(st, postgres.Hooks{}),
 	}
@@ -212,7 +213,7 @@ func TestRuleOfTwo_TaintStateSurvivesASimulatedProcessRestart(t *testing.T) {
 	pipelineB := newTaintTestPipeline(t)
 	kB := &kernel.Kernel{
 		Provider: provider.Wrap([]provider.Provider{fakeProvider}),
-		Tools:    kernel.PipelineExecutor{Pipeline: pipelineB},
+		Tools:    kerneladapter.PipelineExecutor{Pipeline: pipelineB},
 		Budget:   kernel.NoopBudgetGate{},
 		Log:      postgres.New(st, postgres.Hooks{}),
 	}

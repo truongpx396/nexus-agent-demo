@@ -7,6 +7,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -45,40 +46,16 @@ type txn struct{ *sealed.Unit }
 
 var _ runctl.Tx = (*txn)(nil)
 
-func toClaim(c store.Claim) runctl.Claim {
-	return runctl.Claim{
-		ClaimID: c.ClaimID, TenantID: c.TenantID, SessionID: c.SessionID, ToolID: c.ToolID,
-		CanonicalDigest: c.CanonicalDigest, Status: runctl.ClaimStatus(c.Status), Reason: c.Reason,
-		CreatedAt: c.CreatedAt, ResolvedAt: c.ResolvedAt,
-	}
-}
-
 func (t *txn) OpenOrFindClaim(ctx context.Context, tenantID, sessionID uuid.UUID, toolID string, digest []byte) (runctl.Claim, bool, error) {
-	c, created, err := store.OpenOrFindClaim(ctx, t.Tx(), tenantID, sessionID, toolID, digest)
-	if err != nil {
-		return runctl.Claim{}, false, err
-	}
-	return toClaim(c), created, nil
+	return openOrFindClaim(ctx, t.Tx(), tenantID, sessionID, toolID, digest)
 }
 
 func (t *txn) ResolveClaim(ctx context.Context, claimID uuid.UUID, status runctl.ClaimStatus, reason string) (runctl.Claim, error) {
-	c, err := store.ResolveClaim(ctx, t.Tx(), claimID, store.ClaimStatus(status), reason)
-	if err != nil {
-		return runctl.Claim{}, err
-	}
-	return toClaim(c), nil
+	return resolveClaim(ctx, t.Tx(), claimID, status, reason)
 }
 
 func (t *txn) ListInFlightClaims(ctx context.Context, sessionID uuid.UUID) ([]runctl.Claim, error) {
-	rows, err := store.ListInFlightClaims(ctx, t.Tx(), sessionID)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]runctl.Claim, len(rows))
-	for i, c := range rows {
-		out[i] = toClaim(c)
-	}
-	return out, nil
+	return listInFlightClaims(ctx, t.Tx(), sessionID)
 }
 
 func (t *txn) ClaimAwaitingInput(ctx context.Context, sessionID uuid.UUID) (bool, error) {
@@ -90,4 +67,16 @@ func (t *txn) SetAutonomyLevel(ctx context.Context, sessionID uuid.UUID, level s
 		return fmt.Errorf("runctl: update autonomy_level: %w", err)
 	}
 	return nil
+}
+
+func (t *txn) SaveCheckpoint(ctx context.Context, c runctl.Checkpoint) (runctl.Checkpoint, error) {
+	return saveCheckpoint(ctx, t.Tx(), c)
+}
+
+func (t *txn) LatestCheckpoint(ctx context.Context, sessionID uuid.UUID) (runctl.Checkpoint, bool, error) {
+	return latestCheckpoint(ctx, t.Tx(), sessionID)
+}
+
+func (t *txn) ListStaleAwaitingInput(ctx context.Context, olderThan time.Time) ([]uuid.UUID, error) {
+	return store.ListStaleAwaitingInputSessionIDs(ctx, t.Tx(), olderThan)
 }

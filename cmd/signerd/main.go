@@ -25,6 +25,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/audit/signerkey"
 	"github.com/truongpx396/nexus-agent-demo/internal/dotenv"
 	"github.com/truongpx396/nexus-agent-demo/internal/obs"
+	"github.com/truongpx396/nexus-agent-demo/internal/obs/profiling"
 	"github.com/truongpx396/nexus-agent-demo/internal/version"
 )
 
@@ -71,9 +72,9 @@ func main() {
 	// obs helper costs nothing to apply consistently across both binaries.
 	mutexFraction := envIntOr("NEXUS_PPROF_MUTEX_FRACTION", 0)
 	blockRate := envIntOr("NEXUS_PPROF_BLOCK_RATE", 0)
-	obs.EnableMutexBlockProfiling(mutexFraction, blockRate)
+	profiling.EnableMutexBlockProfiling(mutexFraction, blockRate)
 
-	shutdownPprof, err := obs.StartPprofServer(envOr("NEXUS_SIGNERD_PPROF_ADDR", ""))
+	shutdownPprof, err := profiling.StartPprofServer(envOr("NEXUS_SIGNERD_PPROF_ADDR", ""))
 	if err != nil {
 		fatalf("start pprof server: %v", err)
 	}
@@ -85,7 +86,7 @@ func main() {
 		}
 	}()
 
-	profiler, err := obs.StartPyroscope(obs.PyroscopeConfig{
+	profiler, err := profiling.StartPyroscope(profiling.PyroscopeConfig{
 		ServerAddress:       envOr("NEXUS_PYROSCOPE_ADDR", ""),
 		ApplicationName:     "signerd",
 		Tags:                map[string]string{"git_commit": version.GitCommit},

@@ -36,5 +36,5 @@ Exits non-zero if any AUTOMATED item fails. Prints every MANUAL item as a
 named reminder — never as a silent pass — because an unchecked box that
 prints green is worse than no checklist at all.
 
-See `internal/obs/dashboard.go` (the golden-signal queries) and
+See `internal/reporting/golden_signals.go` (the golden-signal queries) and
 `cmd/nexusd`'s `runGoLive` for the implementation of every AUTOMATED item.

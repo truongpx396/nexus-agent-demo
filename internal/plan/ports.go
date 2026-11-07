@@ -7,7 +7,9 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent-demo/internal/delegate"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
+	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
 
@@ -62,4 +64,28 @@ type Tx interface {
 // with a Tx bound to it, and commits if fn returns nil or rolls back if not.
 type Store interface {
 	InTenant(ctx context.Context, tenantID uuid.UUID, fn func(ctx context.Context, tx Tx) error) error
+}
+
+// The three collaborators the Executor drives while it walks a plan, each as
+// the narrow slice of another feature it actually calls. The feature's own
+// service (oversight.Approvals, oversight.Inputs, delegate.Delegations)
+// satisfies them; naming them here is what lets a plan be exercised against a
+// fake, and what keeps this package from depending on another service's whole
+// surface. Nil means the plan has no step of that kind (the step is refused); assign only a non-nil service, because a nil pointer stored in one of these interfaces is a non-nil interface and passes that check.
+
+// ApprovalOpener opens an approval a gate or agent step suspends on.
+type ApprovalOpener interface {
+	Create(ctx context.Context, req oversight.CreateApprovalRequest) (oversight.Approval, error)
+}
+
+// InputRequester asks the human a question an input step suspends on.
+type InputRequester interface {
+	RequestInput(ctx context.Context, p oversight.RequestInputParams) (oversight.InputRequest, error)
+}
+
+// Delegator spawns the child sessions of a fan-out step and reports which of a
+// fan-out's children are still open.
+type Delegator interface {
+	Spawn(ctx context.Context, req delegate.SpawnRequest) (uuid.UUID, error)
+	ListOpenForFanout(ctx context.Context, tenantID, fanoutID uuid.UUID) ([]delegate.Delegation, error)
 }

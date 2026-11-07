@@ -35,7 +35,7 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 
 		// A ToolExecutor that also bounds hook cost per turn
 		// (internal/hooks task 3.11's per-turn cap, via
-		// PipelineExecutor -> tools.Pipeline) gets told a new turn has
+		// kerneladapter.PipelineExecutor -> tools.Pipeline) gets told a new turn has
 		// started. This is an optional interface, not part of
 		// ToolExecutor itself, so kernel.NotImplementedToolExecutor
 		// and any future executor with nothing to reset need no

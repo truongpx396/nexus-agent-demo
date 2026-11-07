@@ -6,187 +6,100 @@ import (
 	"os"
 	"time"
 
-	queueredis "github.com/truongpx396/nexus-agent-demo/internal/queue/redis"
-
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
 
 	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/delegate"
 	"github.com/truongpx396/nexus-agent-demo/internal/queue"
+	queueredis "github.com/truongpx396/nexus-agent-demo/internal/queue/redis"
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
+	runctlpg "github.com/truongpx396/nexus-agent-demo/internal/runctl/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
 	"github.com/truongpx396/nexus-agent-demo/internal/teams"
+	"github.com/truongpx396/nexus-agent-demo/internal/tenancy"
+	tenancypg "github.com/truongpx396/nexus-agent-demo/internal/tenancy/postgres"
 )
+
+const (
+	// sessionLockTTL is the session-key serial lock's TTL. A worker renews it
+	// every third of this while it runs (queue.WorkerConfig.RenewEvery), so it
+	// is held for exactly as long as a worker is driving the session.
+	sessionLockTTL = 30 * time.Second
+
+	// orphanRecheckAfter is when the startup orphan sweep runs once more. A
+	// worker that died mid-run leaves its lock behind until the TTL passes, so
+	// the sweep at startup has to skip that session as if it were live; this
+	// one, a TTL later, finds the lock gone and recovers it.
+	orphanRecheckAfter = sessionLockTTL + 5*time.Second
+)
+
+// adminDSN is the administrative connection string, for the few operations
+// that are genuinely cross-tenant and so cannot run as the RLS-restricted
+// runtime role.
+func adminDSN() string {
+	return envOr("NEXUS_ADMIN_DATABASE_URL", envOr("NEXUS_MIGRATE_DATABASE_URL", defaultMigrateDSN))
+}
+
+// tenantDirectory lists every tenant (tenancy.Directory), as the platform
+// operator.
+func tenantDirectory() tenancy.Directory { return tenancypg.Directory{DSN: adminDSN()} }
+
+// startPeriodic runs fn every interval until the returned stop is called. It is
+// the one ticker loop the platform's scheduled passes share; what a pass does,
+// and for which tenants, is the owning package's business (tenancy.ForEach
+// visits them), so this file only decides when.
+func startPeriodic(ctx context.Context, interval time.Duration, fn func(context.Context)) (stop func()) {
+	ticker := time.NewTicker(interval)
+	done := make(chan struct{})
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				fn(ctx)
+			}
+		}
+	}()
+	return func() { close(done) }
+}
 
 // startAnchorLoop runs the scheduled verifier task 5.3 asks for: every
 // anchorInterval, anchor every tenant's new receipts and verify the whole
-// chain, logging (not panicking on) a break or a gap — an alert a real
-// deployment would ship to its paging system, not a reason to crash the
-// process that is the source of truth for the very thing it's checking.
-func startAnchorLoop(ctx context.Context, st *store.Store, chain *auditpg.Chain) (stop func()) {
-	ticker := time.NewTicker(anchorInterval)
-	done := make(chan struct{})
-	go func() {
-		defer ticker.Stop()
-		for {
-			select {
-			case <-done:
-				return
-			case <-ticker.C:
-				anchorAndVerifyAllTenants(ctx, st, chain)
-			}
-		}
-	}()
-	return func() { close(done) }
-}
-
-func anchorAndVerifyAllTenants(ctx context.Context, st *store.Store, chain *auditpg.Chain) {
-	tenantIDs, err := listTenantIDs(ctx)
-	if err != nil {
-		log.Error().Err(err).Msg("nexusd: list tenants for anchor/verify pass")
-		return
-	}
-	for _, tenantID := range tenantIDs {
-		if err := st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-			if _, _, err := chain.Anchor(ctx, tx, tenantID); err != nil {
-				return err
-			}
-			report, err := chain.Verify(ctx, tx, tenantID)
-			if err != nil {
-				return err
-			}
-			if !report.OK() {
-				log.Error().Any("tenant_id", tenantID).Any("breaks", report.Breaks).Any("gaps", report.Gaps).Msg("nexusd: audit chain verification found a problem")
-			}
-			return nil
-		}); err != nil {
-			log.Error().Err(err).Any("tenant_id", tenantID).Msg("nexusd: anchor/verify pass failed")
-		}
-	}
+// chain. A break or a gap is logged, not fatal — an alert a real deployment
+// would ship to its paging system, not a reason to crash the process that is
+// the source of truth for the very thing it is checking.
+func startAnchorLoop(ctx context.Context, dir tenancy.Directory, audit auditpg.Scoped) (stop func()) {
+	return startPeriodic(ctx, anchorInterval, func(ctx context.Context) {
+		tenancy.ForEach(ctx, dir, "audit anchor/verify", audit.AnchorAndVerify)
+	})
 }
 
 // startTeamBackstopLoop runs README task 9.9's own wall-clock trigger: every
-// teamBackstopSweepInterval, sweep every tenant for an 'active' team older
-// than teamBackstopWindow and end it as 'aborted' — the same
-// list-every-tenant-then-loop shape startAnchorLoop/anchorAndVerifyAllTenants
-// already use for a periodic cross-tenant pass.
-func startTeamBackstopLoop(ctx context.Context, teamsSvc *teams.Service) (stop func()) {
-	ticker := time.NewTicker(teamBackstopSweepInterval)
-	done := make(chan struct{})
-	go func() {
-		defer ticker.Stop()
-		for {
-			select {
-			case <-done:
-				return
-			case <-ticker.C:
-				sweepTeamBackstopAllTenants(ctx, teamsSvc)
-			}
-		}
-	}()
-	return func() { close(done) }
-}
-
-func sweepTeamBackstopAllTenants(ctx context.Context, teamsSvc *teams.Service) {
-	tenantIDs, err := listTenantIDs(ctx)
-	if err != nil {
-		log.Error().Err(err).Msg("nexusd: list tenants for team backstop sweep")
-		return
-	}
-	for _, tenantID := range tenantIDs {
-		if err := teamsSvc.SweepBackstop(ctx, tenantID, teamBackstopWindow); err != nil {
-			log.Error().Err(err).Any("tenant_id", tenantID).Msg("nexusd: team backstop sweep failed")
-		}
-	}
+// teamBackstopSweepInterval, sweep every tenant for an 'active' team older than
+// teamBackstopWindow and end it as 'aborted'.
+func startTeamBackstopLoop(ctx context.Context, dir tenancy.Directory, teamsSvc *teams.Service) (stop func()) {
+	return startPeriodic(ctx, teamBackstopSweepInterval, func(ctx context.Context) {
+		tenancy.ForEach(ctx, dir, "team backstop", func(ctx context.Context, tenantID uuid.UUID) error {
+			return teamsSvc.SweepBackstop(ctx, tenantID, teamBackstopWindow)
+		})
+	})
 }
 
 // startIdleConversationSweepLoop runs the idle-conversation backstop: every
-// idleConversationSweepInterval, sweep every tenant for a conversational
-// session sitting in eventlog.SessionStatusAwaitingInput past
-// idleConversationWindow and end it via runctl.Control.EndIdleConversation
-// — the same list-every-tenant-then-loop shape startAnchorLoop/
-// startTeamBackstopLoop already use for a periodic cross-tenant pass.
-func startIdleConversationSweepLoop(ctx context.Context, st *store.Store, ctl *runctl.Control) (stop func()) {
-	ticker := time.NewTicker(idleConversationSweepInterval)
-	done := make(chan struct{})
-	go func() {
-		defer ticker.Stop()
-		for {
-			select {
-			case <-done:
-				return
-			case <-ticker.C:
-				sweepIdleConversationsAllTenants(ctx, st, ctl)
-			}
-		}
-	}()
-	return func() { close(done) }
-}
-
-func sweepIdleConversationsAllTenants(ctx context.Context, st *store.Store, ctl *runctl.Control) {
-	tenantIDs, err := listTenantIDs(ctx)
-	if err != nil {
-		log.Error().Err(err).Msg("nexusd: list tenants for idle-conversation sweep")
-		return
-	}
-	olderThan := time.Now().Add(-idleConversationWindow)
-	for _, tenantID := range tenantIDs {
-		var staleIDs []uuid.UUID
-		if err := st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-			var err error
-			staleIDs, err = store.ListStaleAwaitingInputSessionIDs(ctx, tx, olderThan)
-			return err
-		}); err != nil {
-			log.Error().Err(err).Any("tenant_id", tenantID).Msg("nexusd: idle-conversation sweep: list stale sessions failed")
-			continue
-		}
-		for _, sessionID := range staleIDs {
-			if err := ctl.EndIdleConversation(ctx, tenantID, sessionID); err != nil {
-				log.Error().Err(err).Any("tenant_id", tenantID).Any("session_id", sessionID).Msg("nexusd: idle-conversation sweep: end session failed")
-			}
-		}
-	}
-}
-
-// listTenantIDs enumerates every tenant in the system — genuinely
-// cross-tenant, unlike everything else in this binary (store.Store.
-// InTenantTx is "the only sanctioned way to scope a database operation to
-// a tenant," per its own doc comment, and has no notion of "every
-// tenant"). st's own pool connects as nexus_app through PgBouncer, an
-// ordinary role RLS-restricted to whatever app.tenant_id the CURRENT
-// transaction set — which is nothing, here, on purpose: there is no tenant
-// to scope to yet, that's the whole point of this query. So this one admin
-// operation connects directly as the migration superuser instead, exactly
-// like runMigrate already does for admin-only DDL — the anchor/verify pass
-// (README task 5.3) is the same kind of platform-operator action, not a
-// tenant-scoped one.
-func listTenantIDs(ctx context.Context) ([]uuid.UUID, error) {
-	dsn := envOr("NEXUS_ADMIN_DATABASE_URL", envOr("NEXUS_MIGRATE_DATABASE_URL", defaultMigrateDSN))
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		return nil, fmt.Errorf("connect as admin: %w", err)
-	}
-	defer pool.Close()
-
-	rows, err := pool.Query(ctx, `SELECT tenant_id FROM tenants`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var ids []uuid.UUID
-	for rows.Next() {
-		var id uuid.UUID
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
+// idleConversationSweepInterval, sweep every tenant for a conversational session
+// sitting in awaiting_input past idleConversationWindow and end it
+// (runctl.Control.SweepIdle).
+func startIdleConversationSweepLoop(ctx context.Context, dir tenancy.Directory, ctl *runctl.Control) (stop func()) {
+	return startPeriodic(ctx, idleConversationSweepInterval, func(ctx context.Context) {
+		olderThan := time.Now().Add(-idleConversationWindow)
+		tenancy.ForEach(ctx, dir, "idle conversation sweep", func(ctx context.Context, tenantID uuid.UUID) error {
+			return ctl.SweepIdle(ctx, tenantID, olderThan)
+		})
+	})
 }
 
 // startQueueWorkers wires internal/queue's worker pool (README tasks
@@ -204,7 +117,7 @@ func listTenantIDs(ctx context.Context) ([]uuid.UUID, error) {
 // tell them apart.
 //
 // It also sweeps for sessions a worker that died left stuck in "running"
-// (startOrphanRecovery, orphans.go) and enqueues a resume job for each — the
+// (runctl.StartRecovery) and enqueues a resume job for each — the
 // concrete trigger behind README §6's demo line: "kill -9 the worker
 // mid-tool-call -> the job re-queues and resumes from the checkpoint." A row
 // still reading "running" is only an orphan if no worker is driving it, which
@@ -217,19 +130,18 @@ func listTenantIDs(ctx context.Context) ([]uuid.UUID, error) {
 // "running" in the first place, so a session only ever reaches "running"
 // once it durably has at least its seed/message event — recovering an
 // orphaned FRESH run is already exactly what this sweep covers.
-func startQueueWorkers(ctx context.Context, st *store.Store, redisClient *redis.Client, port queue.Port, srv *rest.Server, ctl *runctl.Control, delegations *delegate.Delegations, teamsSvc *teams.Service) (stop func()) {
-	adminDSN := envOr("NEXUS_ADMIN_DATABASE_URL", envOr("NEXUS_MIGRATE_DATABASE_URL", defaultMigrateDSN))
-	adminPool, err := pgxpool.New(ctx, adminDSN)
+func startQueueWorkers(ctx context.Context, redisClient *redis.Client, port queue.Port, srv *rest.Server, ctl *runctl.Control) (stop func()) {
+	adminPool, err := pgxpool.New(ctx, adminDSN())
 	if err != nil {
 		log.Error().Err(err).Msg("nexusd: queue: connect as admin failed; the worker pool is NOT running (fresh runs will be seeded but never actually driven, and crash recovery does not happen)")
 		return func() {}
 	}
 
 	lock := queueredis.NewSessionLock(redisClient, sessionLockTTL)
-	runner := &queueRunner{st: st, ctl: ctl, delegations: delegations, teams: teamsSvc, srv: srv}
+	runner := &queueRunner{ctl: ctl, srv: srv}
 
 	workerCtx, cancel := context.WithCancel(ctx)
-	startOrphanRecovery(workerCtx, func(ctx context.Context) ([]orphanCandidate, error) { return listRunningSessions(ctx, adminPool) }, lock, port, orphanRecheckAfter)
+	runctl.StartRecovery(workerCtx, func(ctx context.Context) ([]runctl.Orphan, error) { return runctlpg.ListRunning(ctx, adminPool) }, lock, port, orphanRecheckAfter)
 
 	numWorkers := 2
 	for i := 0; i < numWorkers; i++ {
@@ -251,10 +163,7 @@ func startQueueWorkers(ctx context.Context, st *store.Store, redisClient *redis.
 // are driven synchronously via REST instead of through the queue, since
 // none of them drive the turn loop themselves.
 type queueRunner struct {
-	st          *store.Store
-	ctl         *runctl.Control
-	delegations *delegate.Delegations
-	teams       *teams.Service
+	ctl *runctl.Control
 
 	// srv publishes every event this job's own turn loop produces — the
 	// same PublishEvent call internal/surfaces/rest's own synchronous fast
@@ -266,73 +175,25 @@ type queueRunner struct {
 }
 
 func (r *queueRunner) Run(ctx context.Context, job queue.Job) error {
-	var lastErr error
 	for ev, err := range r.ctl.Resume(ctx, job.TenantID, job.SessionID) {
 		if r.srv != nil {
 			r.srv.PublishEvent(job.TenantID, job.SessionID, ev, err)
 		}
 		if err != nil {
-			lastErr = err
-			break
+			return err
 		}
-	}
-	if lastErr != nil {
-		return lastErr
 	}
 
-	// A crash-recovered session that is ALSO a delegation's child (README
-	// task 8.10) may have just reached its own terminal state via the
-	// resume above — OnChildTerminal is a documented no-op for every other
-	// session (the overwhelming majority), and only does real work here.
-	if r.delegations != nil {
-		if err := r.delegations.OnChildTerminal(ctx, job.TenantID, job.SessionID); err != nil {
-			log.Error().Err(err).Any("session_id", job.SessionID).Msg("nexusd: queue: resolve delegation after crash-recovered child failed")
-		}
-	}
-	// A crash-recovered session that is ALSO a team member (README task 9.9)
-	// may have just reached its own terminal state via the resume above —
-	// OnMemberTerminal is a documented no-op for every other session, and
-	// only does real work here, mirroring OnChildTerminal's own call above.
-	if r.teams != nil {
-		if err := r.teams.OnMemberTerminal(ctx, job.TenantID, job.SessionID); err != nil {
-			log.Error().Err(err).Any("session_id", job.SessionID).Msg("nexusd: queue: resolve team after crash-recovered member failed")
-		}
-	}
+	// A crash-recovered session may ALSO be a delegation's child (README task
+	// 8.10) or a team member (task 9.9) that just reached its own terminal
+	// state via the resume above; whoever cares has registered as a
+	// runctl.SettledObserver, and each is a no-op for every other session.
+	r.ctl.NotifySettled(ctx, job.TenantID, job.SessionID)
 
 	// A checkpoint after every leased job returns (README task 6.3) — a
-	// durable, denormalized pointer a FUTURE resume can consult fast,
-	// never the source of truth for any one field (its own doc comment,
-	// internal/store/checkpoint.go).
-	var harnessDigest []byte
-	err := r.st.InTenantTx(ctx, job.TenantID, func(ctx context.Context, tx pgx.Tx) error {
-		sess, err := store.GetSession(ctx, tx, job.SessionID)
-		if err != nil {
-			return err
-		}
-		harnessDigest = sess.HarnessDigest
-		claims, err := store.ListInFlightClaims(ctx, tx, job.SessionID)
-		if err != nil {
-			return err
-		}
-		var openClaim *uuid.UUID
-		if len(claims) > 0 {
-			openClaim = &claims[0].ClaimID
-		}
-		history, err := store.ListEvents(ctx, tx, job.SessionID)
-		if err != nil {
-			return err
-		}
-		var coveredSeq int64
-		if len(history) > 0 {
-			coveredSeq = history[len(history)-1].Seq
-		}
-		_, err = store.SaveCheckpoint(ctx, tx, store.Checkpoint{
-			TenantID: job.TenantID, SessionID: job.SessionID, CoveredSeq: coveredSeq,
-			OpenClaimID: openClaim, HarnessDigest: harnessDigest,
-		})
-		return err
-	})
-	if err != nil {
+	// durable pointer a FUTURE resume can consult fast, never the source of
+	// truth for any one field.
+	if err := r.ctl.SaveCheckpoint(ctx, job.TenantID, job.SessionID); err != nil {
 		log.Error().Err(err).Any("job_id", job.JobID).Msg("nexusd: queue: save checkpoint after run failed")
 	}
 	return nil

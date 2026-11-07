@@ -59,7 +59,7 @@ func runVerifyChain(ctx context.Context, args []string) error {
 	signer := audit.NewSignerClient(envOr("NEXUS_SIGNERD_SOCKET", defaultSignerdSocket))
 	chain := auditpg.NewChain(signer)
 
-	tenantIDs, err := listTenantIDs(ctx)
+	tenantIDs, err := tenantDirectory().ListTenantIDs(ctx)
 	if err != nil {
 		return fmt.Errorf("list tenants: %w", err)
 	}

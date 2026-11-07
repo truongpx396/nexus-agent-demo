@@ -29,16 +29,17 @@ type Dispatcher struct {
 	turnCount int
 }
 
-// NewDispatcher wires the three built-in handler kinds. Sensible defaults
-// (5s chain budget, 8 hooks/turn, 2s per-hook timeout) are demo-scoped
-// policy, not load-bearing constants — every field is exported and
-// overridable by the caller that constructs one.
+// NewDispatcher wires the one handler kind that needs no I/O, KindPrompt. The
+// command and http kinds are adapters (internal/hooks/exechook, internal/hooks/
+// httphook) that the composition root registers in Handlers, so this package
+// — and the tool pipeline that imports it — links neither os/exec nor
+// net/http. Sensible defaults (5s chain budget, 8 hooks/turn, 2s per-hook
+// timeout) are demo-scoped policy, not load-bearing constants — every field is
+// exported and overridable by the caller that constructs one.
 func NewDispatcher() *Dispatcher {
 	return &Dispatcher{
 		Handlers: map[Kind]Handler{
-			KindCommand: CommandHandler{},
-			KindHTTP:    HTTPHandler{},
-			KindPrompt:  PromptHandler{},
+			KindPrompt: PromptHandler{},
 		},
 		ChainBudget:    5 * time.Second,
 		PerTurnCap:     8,

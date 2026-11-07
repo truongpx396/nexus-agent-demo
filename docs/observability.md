@@ -60,7 +60,7 @@ Langfuse stack just to look at spans.
 A third, also separately opt-in **"profiling"** profile (below, `make
 profiling-up`) adds Grafana Pyroscope — continuous CPU/memory/goroutine/
 mutex/block profiling, pushed straight from `nexusd`'s/`signerd`'s own
-process via `github.com/grafana/pyroscope-go` (`internal/obs/pyroscope.go`),
+process via `github.com/grafana/pyroscope-go` (`internal/obs/profiling/pyroscope.go`),
 not scraped. Where the golden-signal dashboard tells you a regression
 happened and Tempo/Langfuse tell you which run was slow, Pyroscope answers
 the next question down: which function. It needs no host-network
@@ -150,7 +150,7 @@ Langfuse's OTLP path already has, not something specific to Tempo.
 
 ## Continuous profiling: Grafana Pyroscope
 
-`internal/obs/pyroscope.go` wraps `github.com/grafana/pyroscope-go` —
+`internal/obs/profiling/pyroscope.go` wraps `github.com/grafana/pyroscope-go` —
 `nexusd` and `signerd` each PUSH a continuous stream of CPU, heap
 (alloc/inuse, objects/bytes), and goroutine-count profiles to a Pyroscope
 server every `UploadRate` (the SDK's own default, 15s), tagged with
@@ -200,7 +200,7 @@ pushed `nexusd`-tagged profile returns real flame-graph data.
 ### On-demand profiling: pprof
 
 Separately from continuous profiling, `obs.StartPprofServer`
-(`internal/obs/pprof.go`) exposes Go's standard `net/http/pprof` handlers
+(`internal/obs/profiling/pprof.go`) exposes Go's standard `net/http/pprof` handlers
 (`/debug/pprof/profile`, `/heap`, `/goroutine`, `/trace`, …) for ad hoc
 `go tool pprof http://<addr>/debug/pprof/...` or `curl` capture — the
 "I need one flame graph right now, from one specific process" tool,

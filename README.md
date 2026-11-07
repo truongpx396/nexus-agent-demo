@@ -482,7 +482,7 @@ nexus-agent-demo/
 │   ├── nexusd/                 # the single binary: control plane + worker pool + REST surface
 │   ├── nexusctl/               # CLI surface adapter — the second surface that proves Principle I
 │   └── signerd/                # sign-only audit-chain key custody over a unix socket
-├── kernel/                     # THE LOOP — no imports from internal/surfaces or internal/controlplane
+├── kernel/                     # THE LOOP — imports no surface, no control plane, no tool pipeline, no driver
 │   ├── loop.go                 # iter.Seq2[Event,error] generator; the only control flow in the system
 │   ├── classify.go             # TOOL_CALLS | CONTENT | EMPTY
 │   ├── terminal.go             # the 10 typed terminal reasons + their producers
@@ -490,8 +490,12 @@ nexus-agent-demo/
 ├── internal/
 │   ├── provider/               # port + normalized stream + anthropic/ + fake/ + router + failover
 │   ├── tools/                  # identity, manifest, admission, registry, pipeline (16 steps), builtin/
+│   │   ├── kerneladapter/      # kernel.ToolExecutor over the pipeline — the one package that knows both
+│   │   └── postgres/           # the derived-artifact recorder
 │   ├── permissions/            # the 10-layer chain, autonomy ratchet, profiles, safety/, ruleoftwo
-│   ├── hooks/                  # dispatcher + command|http|prompt handlers + bounding guards
+│   ├── hooks/                  # the hook port: dispatcher, matcher, the I/O-free prompt kind, the JSON wire protocol
+│   │   ├── exechook/           # command-hook adapter (os/exec)
+│   │   └── httphook/           # http-hook adapter (net/http, SSRF guard)
 │   ├── oversight/              # approvals + input requests over one durable-suspend mechanism, as a unit-of-work Store
 │   │   └── postgres/           # its Store: the approval/input SQL and tenant scope
 │   ├── promptctx/              # two-zone builder, cache measurement, pruning, condensation
@@ -511,12 +515,12 @@ nexus-agent-demo/
 │   │   ├── inmem/              # kernel.EventLog adapter for tests: the loop runs with no database
 │   │   ├── logtest/            # the contract suite both adapters pass
 │   │   └── sealed/             # eventlog.Appender over Postgres: seal under the session key, append, chain — one copy for every out-of-band writer
-│   ├── store/                  # Postgres adapter: events, projections, checkpoints, snapshots, claims, RLS scoping
+│   ├── store/                  # the persistence kernel: tenant scoping (RLS), migrations, and the session/event aggregate with its snapshots
 │   ├── queue/                  # Queue port, worker pool, admission control
 │   │   └── redis/              # Redis Streams adapter + the session-key lock
 │   ├── reliability/            # classifier, backoff, breaker, stuck detector
-│   ├── runctl/                 # steer, cancel, resume, replay, fork, tightenAutonomy, the claim ledger — over a unit-of-work Store
-│   │   └── postgres/           # its Store: claims, the awaiting_input claim, the autonomy write
+│   ├── runctl/                 # steer, cancel, resume, replay, fork, tightenAutonomy, the claim ledger, checkpoints, the idle sweep, orphan recovery, settled observers — over a unit-of-work Store
+│   │   └── postgres/           # its Store: claims, checkpoints, the awaiting_input claim, the autonomy write, the orphan finder
 │   ├── runstate/               # one place that rebuilds a kernel.RunState from a session's history (generic over a service's own Tx)
 │   ├── sandbox/                # docker exec, limits, deny-net, (optional) broker
 │   ├── plan/                   # orchestration plane: schema, validator, predicate AST, evaluator, lifecycle
@@ -528,7 +532,7 @@ nexus-agent-demo/
 │   ├── runs/                   # application layer: the run-admission use case (Launcher/Service) and the vocabulary surfaces share
 │   │   └── postgres/           # its Postgres adapters: session admission (+ budget), per-session key provisioning, and the Reader REST's GET endpoints use
 │   ├── surfaces/               # rest/, cli/, telegram/, zalo/, email/, cron/, mcp/ — Phase 11 adds the last five
-│   │   ├── postgres/           # the surfaces' shared adapters: inbound dedup and the delivery ledger
+│   │   ├── postgres/           # the surfaces' shared adapters: inbound dedup, the delivery ledger and the messaging-channel directory
 │   │   ├── cron/postgres/      # the schedule store, including the atomic fire
 │   │   └── mcp/postgres/       # the MCP server directory
 │   ├── connectors/             # Phase 11: per-user OAuth token vault, sealed under crypto/
@@ -537,8 +541,16 @@ nexus-agent-demo/
 │   ├── retrieval/              # Phase 12: the embed-and-search service over an Index port
 │   │   └── postgres/           # the pgvector Index, tenant-scoped like every other table
 │   ├── ingest/                 # Phase 12: document conversion — PDF/DOCX/HTML → scanned, digested chunks
-│   ├── obs/                    # allowlisted attributes, log-derived spans, content-access grants, report composition
-│   │   └── postgres/           # dashboard and usage queries, the grant store
+│   ├── obs/                    # allowlisted attributes, the Tracer port, log-derived spans — no SDK, no I/O
+│   │   ├── otlp/               # OTLP/HTTP exporter (the OpenTelemetry SDK)
+│   │   ├── langfuse/           # Langfuse exporter
+│   │   └── profiling/          # the pprof listener and the Pyroscope client
+│   ├── contentaccess/          # content-access grants: the only path to plaintext outside a run's own audience
+│   │   └── postgres/           # the grant store
+│   ├── reporting/              # golden signals, per-tool counts, per-model spend — a content-free read model
+│   │   └── postgres/           # its queries; they read other features' structural columns, by design
+│   ├── tenancy/                # the tenants themselves: Directory and ForEach for the cross-tenant passes
+│   │   └── postgres/           # the Directory, acting as the platform operator
 │   ├── harness/                # harness_digest computation
 │   ├── config/                 # tenant config and its Loader port — config, never forks
 │   │   └── postgres/           # the Loader over tenant_configs, plus the transaction-level Load/Upsert the seed command composes
@@ -570,19 +582,50 @@ nexus-agent-demo/
 The tenant-isolation test that runs through PgBouncer is white-box and lives beside the code it needs, in
 `internal/store/isolation_integration_test.go`.
 
-**Import boundary rule (enforced by a test, not a convention):**
-`kernel/` is the core of the hexagon: it may import `internal/{eventlog,provider,tools,promptctx,cost,reliability,obs}`
-and nothing else, and reaches durable state only through the `kernel.EventLog` port — never `internal/store`,
-a database driver, or an adapter of its own ports (`internal/eventlog/{postgres,inmem}`). The same holds for
-everything it imports for vocabulary: `cost`, `obs`, `crypto`, `audit`, `runs`, `controlplane`, `tools`, `oversight`,
-`config`, `memory`, `retrieval`, `connectors`, `runctl`, `runstate`, `delegate`, `teams`, `plan`, `queue` and every surface each have a rule of their own that none of them reaches
-`internal/store`, `pgx` or `redis` even transitively, because their storage lives in a `postgres/` (or `redis/`, `inmem/`)
-subpackage that only `cmd/nexusd`, the composition root, wires in.
-`internal/surfaces/` may not import `kernel/`. `internal/controlplane/` may not import
-`internal/{sandbox,memory,provider}`. `internal/eventlog/` (the domain model) imports nothing from this module and no
-database driver. A `tests/contract/boundaries_test.go` walks the import
-graph with `go/packages` and fails the build on a violation — this is what keeps the
-"physical split later is a deployment change" claim true.
+**Import boundary rules (enforced by tests, not conventions).** The code is a modular monolith in the hexagonal
+style: one process, packaged by feature, with each feature's storage in an adapter subpackage and the wiring in
+`cmd/nexusd`. Four rules in `tests/contract/` keep that true; each is checked against the real import graph with
+`go/packages`, and each was shown to fail on an injected violation.
+
+1. **The core reaches no outside world.** `kernel/` may import `internal/{eventlog,provider,promptctx,cost,reliability,obs}`
+   and nothing else: no surface, no control plane, not the tool pipeline (that is `internal/tools/kerneladapter`'s job),
+   and durable state only through the `kernel.EventLog` port. Twenty-eight core and feature packages — the kernel,
+   `obs`, `tools`, `hooks`, `permissions`, `cost`, `eventlog`, `provider`, `crypto`, `audit`, `oversight`, `runctl`,
+   `delegate`, `teams`, `plan`, `memory`, `retrieval`, `queue`, `runs`, `contentaccess`, `reporting` and the rest — may link
+   neither a database or cache driver (`internal/store`, `pgx`, `redis`) nor an HTTP client, a child process, the
+   OpenTelemetry SDK, the profiler or a container SDK, even transitively. All of that lives in a `postgres/`, `redis/`,
+   `inmem/`, `otlp/`, `exechook/` … subpackage that only `cmd/nexusd` wires in. `internal/surfaces/` may not import
+   `kernel/`; `internal/controlplane/` may not import `internal/{sandbox,memory,provider}`; `internal/eventlog/` imports
+   nothing from this module and no driver.
+2. **An adapter is its feature's own.** `internal/plan/postgres` may import `plan`, the domain, and the shared
+   persistence kit — `internal/store`, `audit/postgres`, `crypto/postgres`, `eventlog/sealed`, the one way every
+   feature reaches its tenant-scoped, sealed, receipted transaction — but never another feature's adapter. When two
+   features must write in one transaction (a session and its budget; a plan and its fan-out envelope) the writer is a
+   function the composition root injects.
+3. **Feature-to-feature imports are declared.** `allowedFeatureImports` in `tests/contract/modules_test.go` lists, for
+   every package, the other packages it may import. It was seeded from the graph the code had, so it ratchets: a new
+   edge fails the build until someone adds it, with a reason, in the diff.
+4. **`cmd/nexusd` wires; it does not query.** Its serving files hold no SQL. The operator commands (`cli_*.go`:
+   migrate, seed, erase, ingest, go-live, dashboard) are the one named exemption: a human runs them once, with
+   administrative credentials, against a database that is not serving.
+
+Also enforced: the three `cmd/*` binaries may not import each other; `cmd/nexusd` may not import
+`internal/audit/signerkey` (the private key); a non-test Go file may not exceed 500 lines.
+
+**What is shared, and what is a known exception.** The *shared kernel* is deliberate and named: the session/event
+aggregate (`internal/eventlog` and the `sessions`/`events` tables, which every feature table references), the
+envelope (`crypto`), the receipt vocabulary (`audit`), the provider port, and the persistence kit above. The event
+taxonomy is one closed list in `internal/eventlog`, so a new feature adds its event types there; that is the price of
+a single hash-chained, upcastable log. `internal/reporting/postgres` is a read model and reads other features'
+structural columns on purpose. Three packages are named exceptions to rule 1, each with its reason in
+`tests/contract/boundaries_test.go`: `connectors` (its API carries `golang.org/x/oauth2` types), `skills` (an
+unsandboxed `os/exec` fallback) and `sandbox` (it *is* the container adapter). REST handlers share one transport
+package (`internal/surfaces/rest`) rather than sitting beside each feature; `surfaces/` is grouped by transport on
+purpose.
+
+The `go/packages` walk is also what keeps the "physical split later is a deployment change" claim honest for the
+control-plane/data-plane seam; splitting a *feature* out would additionally mean untangling the `sessions` foreign
+keys, which the shared-kernel declaration above is candid about.
 
 ### Core schema (the part that cannot be retrofitted)
 

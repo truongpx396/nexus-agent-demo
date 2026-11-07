@@ -12,7 +12,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	obspg "github.com/truongpx396/nexus-agent-demo/internal/obs/postgres"
+	reportingpg "github.com/truongpx396/nexus-agent-demo/internal/reporting/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
@@ -23,7 +23,7 @@ import (
 func TestReports_ToolCallCountsAndModelSpend(t *testing.T) {
 	r := setupOversightRig(t)
 	ctx := context.Background()
-	reports := obspg.New(r.st)
+	reports := reportingpg.New(r.st)
 
 	otherTenant := uuid.New()
 	if err := insertTenant(ctx, r.st, otherTenant); err != nil {

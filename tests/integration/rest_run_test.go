@@ -35,6 +35,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/authn"
 	"github.com/truongpx396/nexus-agent-demo/internal/controlplane"
+	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
@@ -80,7 +81,7 @@ func newTestLauncher(st *store.Store, keys *cryptopg.KeyStore, starter runs.Star
 
 func newTestControlPlane(st *store.Store) *controlplane.LocalPort {
 	stub := unusedControlPlaneBackend{}
-	return controlplane.NewLocalPort(runspg.Sessions{Store: st}, stub, stub, stub, stub)
+	return controlplane.NewLocalPort(runspg.Sessions{Store: st, Budgets: costpg.CreateBudget}, stub, stub, stub, stub)
 }
 
 // mustIssueToken mints a bearer token authenticating (tenantID, userID)

@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -95,7 +97,7 @@ func insertTestTenant(t *testing.T, s *store.Store, tenantID uuid.UUID) {
 func newZaloWebhookBody(t *testing.T, senderID, text string) []byte {
 	t.Helper()
 	// No msg_id — matches every pre-delivery-dedup test fixture in this
-	// file: store.ClaimInboundDelivery's own documented empty-string
+	// file: the inbound-delivery dedup's own documented empty-string
 	// behavior (always claims, never dedupes) means these keep passing
 	// unmodified. Only a test that specifically exercises dedup needs a
 	// real, distinct msg_id (newZaloWebhookBodyWithMsgID).
@@ -435,7 +437,7 @@ func TestHandleWebhook_ContendedSessionLockDropsDeliveryWithoutStartingARun(t *t
 // Starter standing in for the kernel.
 func newLauncher(st *store.Store, ks *cryptopg.KeyStore, starter runs.Starter) *runs.Service {
 	return &runs.Service{
-		Admit:   controlplane.NewLocalPort(runspg.Sessions{Store: st}, nil, nil, nil, nil),
+		Admit:   controlplane.NewLocalPort(runspg.Sessions{Store: st, Budgets: costpg.CreateBudget}, nil, nil, nil, nil),
 		Keys:    runspg.Keys{Store: st, KeyStore: ks},
 		Starter: starter,
 	}

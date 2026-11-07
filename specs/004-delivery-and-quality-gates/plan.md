@@ -9,7 +9,7 @@ Five conformance gaps in how the platform is built, released and operated, order
 ## Technical Context
 
 - **Durability**: the stores are Postgres (the event log, the audit chain, the price book, tenant config) and the files `nexusd` and `signerd` hold (`.dev/kek.key`, the signer's key). `nexusd verify-chain` and the projection replay in `internal/eventlog` are the checks a restore must pass. `docs/go-live.md` and `cmd/nexusd/cli_golive.go` are where a restore item goes.
-- **Service levels**: `deploy/observability/prometheus-rules.yml` (five rules), `docs/observability.md`, the golden signals in `internal/obs/dashboard.go`.
+- **Service levels**: `deploy/observability/prometheus-rules.yml` (five rules), `docs/observability.md`, the golden signals in `internal/reporting/golden_signals.go`.
 - **Supply chain**: `.github/workflows/ci.yml` (including the `images` job) and `govulncheck.yml`; the images are built by the root `Dockerfile` (static, distroless, non-root).
 - **Release gate**: `evals/{efficiency,gate,types}.go`; `make eval` is a CI job on the deterministic corpus, and live-model evals sit behind the `liveeval` build tag.
 - **Routing**: `internal/provider/router.go` and `router_test.go`.
