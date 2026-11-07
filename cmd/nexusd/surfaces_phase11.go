@@ -8,6 +8,8 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
 	"github.com/truongpx396/nexus-agent-demo/internal/runs"
+	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/email"
+	surfpg "github.com/truongpx396/nexus-agent-demo/internal/surfaces/postgres"
 )
 
 // conversationResumer is the one runs.Resumer telegram, zalo and email share
@@ -29,11 +31,21 @@ func (r conversationResumer) ResumeConversation(ctx context.Context, tenantID, s
 }
 
 // adminTenantLister implements cron.TenantLister over the same
-// separate admin-role connection listTenantIDs already dials — nexus_app
+// separate admin-role connection tenantDirectory already dials — nexus_app
 // (the runtime pool) is NOSUPERUSER NOBYPASSRLS and cannot make a
 // cross-tenant query at all (migrations/0000_app_role.sql).
 type adminTenantLister struct{}
 
 func (adminTenantLister) ListTenantIDs(ctx context.Context) ([]uuid.UUID, error) {
-	return listTenantIDs(ctx)
+	return tenantDirectory().ListTenantIDs(ctx)
+}
+
+// emailChannels satisfies email.ChannelPort over the shared channel directory.
+// The directory is shared by every chat surface and so imports none of them; the
+// one method whose result type is the email surface's own is converted here.
+type emailChannels struct{ *surfpg.Channels }
+
+func (c emailChannels) SMTPConfig(ctx context.Context, tenantID uuid.UUID) (email.SMTPConfig, error) {
+	cfg, err := c.Channels.SMTPConfig(ctx, tenantID)
+	return email.SMTPConfig(cfg), err
 }

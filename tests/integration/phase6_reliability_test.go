@@ -52,6 +52,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools/builtin"
+	"github.com/truongpx396/nexus-agent-demo/internal/tools/kerneladapter"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 	"github.com/truongpx396/nexus-agent-demo/migrations"
 )
@@ -239,10 +240,21 @@ func (r *phase6Rig) seedOneEvent(t *testing.T, sessionID uuid.UUID, sealFn kerne
 }
 
 func (r *phase6Rig) control(k *kernel.Kernel, approvals *oversight.Approvals, inputs *oversight.Inputs) *runctl.Control {
-	return &runctl.Control{
-		Store: runctlpg.New(r.st, r.keys, r.chain), Approvals: approvals, Inputs: inputs, Kernel: k,
+	c := &runctl.Control{
+		Store: runctlpg.New(r.st, r.keys, r.chain), Kernel: k,
 		System: "test", MaxTurns: 20,
 	}
+	// Assign only what the test wired. Control.Approvals and Control.Inputs are
+	// interfaces, and a nil *oversight.Inputs stored in one is a NON-nil interface
+	// wrapping a nil pointer, which defeats the "nil means unwired" check and
+	// panics on the first call.
+	if approvals != nil {
+		c.Approvals = approvals
+	}
+	if inputs != nil {
+		c.Inputs = inputs
+	}
+	return c
 }
 
 // newReadPipeline builds a Pipeline whose one tool is the REAL builtin
@@ -573,7 +585,7 @@ func TestSnapshot_DeletingAllSnapshotsChangesNothingButHydrationTime(t *testing.
 		{Kind: "tool_use", ToolUseID: "tu1", ToolName: "platform/file_read@v1", Input: `{"path":"missing.txt"}`},
 		{Kind: "done", Done: "stop"},
 	}}, fake.Script{Chunks: []fake.ChunkSpec{{Kind: "content", Text: "done"}, {Kind: "done", Done: "stop"}}})
-	k := &kernel.Kernel{Provider: provider.Wrap([]provider.Provider{prov}), Tools: kernel.PipelineExecutor{Pipeline: pipeline}, Budget: kernel.NoopBudgetGate{}, Log: postgres.New(rig.st, postgres.Hooks{})}
+	k := &kernel.Kernel{Provider: provider.Wrap([]provider.Provider{prov}), Tools: kerneladapter.PipelineExecutor{Pipeline: pipeline}, Budget: kernel.NoopBudgetGate{}, Log: postgres.New(rig.st, postgres.Hooks{})}
 	sealFn, _ := rig.seal(t, sessionID)
 	st0 := &kernel.RunState{TenantID: rig.tenantID, SessionID: sessionID, Seal: sealFn}
 	for ev, err := range k.Run(ctx, st0, kernel.RunConfig{System: "test", Catalog: catalog, ModelID: "fake", MaxTurns: 10, Input: "read a file"}) {
@@ -655,7 +667,7 @@ func TestStuckDetection_SecondCorroboratingTripTerminates(t *testing.T) {
 	scripts := repeatedToolUseScripts(6, "platform/file_read@v1", `{"path":"same.txt"}`)
 	prov := fake.New(scripts...)
 	k := &kernel.Kernel{
-		Provider: provider.Wrap([]provider.Provider{prov}), Tools: kernel.PipelineExecutor{Pipeline: pipeline},
+		Provider: provider.Wrap([]provider.Provider{prov}), Tools: kerneladapter.PipelineExecutor{Pipeline: pipeline},
 		Budget: kernel.NoopBudgetGate{}, Stuck: reliability.NewRegistry(4),
 		Log: postgres.New(rig.st, postgres.Hooks{}),
 	}
@@ -718,7 +730,7 @@ func TestRunctl_Cancel_ReleasesPendingApprovalAndAborts(t *testing.T) {
 		{Kind: "done", Done: "stop"},
 	}})
 	k := &kernel.Kernel{
-		Provider: provider.Wrap([]provider.Provider{prov}), Tools: kernel.PipelineExecutor{Pipeline: pipeline},
+		Provider: provider.Wrap([]provider.Provider{prov}), Tools: kerneladapter.PipelineExecutor{Pipeline: pipeline},
 		Budget: kernel.NoopBudgetGate{},
 		Log: postgres.New(rig.st, postgres.Hooks{Suspend: func(ctx context.Context, tx pgx.Tx, req kernel.SuspendRequest) error {
 			_, err := approvals.Create(ctx, oversight.CreateApprovalRequest{
@@ -858,7 +870,7 @@ func TestRunctl_Resume_RecoversAToolUseAKilledWorkerLeftOrphaned(t *testing.T) {
 
 	pipeline, catalog := newReadPipeline(t, workspaceRoot, nil)
 	prov := fake.New(fake.Script{Chunks: []fake.ChunkSpec{{Kind: "content", Text: "done"}, {Kind: "done", Done: "stop"}}})
-	k := &kernel.Kernel{Provider: provider.Wrap([]provider.Provider{prov}), Tools: kernel.PipelineExecutor{Pipeline: pipeline}, Budget: kernel.NoopBudgetGate{}, Log: postgres.New(rig.st, postgres.Hooks{})}
+	k := &kernel.Kernel{Provider: provider.Wrap([]provider.Provider{prov}), Tools: kerneladapter.PipelineExecutor{Pipeline: pipeline}, Budget: kernel.NoopBudgetGate{}, Log: postgres.New(rig.st, postgres.Hooks{})}
 
 	control := rig.control(k, oversight.NewApprovals(oversightpg.New(rig.st, rig.keys, rig.chain)), nil)
 	control.Catalog = catalog
@@ -938,7 +950,7 @@ func TestRunctl_Replay_IsPureAndAgreesWithHydration(t *testing.T) {
 
 	pipeline, catalog := newReadPipeline(t, workspaceRoot, nil)
 	prov := fake.New(fake.Script{Chunks: []fake.ChunkSpec{{Kind: "content", Text: "hi"}, {Kind: "done", Done: "stop"}}})
-	k := &kernel.Kernel{Provider: provider.Wrap([]provider.Provider{prov}), Tools: kernel.PipelineExecutor{Pipeline: pipeline}, Budget: kernel.NoopBudgetGate{}, Log: postgres.New(rig.st, postgres.Hooks{})}
+	k := &kernel.Kernel{Provider: provider.Wrap([]provider.Provider{prov}), Tools: kerneladapter.PipelineExecutor{Pipeline: pipeline}, Budget: kernel.NoopBudgetGate{}, Log: postgres.New(rig.st, postgres.Hooks{})}
 	sealFn, _ := rig.seal(t, sessionID)
 	st0 := &kernel.RunState{TenantID: rig.tenantID, SessionID: sessionID, Seal: sealFn}
 	for ev, err := range k.Run(ctx, st0, kernel.RunConfig{System: "test", Catalog: catalog, ModelID: "fake", MaxTurns: 5, Input: "hi"}) {

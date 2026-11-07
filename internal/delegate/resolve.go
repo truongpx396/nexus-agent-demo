@@ -268,3 +268,10 @@ type delegationReturnedPayload struct {
 	Outcome        string    `json:"outcome"`
 	Reason         string    `json:"reason,omitempty"`
 }
+
+// OnSessionSettled implements runctl.SettledObserver: a session a worker just
+// drove as far as it would go may be a delegation's child, so it resolves the
+// delegation. It is OnChildTerminal, a no-op for every session that is not one.
+func (d *Delegations) OnSessionSettled(ctx context.Context, tenantID, sessionID uuid.UUID) error {
+	return d.OnChildTerminal(ctx, tenantID, sessionID)
+}

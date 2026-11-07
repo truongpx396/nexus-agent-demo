@@ -9,8 +9,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/obs"
-	obspg "github.com/truongpx396/nexus-agent-demo/internal/obs/postgres"
+	"github.com/truongpx396/nexus-agent-demo/internal/reporting"
+	reportingpg "github.com/truongpx396/nexus-agent-demo/internal/reporting/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
@@ -37,13 +37,13 @@ func runDashboard(ctx context.Context, args []string) error {
 	defer pool.Close()
 	st := store.New(pool)
 
-	tenantIDs, err := listTenantIDs(ctx)
+	tenantIDs, err := tenantDirectory().ListTenantIDs(ctx)
 	if err != nil {
 		return fmt.Errorf("list tenants: %w", err)
 	}
 
 	for _, tenantID := range tenantIDs {
-		signals, err := obs.ComputeGoldenSignals(ctx, obspg.New(st), tenantID, *staleAfter, nil, nil)
+		signals, err := reporting.ComputeGoldenSignals(ctx, reportingpg.New(st), tenantID, *staleAfter, nil, nil)
 		if err != nil {
 			return fmt.Errorf("compute golden signals for tenant %s: %w", tenantID, err)
 		}
@@ -52,7 +52,7 @@ func runDashboard(ctx context.Context, args []string) error {
 	return nil
 }
 
-func printGoldenSignals(tenantID uuid.UUID, s obs.GoldenSignals) {
+func printGoldenSignals(tenantID uuid.UUID, s reporting.GoldenSignals) {
 	fmt.Printf("tenant %s:\n", tenantID)
 	fmt.Printf("  terminal sessions: %d\n", s.TotalTerminalSessions)
 	for reason, rate := range s.CompletionRateByReason {

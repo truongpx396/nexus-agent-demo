@@ -289,6 +289,17 @@ func TestPipeline_HookDenyProducesPermissionDenied(t *testing.T) {
 	}
 }
 
+// rewriteHandler is a hooks.Handler that always defers and rewrites the call's
+// path, the way a command hook's JSON response would.
+type rewriteHandler struct{}
+
+func (rewriteHandler) Run(context.Context, hooks.Config, hooks.Context) (hooks.Outcome, error) {
+	return hooks.Outcome{
+		Decision:     hooks.Defer,
+		UpdatedInput: json.RawMessage(`{"path":"/workspace/rewritten.txt"}`),
+	}, nil
+}
+
 // TestPipeline_HookRewriteRebindsDigestAndFlowsToCall proves step 8: a hook
 // that validly rewrites input hands the REWRITTEN input to Tool.Call, not
 // the original — the whole point of "re-binds the digest" is that
@@ -298,12 +309,14 @@ func TestPipeline_HookRewriteRebindsDigestAndFlowsToCall(t *testing.T) {
 	h := newHarness(t, tool)
 	h.cfg.HookConfigs = []hooks.Config{
 		{
-			Name: "rewriter", Event: hooks.PreToolUse, Kind: hooks.KindCommand, Matcher: "*",
+			Name: "rewriter", Event: hooks.PreToolUse, Kind: hooks.KindPrompt, Matcher: "*",
 			UpdatablePaths: []string{"path"},
-			Command:        "/bin/sh",
-			Args:           []string{"-c", `cat >/dev/null; echo '{"decision":"defer","updated_tool_input":{"path":"/workspace/rewritten.txt"}}'`},
 		},
 	}
+	// A fake handler stands in for a command hook: this test is about the
+	// pipeline re-binding the digest around a rewrite, not about running a
+	// script (that is internal/hooks/exechook's own test).
+	h.cfg.Hooks.Handlers[hooks.KindPrompt] = rewriteHandler{}
 	p := h.pipeline()
 
 	got := p.Execute(context.Background(), h.invocation("autonomous", `{"path":"/workspace/original.txt"}`))

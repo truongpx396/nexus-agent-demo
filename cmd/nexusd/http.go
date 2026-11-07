@@ -6,6 +6,7 @@ import (
 	"time"
 
 	queueredis "github.com/truongpx396/nexus-agent-demo/internal/queue/redis"
+	"github.com/truongpx396/nexus-agent-demo/internal/reporting"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -14,7 +15,6 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
-	"github.com/truongpx396/nexus-agent-demo/internal/obs"
 )
 
 // metricsStaleClaimAfter mirrors runDashboard's own default — how old an
@@ -33,19 +33,19 @@ const metricsStaleClaimAfter = 15 * time.Minute
 // specifically — the same "not measured here, never measured zero"
 // documented limitation.
 
-func handleMetrics(reports obs.Reports) http.HandlerFunc {
+func handleMetrics(reports reporting.Reports) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		tenantIDs, err := listTenantIDs(r.Context())
+		tenantIDs, err := tenantDirectory().ListTenantIDs(r.Context())
 		if err != nil {
 			http.Error(w, "list tenants: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 
-		signalsByTenant := make(map[uuid.UUID]obs.GoldenSignals, len(tenantIDs))
-		toolCallsByTenant := make(map[uuid.UUID]obs.ToolCallCounts, len(tenantIDs))
-		modelSpendByTenant := make(map[uuid.UUID][]obs.ModelSpend, len(tenantIDs))
+		signalsByTenant := make(map[uuid.UUID]reporting.GoldenSignals, len(tenantIDs))
+		toolCallsByTenant := make(map[uuid.UUID]reporting.ToolCallCounts, len(tenantIDs))
+		modelSpendByTenant := make(map[uuid.UUID][]reporting.ModelSpend, len(tenantIDs))
 		for _, tenantID := range tenantIDs {
-			signals, err := obs.ComputeGoldenSignals(r.Context(), reports, tenantID, metricsStaleClaimAfter, nil, nil)
+			signals, err := reporting.ComputeGoldenSignals(r.Context(), reports, tenantID, metricsStaleClaimAfter, nil, nil)
 			if err != nil {
 				log.Error().Err(err).Any("tenant_id", tenantID).Msg("nexusd: /metrics: compute golden signals")
 				continue
@@ -83,17 +83,17 @@ func handleMetrics(reports obs.Reports) http.HandlerFunc {
 
 		for _, m := range []struct {
 			name, help string
-			value      func(obs.GoldenSignals) float64
+			value      func(reporting.GoldenSignals) float64
 		}{
-			{"nexus_stuck_rate", "Fraction of terminal sessions ending stuck_terminated.", func(s obs.GoldenSignals) float64 { return s.StuckRate }},
-			{"nexus_cost_ceiling_breach_rate", "Fraction of budget_decisions resolved refuse_ceiling.", func(s obs.GoldenSignals) float64 { return s.CostCeilingBreachRate }},
-			{"nexus_cache_read_rate", "Fraction of input tokens served from cache.", func(s obs.GoldenSignals) float64 { return s.CacheReadRate }},
-			{"nexus_approval_p50_decision_ms", "Median approval decision latency in milliseconds.", func(s obs.GoldenSignals) float64 { return float64(s.ApprovalP50DecisionMS) }},
-			{"nexus_approval_p95_decision_ms", "P95 approval decision latency in milliseconds.", func(s obs.GoldenSignals) float64 { return float64(s.ApprovalP95DecisionMS) }},
-			{"nexus_approval_mismatch_rate", "Fraction of decided approvals that resolved approval_mismatch.", func(s obs.GoldenSignals) float64 { return s.ApprovalMismatchRate }},
-			{"nexus_unresolved_inflight_claims", "In-flight claims older than the staleness window.", func(s obs.GoldenSignals) float64 { return float64(s.UnresolvedInFlightClaims) }},
-			{"nexus_telemetry_attr_drop_rate", "Fraction of telemetry attribute keys dropped by the allowlist (not measured by this endpoint; see internal/obs.DropTracker).", func(s obs.GoldenSignals) float64 { return s.TelemetryAttrDropRate }},
-			{"nexus_taint_transition_rate", "Fraction of terminal sessions with at least one taint_transition event (constitution Principle V's Rule of Two).", func(s obs.GoldenSignals) float64 { return s.TaintTransitionRate }},
+			{"nexus_stuck_rate", "Fraction of terminal sessions ending stuck_terminated.", func(s reporting.GoldenSignals) float64 { return s.StuckRate }},
+			{"nexus_cost_ceiling_breach_rate", "Fraction of budget_decisions resolved refuse_ceiling.", func(s reporting.GoldenSignals) float64 { return s.CostCeilingBreachRate }},
+			{"nexus_cache_read_rate", "Fraction of input tokens served from cache.", func(s reporting.GoldenSignals) float64 { return s.CacheReadRate }},
+			{"nexus_approval_p50_decision_ms", "Median approval decision latency in milliseconds.", func(s reporting.GoldenSignals) float64 { return float64(s.ApprovalP50DecisionMS) }},
+			{"nexus_approval_p95_decision_ms", "P95 approval decision latency in milliseconds.", func(s reporting.GoldenSignals) float64 { return float64(s.ApprovalP95DecisionMS) }},
+			{"nexus_approval_mismatch_rate", "Fraction of decided approvals that resolved approval_mismatch.", func(s reporting.GoldenSignals) float64 { return s.ApprovalMismatchRate }},
+			{"nexus_unresolved_inflight_claims", "In-flight claims older than the staleness window.", func(s reporting.GoldenSignals) float64 { return float64(s.UnresolvedInFlightClaims) }},
+			{"nexus_telemetry_attr_drop_rate", "Fraction of telemetry attribute keys dropped by the allowlist (not measured by this endpoint; see internal/obs.DropTracker).", func(s reporting.GoldenSignals) float64 { return s.TelemetryAttrDropRate }},
+			{"nexus_taint_transition_rate", "Fraction of terminal sessions with at least one taint_transition event (constitution Principle V's Rule of Two).", func(s reporting.GoldenSignals) float64 { return s.TaintTransitionRate }},
 		} {
 			writeGaugeHeader(w, m.name, m.help)
 			for tenantID, signals := range signalsByTenant {

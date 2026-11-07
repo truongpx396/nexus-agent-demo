@@ -141,10 +141,10 @@ foundational deliverable, and the property test for the paired-result invariant 
 - [X] T051 [P] [US2] Tool profiles (Gate 1) as versioned tenant config in `internal/permissions/profile.go` (bp 3.8; FR-037)
 - [X] T052 [P] [US2] Hybrid safety classifier — rules, then a bounded model leg with circuit breaker, fail closed to ASK — in `internal/permissions/safety/safety.go` (bp 3.9; FR-038)
 - [X] T053 [P] [US2] Rule of Two over declared taint legs, with `Rebaseline` clearing only the untrusted leg, in `internal/permissions/ruleoftwo.go` (bp 3.10; FR-039)
-- [X] T054 [US2] Hook layer — command / http (SSRF-guarded) / prompt handlers, matcher, JSON-AST `if`, bounded chain — in `internal/hooks/dispatcher.go`, `internal/hooks/command.go`, `internal/hooks/http.go`, `internal/hooks/prompt.go`, `internal/hooks/matcher.go`, `internal/hooks/types.go` (bp 3.11; FR-040)
+- [X] T054 [US2] Hook layer — command / http (SSRF-guarded) / prompt handlers, matcher, JSON-AST `if`, bounded chain — in `internal/hooks/dispatcher.go`, `internal/hooks/exechook/handler.go`, `internal/hooks/httphook/handler.go`, `internal/hooks/prompt.go`, `internal/hooks/matcher.go`, `internal/hooks/types.go` (bp 3.11; FR-040)
 - [X] T055 [P] [US2] Builtin tools with taint and effect-class declarations in `internal/tools/builtin/file_read.go`, `internal/tools/builtin/file_write.go`, `internal/tools/builtin/file_search.go`, `internal/tools/builtin/shell.go`, `internal/tools/builtin/web_fetch.go`, `internal/tools/builtin/workspace.go` (bp 3.12; FR-041)
 - [X] T056 [P] [US2] Result budgeting — cap/paginate ~25k tokens, spill to the blob dir, preview with a "do not infer success" banner — in `internal/tools/budget.go` (bp 3.13; FR-042)
-- [X] T057 [P] [US2] Tool-execution adapter between the kernel and the pipeline in `kernel/tools_adapter.go` (FR-033)
+- [X] T057 [P] [US2] Tool-execution adapter between the kernel and the pipeline in `internal/tools/kerneladapter/executor.go` (FR-033)
 - [X] T058 [P] [US2] `platform/ask_clarification` — always suspends for a human regardless of autonomy, via Gate 2 forcing ASK — in `internal/tools/builtin/ask_clarification.go` (post-ledger; chat UI)
 
 **Checkpoint**: US1 + US2 = a governed single-surface agent.
@@ -202,7 +202,7 @@ foundational deliverable, and the property test for the paired-result invariant 
 - [X] T080 [US4] Durable suspend at zero token cost, resume on the approval event in `internal/oversight/resume.go`, `kernel/loop.go` (bp 5.8; FR-057)
 - [X] T081 [P] [US4] Input requests — schema-declared, `on_expiry`, zero authorization — in `internal/oversight/input.go` (bp 5.9; FR-058)
 - [X] T082 [P] [US4] `Invalidate` on cancel, terminal, reap, ceiling breach and steer-into-suspension in `internal/oversight/invalidate.go` (bp 5.10; FR-059)
-- [X] T083 [P] [US4] Content-access grants with a receipt on grant and every read in `internal/obs/grant.go`, `migrations/0009_content_access_grants.sql`, `internal/surfaces/rest/grants.go` (bp 5.11; FR-060)
+- [X] T083 [P] [US4] Content-access grants with a receipt on grant and every read in `internal/contentaccess/grants.go`, `migrations/0009_content_access_grants.sql`, `internal/surfaces/rest/grants.go` (bp 5.11; FR-060)
 - [X] T084 [US4] Docker sandbox — `--network none`, CPU/memory/PID/wall limits, per-session workspace, breach → terminate and reclaim — in `internal/sandbox/sandbox.go`, `internal/sandbox/session.go`, `migrations/0010_sandbox.sql` (bp 5.12; FR-061)
 - [X] T085 [P] [US4] Egress allowlist for `web_fetch`; connector/MCP endpoints in the sandbox deny set in `internal/tools/builtin/web_fetch.go` (bp 5.13; FR-062)
 - [X] T086 [P] [US4] Approval REST endpoints in `internal/surfaces/rest/oversight.go` (bp 5.6; FR-055)
@@ -227,10 +227,10 @@ foundational deliverable, and the property test for the paired-result invariant 
 
 - [X] T090 [US5] Queue port and admission, session-key serial lock in `internal/queue/types.go`, `internal/queue/admission.go`, `internal/queue/redis/lock.go`, `internal/queue/worker.go` (bp 6.1, 6.2; FR-064)
 - [X] T091 [P] [US5] Redis Streams consumer-group adapter with `XAUTOCLAIM` reclaim, replacing the Postgres adapter, in `internal/queue/redis/streams.go`, `migrations/0024_retire_queue_jobs.sql` (post-ledger, `2efa4ff`; research R-10)
-- [X] T092 [P] [US5] Checkpoint artifact in `internal/store/checkpoint.go`, `migrations/0013_checkpoints.sql` (bp 6.3; FR-065)
+- [X] T092 [P] [US5] Checkpoint artifact in `internal/runctl/postgres/checkpoint.go`, `migrations/0013_checkpoints.sql` (bp 6.3; FR-065)
 - [X] T093 [P] [US5] Disposable snapshot in `internal/store/snapshot.go` (bp 6.4; FR-066)
 - [X] T094 [P] [US5] Condensation as a model-facing event in `internal/eventlog/condensation.go` (bp 6.5; FR-067)
-- [X] T095 [US5] Write-ahead effect claims in `internal/store/claims.go`, `internal/runctl/claims.go`, `migrations/0012_claims.sql` (bp 6.6; FR-068)
+- [X] T095 [US5] Write-ahead effect claims in `internal/runctl/postgres/claims.go`, `internal/runctl/claims.go`, `migrations/0012_claims.sql` (bp 6.6; FR-068)
 - [X] T096 [P] [US5] Failure classifier, jittered logged backoff, circuit break at three in `internal/reliability/classifier.go` (bp 6.7; FR-069)
 - [X] T097 [P] [US5] Stuck detection — `stuck_suspected` then terminate on a corroborating second trip — in `internal/reliability/stuck.go` (bp 6.8; FR-070)
 - [X] T098 [US5] Run control — steer, cancel (sole producer of `aborted`), resume, tighten autonomy — in `internal/runctl/steer.go`, `internal/runctl/cancel.go`, `internal/runctl/resume.go`, `internal/runctl/autonomy.go`, `internal/runctl/types.go`, `internal/eventlog/sealed/unit.go` (bp 6.9; FR-071)
@@ -270,7 +270,7 @@ foundational deliverable, and the property test for the paired-result invariant 
 - [X] T116 [P] [US6] Structured compaction on a cheaper model through the same port, metered, in `internal/promptctx/condense.go` (bp 7.11; FR-078)
 - [X] T117 [US6] Capability descriptors and conformance in `internal/surfaces/capability/capability.go`, `internal/surfaces/capability/render.go`, `internal/surfaces/rest/capability.go` (bp 7.12; FR-079)
 - [X] T118 [P] [US6] Per-turn principal resolution in `internal/surfaces/rest/capability.go` (bp 7.13; FR-080)
-- [X] T119 [US6] Delivery outbox — event appended before the send, at-least-once, idempotent — in `internal/surfaces/outbox.go`, `internal/store/delivery.go`, `migrations/0015_deliveries.sql` (bp 7.14; FR-081)
+- [X] T119 [US6] Delivery outbox — event appended before the send, at-least-once, idempotent — in `internal/surfaces/outbox.go`, `internal/surfaces/postgres/delivery_sql.go`, `migrations/0015_deliveries.sql` (bp 7.14; FR-081)
 - [X] T120 [P] [US6] `nexusctl` as a second real surface in `cmd/nexusctl/main.go`, `internal/surfaces/cli/cli.go` (bp 7.15; FR-082)
 - [X] T121 [P] [US6] Tenant configuration (admitted skills, retention) in `internal/config/config.go`, `migrations/0014_tenant_configs.sql` (bp 7; FR-073)
 
@@ -332,7 +332,7 @@ foundational deliverable, and the property test for the paired-result invariant 
 - [X] T146 [P] [US8] Mandatory HITL adversarial cases in `evals/permission_case.go`, `evals/corpus_safety.go` (bp 10.9; FR-063)
 - [X] T147 [P] [US8] Per-artifact case sets (skill, tool, plan, team) with an adapter to the plan lifecycle in `evals/artifact.go`, `internal/evalgate/adapter.go` (bp 10.10; FR-098)
 - [X] T148 [P] [US8] CI gate: ≥ 90% pass and zero regressions blocks merge in `.github/workflows/ci.yml`, `evals/cmd/runner/main.go`, `evals/testdata/baseline.json` (bp 10.11; FR-099, SC-027)
-- [X] T149 [P] [US8] Golden-signal computation and dashboard in `internal/obs/dashboard.go`, `cmd/nexusd/cli_dashboard.go` (bp 10.12; FR-100)
+- [X] T149 [P] [US8] Golden-signal computation and dashboard in `internal/reporting/golden_signals.go`, `cmd/nexusd/cli_dashboard.go` (bp 10.12; FR-100)
 - [X] T150 [P] [US8] Go-live checklist with a verifying command in `docs/go-live.md`, `cmd/nexusd/cli_golive.go` (bp 10.13; FR-101)
 
 **Checkpoint**: an agent you can safely change.
@@ -370,7 +370,7 @@ foundational deliverable, and the property test for the paired-result invariant 
 
 ### Implementation for User Story 9 — operable and defensible (ledger Phase 15)
 
-- [X] T165 [P] [US9] OTLP exporter behind `obs.Exporter`; `/metrics` in `internal/obs/otlp.go`, `cmd/nexusd/serve.go` (bp 15.1; F13; FR-108)
+- [X] T165 [P] [US9] OTLP exporter behind `obs.Exporter`; `/metrics` in `internal/obs/otlp/exporter.go`, `cmd/nexusd/serve.go` (bp 15.1; F13; FR-108)
 - [X] T166 [P] [US9] Sandbox hardening — `CapDrop ALL`, read-only root, `no-new-privileges`, non-root user — in `internal/sandbox/sandbox.go` (bp 15.2; F10; FR-061)
 - [X] T167 [P] [US9] Explicit pgx pool sizing (max 20 / min 2) reconciled with the pooler in `cmd/nexusd/serve.go`; the provider SSE reader's scanner buffer raised past the 64 KB default (to 1 MiB) in `internal/provider/anthropic/stream.go`, `internal/provider/litellm/litellm.go` (bp 15.3; F14; FR-109)
 - [X] T168 [US9] Versioned control-plane contract and `LocalPort` in `internal/controlplane/port.go`, `internal/controlplane/local.go`, `cmd/nexusd/controlplane.go` (bp 15.4; F15; FR-110)
@@ -422,7 +422,7 @@ foundational deliverable, and the property test for the paired-result invariant 
 - [X] T182 [P] [US11] Telegram webhook surface in `internal/surfaces/telegram/webhook.go`, `internal/surfaces/telegram/sender.go`, `internal/surfaces/telegram/descriptor.go`, `internal/surfaces/telegram/ratelimit.go` (bp 11.4; FR-120)
 - [X] T183 [P] [US11] Zalo webhook surface in `internal/surfaces/zalo/webhook.go`, `internal/surfaces/zalo/sender.go`, `internal/surfaces/zalo/descriptor.go`, `internal/surfaces/zalo/ratelimit.go` (bp 11.4; FR-120)
 - [X] T184 [P] [US11] Email webhook and SMTP surface in `internal/surfaces/email/webhook.go`, `internal/surfaces/email/sender.go`, `internal/surfaces/email/descriptor.go`, `internal/surfaces/email/ratelimit.go` (bp 11.5; FR-120)
-- [X] T185 [P] [US11] Messaging channel store in `migrations/0021_messaging_channels.sql`, `cmd/nexusd/messaging.go` (bp 11.4, 11.5; FR-121)
+- [X] T185 [P] [US11] Messaging channel store in `migrations/0021_messaging_channels.sql`, `internal/surfaces/postgres/channels.go` (bp 11.4, 11.5; FR-121)
 - [X] T186 [P] [US11] Cron scheduler surface with a synthetic scheduler principal in `internal/surfaces/cron/scheduler.go`, `internal/surfaces/cron/descriptor.go`, `migrations/0020_cron_schedules.sql` (bp 11.6; FR-122)
 - [X] T187 [US11] Web app descriptor and chat-style UI in `internal/surfaces/web/descriptor.go`, `web/src/pages/ChatPage.tsx`, `web/src/components/chat/ChatThread.tsx`, `web/src/components/chat/ApprovalCard.tsx`, `web/src/components/chat/SubAgentCard.tsx`, `web/src/components/chat/ToolCallCard.tsx`, `web/src/pages/Approvals.tsx`, `web/src/pages/ApprovalDetail.tsx` (bp 11.7; FR-123)
 - [X] T188 [P] [US11] Surface wiring in the composition root in `cmd/nexusd/surfaces_phase11.go` (bp 11.9; FR-124)
@@ -494,7 +494,7 @@ foundational deliverable, and the property test for the paired-result invariant 
 ### Tests for User Story 14
 
 - [X] T210 [P] [US14] Tracer tree and content opt-in tests in `tests/integration/tracer_test.go` (post-ledger; FR-138)
-- [X] T211 [P] [US14] Langfuse exporter and multi-destination fan-out tests in `internal/obs/langfuse_test.go`, `internal/obs/multi_test.go` (post-ledger; FR-138)
+- [X] T211 [P] [US14] Langfuse exporter and multi-destination fan-out tests in `internal/obs/langfuse/exporter_test.go`, `internal/obs/multi_test.go` (post-ledger; FR-138)
 
 ### Implementation for User Story 14
 
@@ -503,11 +503,11 @@ foundational deliverable, and the property test for the paired-result invariant 
 - [X] T214 [P] [US14] Scrape, ingestion and alert config in `deploy/observability/prometheus.yml`, `deploy/observability/loki-config.yml`, `deploy/observability/promtail-config.yml`, `deploy/observability/alertmanager.yml`, `deploy/observability/prometheus-rules.yml` (bp 17.4, 17.11; FR-136)
 - [X] T215 [P] [US14] Zero-click Grafana provisioning in `deploy/observability/grafana/provisioning/datasources/datasources.yml`, `deploy/observability/grafana/provisioning/dashboards/dashboards.yml` (bp 17.5; FR-136)
 - [X] T216 [P] [US14] Dashboards: golden signals, logs, cost and tools, infrastructure in `deploy/observability/grafana/dashboards/nexus-golden-signals.json`, `deploy/observability/grafana/dashboards/nexus-logs.json`, `deploy/observability/grafana/dashboards/nexus-cost-and-tools.json`, `deploy/observability/grafana/dashboards/nexus-infrastructure.json` (bp 17.6, 17.7, 17.10, 17.13; FR-136)
-- [X] T217 [P] [US14] Per-tool and per-model usage metrics in `internal/obs/usage.go` (bp 17.9; FR-137)
+- [X] T217 [P] [US14] Per-tool and per-model usage metrics in `internal/reporting/usage.go` (bp 17.9; FR-137)
 - [X] T218 [P] [US14] cAdvisor against containerd, plus the label exporter that recovers container names, in `deploy/observability/docker-label-exporter/main.go`, `deploy/observability/docker-label-exporter/Dockerfile` (bp 17.12, 17.15; FR-136)
 - [X] T219 [P] [US14] `observability-up` / `observability-down` / `docker-down`, and the doc, in `Makefile`, `docs/observability.md` (bp 17.8; FR-133)
-- [X] T220 [P] [US14] Native Langfuse exporter and multi-destination span fan-out, with Tempo as the generic OTLP sink, in `internal/obs/langfuse.go`, `internal/obs/multi.go`, `internal/obs/tracer.go`, `deploy/observability/tempo.yaml` (post-ledger, `1c4f02d`; FR-138)
-- [X] T221 [P] [US14] Opt-in pprof and Pyroscope continuous profiling for `nexusd` and `signerd` in `internal/obs/pprof.go`, `internal/obs/pyroscope.go`, `deploy/observability/grafana/dashboards/nexus-profiling.json` (post-ledger, `dda32cf`; FR-139)
+- [X] T220 [P] [US14] Native Langfuse exporter and multi-destination span fan-out, with Tempo as the generic OTLP sink, in `internal/obs/langfuse/exporter.go`, `internal/obs/multi.go`, `internal/obs/tracer.go`, `deploy/observability/tempo.yaml` (post-ledger, `1c4f02d`; FR-138)
+- [X] T221 [P] [US14] Opt-in pprof and Pyroscope continuous profiling for `nexusd` and `signerd` in `internal/obs/profiling/pprof.go`, `internal/obs/profiling/pyroscope.go`, `deploy/observability/grafana/dashboards/nexus-profiling.json` (post-ledger, `dda32cf`; FR-139)
 - [X] T255 [P] [US14] Promtail Docker service discovery, filtered to the `nexus-agent-demo` compose project, so containerized `nexusd`/`signerd` logs keep shipping, in `deploy/observability/promtail-config.yml` (bp 17.14) — added 2026-11-02: the baseline missed this ledger row
 
 **Checkpoint**: operability, strictly additive.

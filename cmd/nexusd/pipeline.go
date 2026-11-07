@@ -7,10 +7,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/truongpx396/nexus-agent-demo/internal/hooks/exechook"
+	"github.com/truongpx396/nexus-agent-demo/internal/hooks/httphook"
 	runctlpg "github.com/truongpx396/nexus-agent-demo/internal/runctl/postgres"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/oauth2"
 
@@ -27,6 +28,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/retrieval"
 	retrievalpg "github.com/truongpx396/nexus-agent-demo/internal/retrieval/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
+	runspg "github.com/truongpx396/nexus-agent-demo/internal/runs/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/sandbox"
 	"github.com/truongpx396/nexus-agent-demo/internal/skills"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
@@ -35,6 +37,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/teams"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools/builtin"
+	toolspg "github.com/truongpx396/nexus-agent-demo/internal/tools/postgres"
 )
 
 // newToolPipeline wires the Phase 3 tool pipeline: the resident catalog
@@ -110,7 +113,7 @@ func newToolPipeline(st *store.Store, cfgStore config.Loader, keyStore *cryptopg
 		builtin.ClaimCard{Resolver: nexusdBoardAdapter{teams: teamsSvc}, Claimer: nexusdBoardAdapter{teams: teamsSvc}},
 		builtin.WriteCard{Resolver: nexusdBoardAdapter{teams: teamsSvc}, Writer: nexusdBoardAdapter{teams: teamsSvc}},
 		builtin.UpdateCardStatus{Resolver: nexusdBoardAdapter{teams: teamsSvc}, Updater: nexusdBoardAdapter{teams: teamsSvc}},
-		builtin.ConnectorFetch{Tokens: vault, Sessions: nexusdSessionLookup{store: st}, AllowedHosts: webFetchAllowlist},
+		builtin.ConnectorFetch{Tokens: vault, Sessions: nexusdSessionLookup{reader: runspg.Reader{Store: st, KeyStore: keyStore}}, AllowedHosts: webFetchAllowlist},
 		builtin.Retrieve{Searcher: nexusdRetrieverAdapter{retriever: retriever}},
 		builtin.AskClarification{},
 	}
@@ -164,10 +167,10 @@ func newToolPipeline(st *store.Store, cfgStore config.Loader, keyStore *cryptopg
 		Registry:         reg,
 		Manifest:         manifest,
 		Chain:            permChain,
-		Hooks:            hooks.NewDispatcher(),
+		Hooks:            newHookDispatcher(),
 		Blobs:            tools.BlobStore{Dir: envOr("NEXUS_BLOB_DIR", ".dev/blobs")},
 		WorkspaceRoot:    workspaceRoot,
-		DerivedArtifacts: derivedArtifactRecorder(st, chain),
+		DerivedArtifacts: toolspg.NewDerivedArtifactRecorder(st),
 		SandboxFactory:   newSandboxFactory(workspaceRoot),
 		// Claims (README task 6.6): write-ahead idempotency for every
 		// non-read-only tool call. Built here (rather than passed in) so
@@ -309,24 +312,6 @@ func loadSkillCatalog(reg *tools.Registry) (*skills.Catalog, []skills.SkillBundl
 	return skills.NewCatalog(admitted), admitted, scriptTools
 }
 
-// derivedArtifactRecorder wires internal/tools.DerivedArtifactRecorder to a
-// durable derived_artifacts row (README task 5.4) — best-effort, its own
-// small transaction (not the caller's): internal/crypto/shred.go's
-// ReconcileDerivedArtifacts is the backstop for whatever this misses, per
-// its own doc comment.
-func derivedArtifactRecorder(st *store.Store, chain *auditpg.Chain) tools.DerivedArtifactRecorder {
-	_ = chain // reserved: a future phase may want a receipt per spill too; not required by task 5.4 itself
-	return func(ctx context.Context, tenantID, sessionID uuid.UUID, kind, path string) error {
-		return st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-			_, err := tx.Exec(ctx,
-				`INSERT INTO derived_artifacts (artifact_id, tenant_id, session_id, kind, path) VALUES ($1,$2,$3,$4,$5)`,
-				uuid.New(), tenantID, sessionID, kind, path,
-			)
-			return err
-		})
-	}
-}
-
 // newSandboxFactory wires platform/shell to run inside Docker (README task
 // 5.12) when NEXUS_SANDBOX=docker and a daemon is actually reachable, or
 // inside an OpenSandbox sandbox (specs/README.md Phase 16, task 16.4)
@@ -387,4 +372,14 @@ type demoSafetyModel struct{}
 
 func (demoSafetyModel) Classify(context.Context, string, string) (safety.Verdict, string, error) {
 	return safety.VerdictDefer, "no real safety model configured (Phase 3 demo default)", nil
+}
+
+// newHookDispatcher is the hook layer with every handler kind registered:
+// internal/hooks owns the port, the chain and the I/O-free prompt kind, and the
+// command and http kinds are adapters only the composition root links in.
+func newHookDispatcher() *hooks.Dispatcher {
+	d := hooks.NewDispatcher()
+	d.Handlers[hooks.KindCommand] = exechook.Handler{}
+	d.Handlers[hooks.KindHTTP] = httphook.Handler{}
+	return d
 }

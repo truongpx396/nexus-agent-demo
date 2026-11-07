@@ -11,6 +11,10 @@
 package runctl
 
 import (
+	"context"
+
+	"github.com/google/uuid"
+
 	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/queue"
@@ -24,9 +28,13 @@ import (
 // process-wide system prompt and resident catalog cover every session
 // regardless of which one this operation targets.
 type Control struct {
-	Store     Store
-	Approvals *oversight.Approvals
-	Inputs    *oversight.Inputs
+	Store Store
+	// Approvals and Inputs are interfaces so a test can fake them. Nil means
+	// unwired, so assign only a non-nil service: a nil *oversight.Inputs stored
+	// here is a non-nil interface wrapping a nil pointer, which passes the
+	// "is it wired" check and then panics on the call.
+	Approvals ApprovalInvalidator
+	Inputs    InputInvalidator
 	Kernel    *kernel.Kernel
 	System    string
 	Catalog   []provider.ToolSchema
@@ -48,4 +56,22 @@ type Control struct {
 	// parent's digest exactly (never "diverged" merely because two
 	// unrelated call sites computed it differently).
 	CatalogManifestDigest []byte
+
+	// Observers are told, through NotifySettled, when a worker has driven a
+	// session as far as it will go. Nil is valid: nobody is watching.
+	Observers []SettledObserver
+}
+
+// ApprovalInvalidator and InputInvalidator are the slice of the oversight
+// service that cancel and steer need: when a human redirects a session, whatever
+// it was waiting on is no longer the question. oversight.Approvals and
+// oversight.Inputs satisfy them. Inputs may be nil (a deployment with no
+// input-request step has nothing to invalidate); Approvals may not.
+type ApprovalInvalidator interface {
+	Invalidate(ctx context.Context, tenantID, sessionID uuid.UUID, reason oversight.InvalidationReason) (*oversight.Approval, error)
+}
+
+// InputInvalidator is the Inputs counterpart of ApprovalInvalidator.
+type InputInvalidator interface {
+	Invalidate(ctx context.Context, tenantID, sessionID uuid.UUID, reason oversight.InvalidationReason) ([]oversight.InputRequest, error)
 }

@@ -10,7 +10,6 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/delegate"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
@@ -24,9 +23,9 @@ import (
 type Executor struct {
 	Store       Store
 	Kernel      *kernel.Kernel
-	Approvals   *oversight.Approvals
-	Inputs      *oversight.Inputs
-	Delegations *delegate.Delegations
+	Approvals   ApprovalOpener
+	Inputs      InputRequester
+	Delegations Delegator
 	System      string
 	Catalog     []provider.ToolSchema
 	LoadedTools []string

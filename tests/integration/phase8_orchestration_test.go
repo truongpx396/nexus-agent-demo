@@ -43,6 +43,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools/builtin"
+	"github.com/truongpx396/nexus-agent-demo/internal/tools/kerneladapter"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
 
@@ -83,7 +84,7 @@ func TestPlan_ZeroTokenRouting(t *testing.T) {
 		Log:      postgres.New(r.st, postgres.Hooks{Receipt: r.receiptFunc()}),
 	}
 	exec := &plan.Executor{Kernel: k, System: "test", MaxTurns: 10}
-	exec.Store = planpg.New(r.st, r.keys, r.chain)
+	exec.Store = planpg.New(r.st, r.keys, r.chain, delegatepg.CreateEnvelope)
 
 	p := plan.Plan{
 		Name: "zero-token-routing", StartStep: "start",
@@ -100,7 +101,7 @@ func TestPlan_ZeroTokenRouting(t *testing.T) {
 		t.Fatalf("Validate: %v", err)
 	}
 
-	lc := &plan.Lifecycle{Store: planpg.New(r.st, r.keys, r.chain)}
+	lc := &plan.Lifecycle{Store: planpg.New(r.st, r.keys, r.chain, delegatepg.CreateEnvelope)}
 	created, err := lc.Create(context.Background(), r.tenantID, p, "test")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -199,7 +200,7 @@ func buildDelegationRig(t *testing.T, r *oversightRig, prov provider.Provider, t
 
 	k := &kernel.Kernel{
 		Provider: provider.Wrap([]provider.Provider{prov}),
-		Tools:    kernel.PipelineExecutor{Pipeline: pipeline},
+		Tools:    kerneladapter.PipelineExecutor{Pipeline: pipeline},
 		Budget:   kernel.NoopBudgetGate{},
 		Tracer:   tracer,
 		Log:      postgres.New(r.st, postgres.Hooks{Receipt: r.receiptFunc(), Delegate: onDelegateFunc(d)}),
@@ -452,7 +453,7 @@ func (rt *recordingTracer) StartSpan(ctx context.Context, name string, kind obs.
 }
 
 // Detach/Attach: the real go.opentelemetry.io/otel/trace.SpanContext
-// mechanism, matching obs.OTLPExporter's own (internal/obs/otlp.go) — this
+// mechanism, matching obs.OTLPExporter's own (internal/obs/otlp/exporter.go) — this
 // is what internal/delegate/spawn.go now goes through generically instead
 // of calling trace.SpanContextFromContext/ContextWithRemoteSpanContext
 // directly, and TestSpawn_ChildrenNestUnderParentTraceSpan below is the

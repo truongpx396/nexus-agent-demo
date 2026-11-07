@@ -62,7 +62,7 @@ type Port interface {
 	// durable, decision-ready approval record a suspended tool_use is bound
 	// to.
 	RequestApproval(ctx context.Context, req RequestApprovalV1) (RequestApprovalResultV1, error)
-	// AuthorizeContentAccess is internal/obs.Grants.RequestGrant, wrapped:
+	// AuthorizeContentAccess is internal/contentaccess.Grants.RequestGrant, wrapped:
 	// an audited, expiring grant onto a run's own sealed content — the
 	// only path to plaintext outside the run's own audience.
 	AuthorizeContentAccess(ctx context.Context, req AuthorizeContentAccessV1) (GrantV1, error)
@@ -173,7 +173,7 @@ type RequestApprovalResultV1 struct {
 	ExpiresAt  time.Time `json:"expires_at"`
 }
 
-// AuthorizeContentAccessV1 mirrors internal/obs.Grants.RequestGrant's own
+// AuthorizeContentAccessV1 mirrors internal/contentaccess.Grants.RequestGrant's own
 // parameters.
 type AuthorizeContentAccessV1 struct {
 	TenantID  uuid.UUID     `json:"tenant_id"`

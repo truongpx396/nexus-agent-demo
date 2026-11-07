@@ -12,7 +12,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces"
 )
 
-// Dedup implements surfaces.InboundDedup over store.ClaimInboundDelivery, in
+// Dedup implements surfaces.InboundDedup over the inbound_deliveries table, in
 // the tenant's own scope.
 type Dedup struct {
 	st *store.Store
@@ -26,7 +26,7 @@ func NewDedup(st *store.Store) *Dedup { return &Dedup{st: st} }
 func (d *Dedup) Claim(ctx context.Context, tenantID uuid.UUID, surfaceID, deliveryID, sessionKey string) (claimed bool, err error) {
 	err = d.st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var derr error
-		claimed, derr = store.ClaimInboundDelivery(ctx, tx, tenantID, surfaceID, deliveryID, sessionKey)
+		claimed, derr = claimInboundDelivery(ctx, tx, tenantID, surfaceID, deliveryID, sessionKey)
 		return derr
 	})
 	return claimed, err

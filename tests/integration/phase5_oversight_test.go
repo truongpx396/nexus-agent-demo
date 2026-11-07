@@ -36,6 +36,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools/builtin"
+	"github.com/truongpx396/nexus-agent-demo/internal/tools/kerneladapter"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
 
@@ -243,7 +244,7 @@ func TestOversightApproval_GrantModifiedExecutesApproverInput(t *testing.T) {
 		}},
 	)
 	k := &kernel.Kernel{
-		Provider: provider.Wrap([]provider.Provider{prov}), Tools: kernel.PipelineExecutor{Pipeline: pipeline},
+		Provider: provider.Wrap([]provider.Provider{prov}), Tools: kerneladapter.PipelineExecutor{Pipeline: pipeline},
 		Budget: kernel.NoopBudgetGate{},
 		Log:    postgres.New(rig.st, postgres.Hooks{Receipt: rig.receiptFunc(), Suspend: rig.onSuspend(approvals)}),
 	}
@@ -317,7 +318,7 @@ func TestOversightApproval_MismatchRefusesExecution(t *testing.T) {
 		{Kind: "done", Done: "stop"},
 	}})
 	k := &kernel.Kernel{
-		Provider: provider.Wrap([]provider.Provider{prov}), Tools: kernel.PipelineExecutor{Pipeline: pipeline},
+		Provider: provider.Wrap([]provider.Provider{prov}), Tools: kerneladapter.PipelineExecutor{Pipeline: pipeline},
 		Budget: kernel.NoopBudgetGate{},
 		Log:    postgres.New(rig.st, postgres.Hooks{Receipt: rig.receiptFunc(), Suspend: rig.onSuspend(approvals)}),
 	}
@@ -407,7 +408,7 @@ func TestOversightApproval_SimulatedConsentHasNoEffect(t *testing.T) {
 		{Kind: "done", Done: "stop"},
 	}})
 	k := &kernel.Kernel{
-		Provider: provider.Wrap([]provider.Provider{prov}), Tools: kernel.PipelineExecutor{Pipeline: pipeline},
+		Provider: provider.Wrap([]provider.Provider{prov}), Tools: kerneladapter.PipelineExecutor{Pipeline: pipeline},
 		Budget: kernel.NoopBudgetGate{},
 		Log:    postgres.New(rig.st, postgres.Hooks{Receipt: rig.receiptFunc(), Suspend: rig.onSuspend(approvals)}),
 	}

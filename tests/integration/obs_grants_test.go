@@ -11,9 +11,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/truongpx396/nexus-agent-demo/internal/contentaccess"
+	contentaccesspg "github.com/truongpx396/nexus-agent-demo/internal/contentaccess/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/obs"
-	obspg "github.com/truongpx396/nexus-agent-demo/internal/obs/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
@@ -21,8 +21,8 @@ import (
 // the real Postgres GrantStore and a real audit chain.
 type grantsRig struct {
 	*oversightRig
-	grants    *obs.Grants
-	store     *obspg.GrantStore
+	grants    *contentaccess.Grants
+	store     *contentaccesspg.GrantStore
 	sessionID uuid.UUID
 }
 
@@ -61,8 +61,8 @@ func setupGrantsRig(t *testing.T) *grantsRig {
 		t.Fatalf("seed events: %v", err)
 	}
 
-	gs := obspg.NewGrantStore(r.st, r.keys, r.chain)
-	return &grantsRig{oversightRig: r, grants: obs.NewGrants(gs), store: gs, sessionID: sessionID}
+	gs := contentaccesspg.NewGrantStore(r.st, r.keys, r.chain)
+	return &grantsRig{oversightRig: r, grants: contentaccess.NewGrants(gs), store: gs, sessionID: sessionID}
 }
 
 func (g *grantsRig) eventTypes(t *testing.T) []eventlog.EventType {
@@ -190,7 +190,7 @@ func TestGrants_ARevokedOrExpiredGrantNoLongerUnlocksTheHistory(t *testing.T) {
 	if _, err := g.grants.RequestGrant(ctx, g.tenantID, g.sessionID, other, "r", time.Hour); err != nil {
 		t.Fatalf("RequestGrant: %v", err)
 	}
-	future := &obs.Grants{Store: g.store, Now: func() time.Time { return time.Now().Add(2 * time.Hour) }}
+	future := &contentaccess.Grants{Store: g.store, Now: func() time.Time { return time.Now().Add(2 * time.Hour) }}
 	if _, err := future.Read(ctx, g.tenantID, g.sessionID, other); err == nil {
 		t.Error("Read succeeded two hours after a one-hour grant")
 	}

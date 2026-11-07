@@ -2,12 +2,14 @@ package plan_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
+	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
 	"github.com/truongpx396/nexus-agent-demo/internal/plan"
 	"github.com/truongpx396/nexus-agent-demo/internal/runstate"
 )
@@ -141,5 +143,75 @@ func TestStart_StepEventsStayWhereTheyAreIfALaterStepFails(t *testing.T) {
 	}
 	if count(f, eventlog.EventPlanStepExited) != 1 || count(f, eventlog.EventPlanCompleted) != 0 {
 		t.Errorf("events = %v, want step a recorded and no plan_completed", f.eventTypes())
+	}
+}
+
+// fakeApprovals stands in for oversight.Approvals: the Executor only needs
+// something that can open an approval, which is the point of plan.ApprovalOpener.
+type fakeApprovals struct {
+	opened []oversight.CreateApprovalRequest
+	err    error
+}
+
+func (a *fakeApprovals) Create(_ context.Context, req oversight.CreateApprovalRequest) (oversight.Approval, error) {
+	a.opened = append(a.opened, req)
+	return oversight.Approval{}, a.err
+}
+
+func gatePlan() plan.Plan {
+	return plan.Plan{
+		PlanID: uuid.New(), Version: 1, StartStep: "gate",
+		Steps: []plan.Step{{ID: "gate", Kind: plan.StepApprovalGate, ApprovalGate: &plan.ApprovalGateConfig{Question: "ship it?"}}},
+	}
+}
+
+// An approval gate suspends the plan's driving session on exactly one approval
+// that names the gate and carries its question, and does so through the
+// ApprovalOpener seam, with no oversight database behind it.
+func TestStart_AnApprovalGateOpensOneApprovalAndSuspendsTheSession(t *testing.T) {
+	f := newFakeStore()
+	sid := uuid.New()
+	f.sessions[sid] = eventlog.Session{SessionID: sid, Status: eventlog.SessionStatusQueued}
+	dek, _ := crypto.GenerateDEK("k")
+	approvals := &fakeApprovals{}
+	exec := &plan.Executor{Store: f, Approvals: approvals}
+
+	if err := exec.Start(context.Background(), tenant, sid, gatePlan(), runstate.Seal(dek, tenant, sid)); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	if len(approvals.opened) != 1 {
+		t.Fatalf("approvals opened = %d, want exactly 1", len(approvals.opened))
+	}
+	got := approvals.opened[0]
+	if got.ToolID != "plan/gate" || got.SessionID != sid || got.TenantID != tenant {
+		t.Errorf("approval = %+v, want it anchored to this session and named for the gate step", got)
+	}
+	if !strings.Contains(string(got.Context.Input), "ship it?") {
+		t.Errorf("approval input %s does not carry the gate's question", got.Context.Input)
+	}
+	if st := f.sessions[sid].Status; st != eventlog.SessionStatusSuspended {
+		t.Errorf("session = %s, want suspended on the approval", st)
+	}
+	if count(f, eventlog.EventPlanCompleted) != 0 {
+		t.Error("the plan completed past an unanswered gate")
+	}
+}
+
+// A deployment that never wired approvals must refuse a gate, not skip it: a
+// gate that is silently open is a governance bypass.
+func TestStart_AnApprovalGateWithNoApprovalsWiredIsRefused(t *testing.T) {
+	f := newFakeStore()
+	sid := uuid.New()
+	f.sessions[sid] = eventlog.Session{SessionID: sid, Status: eventlog.SessionStatusQueued}
+	dek, _ := crypto.GenerateDEK("k")
+
+	err := (&plan.Executor{Store: f}).Start(context.Background(), tenant, sid, gatePlan(), runstate.Seal(dek, tenant, sid))
+
+	if err == nil {
+		t.Fatal("Start of a gated plan with no approvals wired succeeded")
+	}
+	if count(f, eventlog.EventPlanCompleted) != 0 {
+		t.Error("the plan completed with its gate unenforced")
 	}
 }

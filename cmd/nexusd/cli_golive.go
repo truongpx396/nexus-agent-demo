@@ -15,8 +15,8 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
 	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
-	"github.com/truongpx396/nexus-agent-demo/internal/obs"
-	obspg "github.com/truongpx396/nexus-agent-demo/internal/obs/postgres"
+	"github.com/truongpx396/nexus-agent-demo/internal/reporting"
+	reportingpg "github.com/truongpx396/nexus-agent-demo/internal/reporting/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
@@ -53,7 +53,7 @@ func runGoLive(ctx context.Context, args []string) error {
 	// Item 1: attributable audit log.
 	signer := audit.NewSignerClient(envOr("NEXUS_SIGNERD_SOCKET", defaultSignerdSocket))
 	chain := auditpg.NewChain(signer)
-	tenantIDs, err := listTenantIDs(ctx)
+	tenantIDs, err := tenantDirectory().ListTenantIDs(ctx)
 	if err != nil {
 		return fmt.Errorf("list tenants: %w", err)
 	}
@@ -95,7 +95,7 @@ func runGoLive(ctx context.Context, args []string) error {
 
 	// Items 6 and 8, from the golden-signal dashboard.
 	for _, tenantID := range tenantIDs {
-		signals, serr := obs.ComputeGoldenSignals(ctx, obspg.New(st), tenantID, *staleAfter, nil, nil)
+		signals, serr := reporting.ComputeGoldenSignals(ctx, reportingpg.New(st), tenantID, *staleAfter, nil, nil)
 		if serr != nil {
 			check(false, "item 6/8 (dashboard): tenant %s: %v", tenantID, serr)
 			continue

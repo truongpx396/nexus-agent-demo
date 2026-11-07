@@ -34,7 +34,7 @@ Legend: **F** = full fidelity · **S** = simplified but structurally identical �
 | 22 | Hook layer (`pre_tool_use`/`post_tool_use`), tighten-only, three handlers | **F** | `internal/hooks/` | `command` + `http` (SSRF-guarded) + `prompt`; chain budget, decision cache, `hook_stopped` |
 | 23 | Approval as a **transaction** bound to a canonical digest | **F** | `internal/oversight/approval.go` | `granted_modified`, `approval_mismatch`, expiry-as-denial, invalidate-with-run |
 | 24 | Input requests (agent→human pull), zero authorization value | **F** | `internal/oversight/input.go` | Distinct lifecycle + distinct terminal reason |
-| 25 | Write-ahead idempotency claim, resolved by probe or human | **F** | `internal/store/claims.go` | Claim `in_flight` **before** the effect leaves the process |
+| 25 | Write-ahead idempotency claim, resolved by probe or human | **F** | `internal/runctl/postgres/claims.go` | Claim `in_flight` **before** the effect leaves the process |
 | 26 | Condensation / Checkpoint / Snapshot as three artifacts | **F** | `internal/store/` | Test: a condensation cannot answer "did the payment go out" |
 | 27 | Replay / resume / fork as three named operations | **F** | `internal/runctl/` | `replay` is pure; `fork` disables external effects |
 | 28 | `harness_digest` pins behavior; divergence reported on fork | **F** | `internal/harness/digest.go` | Pinned at run start, never moves mid-run |
@@ -44,7 +44,7 @@ Legend: **F** = full fidelity · **S** = simplified but structurally identical �
 | 32 | Per-tenant envelope encryption + crypto-shredding erasure | **F** | `internal/crypto/` | Erasure destroys the DEK; `payload_digest` survives; chain still verifies |
 | 33 | Derived artifacts hard-deleted in the same erasure transaction | **F** | `internal/crypto/postgres/shred.go` | Reconciliation job proves no derived row outlived its source |
 | 34 | Content-free telemetry: deny-by-default attribute allowlist, no admitting flag | **F** | `internal/obs/allowlist.go` | Exporter-side filter + a test that tries every content key |
-| 35 | Content access grant: audited, expiring, receipt per read | **F** | `internal/obs/grant.go` | The only path to plaintext outside the run's own audience |
+| 35 | Content access grant: audited, expiring, receipt per read | **F** | `internal/contentaccess/grants.go` | The only path to plaintext outside the run's own audience |
 | 36 | Turn-scoped spans derived from the log + bidirectional join key | **S** | `internal/obs/span.go` | Emitted per turn from durable events; exporter is stdout OTLP |
 | 37 | Cost: token classes, versioned price book, reserve→reconcile, epoch-marked counter | **F** | `internal/cost/` | Redis Lua reserve; epoch mismatch fails closed |
 | 38 | `Money` as exact integers + explicit currency, rounding once | **F** | `internal/cost/money.go` | No binary float anywhere in the path |

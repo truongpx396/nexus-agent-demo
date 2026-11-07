@@ -49,11 +49,11 @@ type deliveryOutcomePayload struct {
 }
 
 func (l *Ledger) Open(ctx context.Context, tenantID, sessionID uuid.UUID, seq int64, surfaceID, recipient string) (surfaces.Delivery, error) {
-	var d store.Delivery
+	var d deliveryRow
 	err := l.st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var created bool
 		var err error
-		d, created, err = store.OpenOrFindDelivery(ctx, tx, tenantID, sessionID, seq, surfaceID, recipient)
+		d, created, err = openOrFindDelivery(ctx, tx, tenantID, sessionID, seq, surfaceID, recipient)
 		if err != nil {
 			return err
 		}
@@ -75,7 +75,7 @@ func (l *Ledger) Record(ctx context.Context, tenantID, sessionID, deliveryID uui
 		eventType = eventlog.EventDeliveryDelivered
 	}
 	return l.st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		updated, err := store.UpdateDeliveryOutcome(ctx, tx, deliveryID, store.DeliveryStatus(status))
+		updated, err := updateDeliveryOutcome(ctx, tx, deliveryID, status)
 		if err != nil {
 			return err
 		}
