@@ -297,7 +297,7 @@ auto-loaded from the working directory; **a real environment variable always win
 | Concern | Setting | Notes |
 |---|---|---|
 | 🔀 Model | `NEXUS_PROVIDER=fake` (default) · `anthropic` · `litellm` | `anthropic` needs `ANTHROPIC_API_KEY` (`NEXUS_ANTHROPIC_MODEL`); `litellm` uses `NEXUS_LITELLM_BASE_URL` and `NEXUS_LITELLM_MODEL`. Local Ollama setup: [`docs/local-llm.md`](docs/local-llm.md) |
-| 📦 Sandbox | `NEXUS_SANDBOX=` (unset) · `docker` · `opensandbox` | Unset runs `platform/shell` unsandboxed. OpenSandbox and Crawl4AI: `make agentic-up`, [`docs/agentic-capabilities.md`](docs/agentic-capabilities.md) |
+| 📦 Sandbox | `NEXUS_SANDBOX=` (unset) · `docker` · `opensandbox` | Unset runs `platform/shell` unsandboxed, and refuses skill scripts, which never run outside a sandbox. OpenSandbox and Crawl4AI: `make agentic-up`, [`docs/agentic-capabilities.md`](docs/agentic-capabilities.md) |
 | 🕸️ Egress | `NEXUS_WEB_FETCH_ALLOWLIST` | Comma-separated hosts `platform/web_fetch` may reach; empty means none |
 | 🔭 Tracing | `NEXUS_OTLP_ENDPOINT` · `NEXUS_LANGFUSE_HOST` | Either or both; nothing set prints spans to stdout. Content is attached only with `NEXUS_TRACE_CONTENT=true` |
 | 🔌 Connectors | `NEXUS_OAUTH_PROVIDERS` and a `NEXUS_OAUTH_<NAME>_*` block per name | Per-user OAuth tokens, sealed under the tenant's key |
@@ -489,15 +489,17 @@ nexus-agent-demo/
 │   └── hygiene.go              # pre-call pass: orphan drop, synthetic backfill, stale prune
 ├── internal/
 │   ├── provider/               # port + normalized stream + anthropic/ + fake/ + router + failover
-│   ├── tools/                  # identity, manifest, admission, registry, pipeline (16 steps), builtin/
+│   ├── tools/                  # identity, manifest, admission, registry, pipeline (16 steps)
+│   │   ├── builtin/            # the platform's own tools: file, shell, web, skill, connector, clarification
 │   │   ├── kerneladapter/      # kernel.ToolExecutor over the pipeline — the one package that knows both
-│   │   └── postgres/           # the derived-artifact recorder
+│   │   └── postgres/           # the derived-artifact recorder and the writer erasure calls
 │   ├── permissions/            # the 10-layer chain, autonomy ratchet, profiles, safety/, ruleoftwo
 │   ├── hooks/                  # the hook port: dispatcher, matcher, the I/O-free prompt kind, the JSON wire protocol
 │   │   ├── exechook/           # command-hook adapter (os/exec)
 │   │   └── httphook/           # http-hook adapter (net/http, SSRF guard)
 │   ├── oversight/              # approvals + input requests over one durable-suspend mechanism, as a unit-of-work Store
-│   │   └── postgres/           # its Store: the approval/input SQL and tenant scope
+│   │   ├── postgres/           # its Store: the approval/input SQL and tenant scope
+│   │   └── rest/               # its HTTP endpoints: list, read, grant, modify, deny
 │   ├── promptctx/              # two-zone builder, cache measurement, pruning, condensation
 │   ├── memory/                 # file-first, screening, retention (the window comes from config.Loader)
 │   ├── skills/                 # bundles, digests, 3-tier disclosure, capability intersection
@@ -509,25 +511,43 @@ nexus-agent-demo/
 │   ├── audit/                  # receipt vocabulary, hash input, signer client, verifier report — no persistence
 │   │   └── postgres/           # the hash chain itself: Append, Anchor, Verify
 │   ├── crypto/                 # KEK/DEK envelope, seal/open — no persistence
-│   │   └── postgres/           # KeyStore, crypto-shredding, derived-artifact reconcile
+│   │   └── postgres/           # KeyStore, crypto-shredding (the Eraser; derived artifacts through an injected store)
 │   ├── eventlog/               # event-log domain model: Event, type taxonomy, session statuses, Appender — no persistence
-│   │   ├── postgres/           # kernel.EventLog adapter: one tenant-scoped tx per call, audit receipt in the same tx
+│   │   ├── postgres/           # kernel.EventLog adapter: one tenant-scoped tx per call, audit receipt in the same tx; the snapshot cache
 │   │   ├── inmem/              # kernel.EventLog adapter for tests: the loop runs with no database
 │   │   ├── logtest/            # the contract suite both adapters pass
 │   │   └── sealed/             # eventlog.Appender over Postgres: seal under the session key, append, chain — one copy for every out-of-band writer
-│   ├── store/                  # the persistence kernel: tenant scoping (RLS), migrations, and the session/event aggregate with its snapshots
+│   ├── store/                  # the persistence kernel: tenant scoping (RLS), migrations, and the session/event aggregate's own SQL
 │   ├── queue/                  # Queue port, worker pool, admission control
 │   │   └── redis/              # Redis Streams adapter + the session-key lock
 │   ├── reliability/            # classifier, backoff, breaker, stuck detector
 │   ├── runctl/                 # steer, cancel, resume, replay, fork, tightenAutonomy, the claim ledger, checkpoints, the idle sweep, orphan recovery, settled observers — over a unit-of-work Store
-│   │   └── postgres/           # its Store: claims, checkpoints, the awaiting_input claim, the autonomy write, the orphan finder
+│   │   ├── postgres/           # its Store: claims, checkpoints, the awaiting_input claim, the autonomy write, the orphan finder
+│   │   └── rest/               # its HTTP endpoints: cancel, steer, tighten autonomy, fork
 │   ├── runstate/               # one place that rebuilds a kernel.RunState from a session's history (generic over a service's own Tx)
 │   ├── sandbox/                # docker exec, limits, deny-net, (optional) broker
 │   ├── plan/                   # orchestration plane: schema, validator, predicate AST, evaluator, lifecycle
 │   │   └── postgres/           # orchestration_plans and the executor's writes
 │   ├── delegate/               # sub-agent seam (a tool invocation, not a side channel)
-│   │   └── postgres/           # delegations and fan-out envelopes; Bind and CreateEnvelope for callers that hold a transaction
+│   │   ├── postgres/           # delegations and fan-out envelopes; CreateEnvelope for callers that hold a transaction
+│   │   └── tool/               # the platform/delegate tool
 │   ├── teams/                  # peer teams: roster, shared board, shared budget envelope, atomic end
+│   │   └── tool/               # the four board tools
+│   ├── retrieval/              # ingest, embed, search, erase — over an Index port
+│   │   ├── postgres/           # the index
+│   │   └── tool/               # the platform/retrieve tool
+│   ├── connectors/             # the per-user OAuth token vault, over an Authorizer port
+│   │   ├── oauth2/             # the authorization-code protocol (golang.org/x/oauth2)
+│   │   ├── postgres/           # sealed connections
+│   │   └── redis/              # the CSRF state
+│   ├── contentaccess/          # content-access grants: audited reads outside a run's own audience
+│   │   ├── postgres/           # its store
+│   │   └── rest/               # its HTTP endpoints
+│   ├── runs/                   # the run-admission use case every surface shares
+│   │   ├── postgres/           # sessions, keys, the read side
+│   │   └── rest/               # POST /v1/runs, GET, the SSE stream, the event broker and bus
+│   ├── tenancy/                # the operator's directory of tenants (list, register, which tenant owns a session)
+│   ├── surfaces/               # delivery primitives, and the channels: rest (the kit), telegram, zalo, email, cron, mcp, cli, web
 │   │   └── postgres/           # teams, board cards, team envelopes
 │   ├── runs/                   # application layer: the run-admission use case (Launcher/Service) and the vocabulary surfaces share
 │   │   └── postgres/           # its Postgres adapters: session admission (+ budget), per-session key provisioning, and the Reader REST's GET endpoints use
@@ -559,7 +579,7 @@ nexus-agent-demo/
 │   ├── evalgate/               # glue between the plan lifecycle's eval hook and the release gate (evals.Gate)
 │   ├── dotenv/                 # the .env loader every binary calls first; a real env var always wins
 │   └── version/                # the build identity shared by every binary
-├── web/                        # Phase 11: React app over the existing REST + SSE API — no backend surface change
+├── web/                        # React app over the REST + SSE API, packaged by feature (src/features/chat, src/features/approvals, src/shared)
 ├── migrations/                 # numbered SQL, expand/contract discipline, RLS policies
 ├── evals/                      # corpus/*.yaml, runner, graders, judge, digest, CI gate
 ├── skills/                     # skill bundles (GUIDE.md + skill.json) loaded from NEXUS_SKILLS_ROOT
@@ -589,25 +609,39 @@ style: one process, packaged by feature, with each feature's storage in an adapt
 
 1. **The core reaches no outside world.** `kernel/` may import `internal/{eventlog,provider,promptctx,cost,reliability,obs}`
    and nothing else: no surface, no control plane, not the tool pipeline (that is `internal/tools/kerneladapter`'s job),
-   and durable state only through the `kernel.EventLog` port. Twenty-eight core and feature packages — the kernel,
+   and durable state only through the `kernel.EventLog` port. Thirty-three core and feature packages — the kernel,
    `obs`, `tools`, `hooks`, `permissions`, `cost`, `eventlog`, `provider`, `crypto`, `audit`, `oversight`, `runctl`,
-   `delegate`, `teams`, `plan`, `memory`, `retrieval`, `queue`, `runs`, `contentaccess`, `reporting` and the rest — may link
-   neither a database or cache driver (`internal/store`, `pgx`, `redis`) nor an HTTP client, a child process, the
+   `delegate`, `teams`, `plan`, `memory`, `retrieval`, `queue`, `runs`, `contentaccess`, `reporting`, `connectors`,
+   `skills`, the three feature tool packages and the rest — may link neither a database or cache driver
+   (`internal/store`, `pgx`, `redis`) nor an HTTP client (so not `golang.org/x/oauth2` either), a child process, the
    OpenTelemetry SDK, the profiler or a container SDK, even transitively. All of that lives in a `postgres/`, `redis/`,
-   `inmem/`, `otlp/`, `exechook/` … subpackage that only `cmd/nexusd` wires in. `internal/surfaces/` may not import
-   `kernel/`; `internal/controlplane/` may not import `internal/{sandbox,memory,provider}`; `internal/eventlog/` imports
-   nothing from this module and no driver.
+   `inmem/`, `oauth2/`, `otlp/`, `exechook/` … subpackage that only `cmd/nexusd` wires in. `internal/surfaces/` may not
+   import `kernel/`; `internal/controlplane/` may not import `internal/{sandbox,memory,provider}`; `internal/eventlog/`
+   imports nothing from this module and no driver.
 2. **An adapter is its feature's own.** `internal/plan/postgres` may import `plan`, the domain, and the shared
    persistence kit — `internal/store`, `audit/postgres`, `crypto/postgres`, `eventlog/sealed`, the one way every
    feature reaches its tenant-scoped, sealed, receipted transaction — but never another feature's adapter. When two
-   features must write in one transaction (a session and its budget; a plan and its fan-out envelope) the writer is a
-   function the composition root injects.
+   features must write in one transaction (a session and its budget; a plan and its fan-out envelope; an erasure and
+   the derived artifacts it removes) the writer is a function or port the composition root injects.
 3. **Feature-to-feature imports are declared.** `allowedFeatureImports` in `tests/contract/modules_test.go` lists, for
    every package, the other packages it may import. It was seeded from the graph the code had, so it ratchets: a new
-   edge fails the build until someone adds it, with a reason, in the diff.
-4. **`cmd/nexusd` wires; it does not query.** Its serving files hold no SQL. The operator commands (`cli_*.go`:
-   migrate, seed, erase, ingest, go-live, dashboard) are the one named exemption: a human runs them once, with
-   administrative credentials, against a database that is not serving.
+   edge fails the build until someone adds it, with a reason, in the diff. The REST and tool bindings below are in it
+   too, so what an endpoint or a tool may reach is as visible as what a feature may.
+4. **`cmd/nexusd` wires; it does not query.** No file in it holds SQL, the operator commands included: a `seed`,
+   `erase` or `go-live` statement belongs to the feature that owns the table (`tenancy.Register`,
+   `tenancy.SessionLocator`, the cost adapter's `GetBudget`), and `cmd/nexusd` calls it.
+5. **Every table has one owner, and SQL stays in it.** `tests/contract/ownership_test.go` lists each migrated table
+   with the feature that owns it and fails a migration that adds a table without one. SQL that names a table is
+   allowed only inside its owner's package tree; the session/event aggregate (`sessions`, `events`), which every feature
+   references, names each package that may touch it, with the reason, and `reporting/postgres` may read but never write.
+
+**A feature's driving adapters sit beside it.** Each feature that is reachable over HTTP or by the model carries the
+binding itself, the way its storage carries `postgres/`: `runs/rest`, `oversight/rest`, `runctl/rest` and
+`contentaccess/rest` mount through the kit in `internal/surfaces/rest` (the server, bearer-token auth on every route,
+CORS), and `delegate/tool`, `teams/tool` and `retrieval/tool` are the model-facing tools. A binding imports its feature
+directly, so there is no translation layer in `cmd/nexusd`; it may not import storage or the kernel directly. The
+messaging channels (`telegram`, `zalo`, `email`) stay under `internal/surfaces/`, since each is a conversation that
+spans runs, approvals and deliveries rather than one feature's endpoint.
 
 Also enforced: the three `cmd/*` binaries may not import each other; `cmd/nexusd` may not import
 `internal/audit/signerkey` (the private key); a non-test Go file may not exceed 500 lines.
@@ -615,17 +649,20 @@ Also enforced: the three `cmd/*` binaries may not import each other; `cmd/nexusd
 **What is shared, and what is a known exception.** The *shared kernel* is deliberate and named: the session/event
 aggregate (`internal/eventlog` and the `sessions`/`events` tables, which every feature table references), the
 envelope (`crypto`), the receipt vocabulary (`audit`), the provider port, and the persistence kit above. The event
-taxonomy is one closed list in `internal/eventlog`, so a new feature adds its event types there; that is the price of
-a single hash-chained, upcastable log. `internal/reporting/postgres` is a read model and reads other features'
-structural columns on purpose. Three packages are named exceptions to rule 1, each with its reason in
-`tests/contract/boundaries_test.go`: `connectors` (its API carries `golang.org/x/oauth2` types), `skills` (an
-unsandboxed `os/exec` fallback) and `sandbox` (it *is* the container adapter). REST handlers share one transport
-package (`internal/surfaces/rest`) rather than sitting beside each feature; `surfaces/` is grouped by transport on
-purpose.
+taxonomy is one closed list in `internal/eventlog`, because the kernel itself authors events from most features'
+vocabularies and replays all of them, so feature-owned types would force `kernel` -> feature imports. What is
+feature-shaped is ownership: `eventlog/taxonomy.go` names the package that defines every event type, a new type fails a
+test until it has an owner, and `Append` refuses a type outside the list. `internal/reporting/postgres` is a read model
+and reads other features' columns on purpose. `internal/sandbox` is the one named exception to rule 1 (it *is* the
+container adapter), with its reason in `tests/contract/boundaries_test.go`, and `internal/tools/builtin` is the
+platform's own tool catalog, where the shell and web tools are the process and HTTP adapters the pipeline calls.
 
 The `go/packages` walk is also what keeps the "physical split later is a deployment change" claim honest for the
-control-plane/data-plane seam; splitting a *feature* out would additionally mean untangling the `sessions` foreign
-keys, which the shared-kernel declaration above is candid about.
+control-plane/data-plane seam. Splitting a *feature* out would still mean untangling its `sessions` references: the
+foreign keys, and the few `sessions` columns features stamp on the aggregate (`autonomy_level`, `team_id`, the
+delegation lineage). Rule 5 makes that coupling explicit and bounded (each accessor is listed with its reason); it does
+not remove it, because moving those columns into feature-owned tables is a data-model change this repository has no
+reason to make while it is one deployable.
 
 ### Core schema (the part that cannot be retrofitted)
 
@@ -867,7 +904,7 @@ This repo's own supplementary docs:
 | [`docs/local-llm.md`](docs/local-llm.md) | Ollama + LiteLLM + Langfuse: a local model wired into `internal/provider.Provider`, and genuine per-run agent tracing (`internal/obs.Tracer`, `kernel/loop.go`) in a self-hosted Langfuse — the §5 deferred-adapters row, actually wired. |
 | [`docs/agentic-capabilities.md`](docs/agentic-capabilities.md) | Crawl4AI (`platform/web_crawl`) + OpenSandbox (`NEXUS_SANDBOX=opensandbox`) — two real backends behind seams Phase 16 of [the specs](specs/README.md) names, plus the populated `skills/` bundles and `delegate` `agent_id`/`scope_grant` conventions that make them demonstrable end to end. |
 | [`docs/observability.md`](docs/observability.md) | Prometheus + Alertmanager + cAdvisor + Loki + Grafana (Phase 17 of [the specs](specs/README.md)): the scrape target and log-aggregation stack `nexusd`'s own `/metrics` endpoint (task 13.12) was built for but never had, four pre-provisioned Grafana dashboards (golden signals from task 10.12, a per-tool/per-model cost breakdown, per-container CPU/memory/network/disk IO, and structured logs), and five alert rules over the golden-signal gauges. |
-| [`web/README.md`](web/README.md) | The React app: its pages, SSE over `fetch` (a bearer token rules out `EventSource`), and why CORS is permissive. |
+| [`web/README.md`](web/README.md) | The React app: its feature layout, its pages, SSE over `fetch` (a bearer token rules out `EventSource`), and why CORS is permissive. |
 | [`.env.example`](.env.example) | Every `NEXUS_*` variable with its default and what reads it. |
 | [`CLAUDE.md`](CLAUDE.md) | Working rules for contributors and coding agents: commands, the mechanically enforced rules, and the PR conventions. |
 

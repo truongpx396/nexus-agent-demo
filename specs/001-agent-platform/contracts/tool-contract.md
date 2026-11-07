@@ -21,7 +21,7 @@ type Tool interface {
 type EffectClass string // read_only | mutating | external
 type Taint struct{ ReturnsUntrusted, ReadsPrivateData, MutatesExternal bool } // DefaultTaint() = all TRUE (fail closed)
 type Result struct{ Output json.RawMessage; IsError bool; Reason string; AwaitingChildSessionID *uuid.UUID } // last: delegate only
-type RunContext struct{ TenantID, SessionID uuid.UUID; WorkspaceDir string; Sandbox SandboxExec } // nil Sandbox = unsandboxed fallback
+type RunContext struct{ TenantID, SessionID uuid.UUID; WorkspaceDir string; Sandbox SandboxExec } // nil Sandbox = platform/shell falls back to a local process; a skill script refuses (internal/skills.ReasonNoSandbox)
 ```
 
 - **Defaults fail closed**: serial unless proven concurrency-safe; assume writes; every taint leg `true` unless narrowed.
@@ -138,6 +138,6 @@ discard; `ErrUnresolvedClaims` blocks a resume that would otherwise skip one.
 - `platform/web_fetch` and `platform/web_crawl` check the **target URL's host** against `NEXUS_WEB_FETCH_ALLOWLIST` (empty = none
   allowed). Connector and MCP endpoints are in the sandbox **deny set** — the in-sandbox broker is not shipped, so a bypass is never
   the interim state.
-- `platform/shell` runs through `RunContext.Sandbox` when `NEXUS_SANDBOX` is `docker` or `opensandbox`; unset runs unsandboxed; a
+- `platform/shell` runs through `RunContext.Sandbox` when `NEXUS_SANDBOX` is `docker` or `opensandbox`; unset runs unsandboxed (a **skill script** has no such fallback: with no sandbox it is refused with `skill_script_requires_sandbox`); a
   configured-but-unreachable backend **logs a warning and falls back** (never a hard failure). Docker limits: `--network none`,
   CPU/memory/PID/wall; `CapDrop ALL`, read-only root, `no-new-privileges`, user `65534:65534`; the per-session workspace stays writable.

@@ -1,17 +1,18 @@
 # Implementation Plan: Modular-monolith boundaries
 
-**Spec**: [spec.md](spec.md) | **Status**: Implemented; follow-ups open
+**Spec**: [spec.md](spec.md) | **Status**: Implemented; two follow-ups open
 
 ## Summary
 
-Make the three architectural claims (modular monolith, packaged by feature, hexagonal) true beyond persistence, and add the rules that keep them true. Four groups of change, each a self-contained commit that builds and passes on its own: move infrastructure out of the core (US1), move each feature's SQL and each use case out of `store` and `main` into its owner (US2, US3), invert the two cross-feature adapter edges and give the consumers their own interfaces (US4), then declare the shared kernel and the exceptions in the docs.
+Make the three architectural claims (modular monolith, packaged by feature, hexagonal) true beyond persistence, and add the rules that keep them true. Four groups of change, each a self-contained commit that builds and passes on its own: move infrastructure out of the core (US1), move each feature's SQL and each use case out of `store` and `main` into its owner (US2, US3), invert the two cross-feature adapter edges and give the consumers their own interfaces (US4), then declare the shared kernel and the exceptions in the docs. A second pass of five more commits (US5 to US7) closes what the first declared and left: data ownership and its test, the REST and tool bindings beside their features, the connector and skill leaks, the event-log hooks and taxonomy ownership, and the web and test layouts.
 
 ## Technical Context
 
 - **Core**: `kernel/`, `internal/{obs,tools,hooks,eventlog,provider,cost,...}`; the adapters it must not reach are `internal/obs/{otlp,langfuse,profiling}`, `internal/hooks/{exechook,httphook}`, `internal/tools/kerneladapter`.
 - **Ownership**: `internal/runctl/postgres/{claims,checkpoint,orphans}.go`, `internal/surfaces/postgres/{delivery_sql,inbound_sql,channels}.go`, `internal/tools/postgres/derived_artifacts.go`, `internal/tenancy/`, `internal/audit/postgres/scoped.go`, `internal/contentaccess/`, `internal/reporting/`.
 - **Wiring**: `cmd/nexusd/{background,serve,ports,pipeline,controlplane}.go`; the rule on it is `tests/contract/composition_test.go`.
-- **Enforcement**: `tests/contract/boundaries_test.go` (core reaches nothing), `tests/contract/modules_test.go` (adapter isolation, feature dependencies), `tests/contract/composition_test.go` (no SQL in the serving path).
+- **Bindings**: `internal/surfaces/rest` (the kit), `internal/{runs,oversight,runctl,contentaccess}/rest`, `internal/{teams,delegate,retrieval}/tool`.
+- **Enforcement**: `tests/contract/boundaries_test.go` (core reaches nothing; bindings reach no storage or kernel), `tests/contract/modules_test.go` (adapter isolation, feature dependencies), `tests/contract/composition_test.go` (no SQL in `cmd/nexusd`), `tests/contract/ownership_test.go` (every table has one owner).
 
 ## Constitution Check
 
@@ -26,10 +27,15 @@ Make the three architectural claims (modular monolith, packaged by feature, hexa
 1. **US1** first: it is the claim most visibly false, and the others rest on a core that is allowed to be pure.
 2. **US2 and US3** together: `store`'s feature SQL and `main`'s use cases are the same code seen from two sides (the checkpoint is both), so moving one without the other leaves a broken build.
 3. **US4** last: it needs the adapters to be where they belong before an isolation rule can be written that is true.
+4. **US5**: data ownership, once the first pass has put most SQL in its owner, so the ownership test starts clean and each exception it finds is a real one (the single genuine cross-feature write was erasure).
+5. **US6**: the bindings, after US5, because the REST and tool translation structs in `cmd/nexusd` held logic that belongs in features, and that logic is easier to move once the features' own ports are in place.
+6. **US7** last: the leaks and layouts that depend on nothing else, with the web and test renames as pure moves in their own commit.
 
 ## Risks
 
 - **A rule that cannot fail is worse than none.** Each rule was run against an injected violation. One check passed vacuously the first time because the mutant was not valid Go, and another because `go test` cached a result computed through a `go list` subprocess; both were redone with `-count=1` and a compilable mutant.
 - **The dependency table can rot into a rubber stamp.** It is seeded from the real graph, so it only grows by an edit a reviewer sees; it does not check that a listed edge is still used, on purpose, to keep refactors cheap.
 - **Moving SQL changes nothing a unit test sees.** The behavioural check for the moved queries is the integration suite (`go test -race -tags=integration ./...`), run after each group of changes in a clean worktree.
-- **The shared kernel is a decision, not a fix.** `sessions` is referenced by every feature table; calling that out in the README is honest, and it means "extract one feature into its own service" still needs schema work.
+- **The shared kernel is a decision, not a fix.** `sessions` is referenced by every feature table and a few features stamp columns on it; the README says so, the ownership test lists each accessor, and "extract one feature into its own service" still needs schema work (T037).
+- **A moved translator can lose a behaviour.** The two `cmd/nexusd` structs held logic, not just mapping. Each piece became a feature use case with unit tests (`oversight.Decisions`, `runctl.Control.Send`) before the handler was pointed at it, and the handlers gained tests they never had.
+- **Pure renames hide a broken reference.** The web and test moves were scripted from a rename list, and `tests/contract/specs_test.go` fails on a task naming a path that no longer exists, which caught every stale spec reference; `tsc`, `oxlint` and the build caught the TypeScript.
