@@ -98,15 +98,8 @@ func setupOversightRig(t *testing.T) *oversightRig {
 	}
 }
 
-func (r *oversightRig) receiptFunc() postgres.ReceiptFunc {
-	return func(ctx context.Context, tx pgx.Tx, e eventlog.Event) error {
-		_, err := r.chain.Append(ctx, tx, e.TenantID, e.SessionID, e.Seq, e.EventID, string(e.Type), e.PayloadDigest)
-		return err
-	}
-}
-
-func (r *oversightRig) onSuspend(approvals *oversight.Approvals) postgres.OnSuspend {
-	return func(ctx context.Context, tx pgx.Tx, req kernel.SuspendRequest) error {
+func (r *oversightRig) onSuspend(approvals *oversight.Approvals) postgres.SuspendFunc {
+	return func(ctx context.Context, req kernel.SuspendRequest) error {
 		_, err := approvals.Create(ctx, oversight.CreateApprovalRequest{
 			TenantID: req.TenantID, SessionID: req.SessionID, ToolUseEventID: req.ToolUseEventID,
 			ToolID: req.ToolID, AskKind: req.AskKind, CanonicalDigest: req.CanonicalDigest,
@@ -247,7 +240,7 @@ func TestOversightApproval_GrantModifiedExecutesApproverInput(t *testing.T) {
 	k := &kernel.Kernel{
 		Provider: provider.Wrap([]provider.Provider{prov}), Tools: kerneladapter.PipelineExecutor{Pipeline: pipeline},
 		Budget: kernel.NoopBudgetGate{},
-		Log:    postgres.New(rig.st, postgres.Hooks{Receipt: rig.receiptFunc(), Suspend: rig.onSuspend(approvals)}),
+		Log:    postgres.New(rig.st, postgres.Hooks{Chain: rig.chain, Suspend: rig.onSuspend(approvals)}),
 	}
 
 	rig.createSession(t, sessionID, userID, "supervised")
@@ -321,7 +314,7 @@ func TestOversightApproval_MismatchRefusesExecution(t *testing.T) {
 	k := &kernel.Kernel{
 		Provider: provider.Wrap([]provider.Provider{prov}), Tools: kerneladapter.PipelineExecutor{Pipeline: pipeline},
 		Budget: kernel.NoopBudgetGate{},
-		Log:    postgres.New(rig.st, postgres.Hooks{Receipt: rig.receiptFunc(), Suspend: rig.onSuspend(approvals)}),
+		Log:    postgres.New(rig.st, postgres.Hooks{Chain: rig.chain, Suspend: rig.onSuspend(approvals)}),
 	}
 
 	rig.createSession(t, sessionID, userID, "supervised")
@@ -411,7 +404,7 @@ func TestOversightApproval_SimulatedConsentHasNoEffect(t *testing.T) {
 	k := &kernel.Kernel{
 		Provider: provider.Wrap([]provider.Provider{prov}), Tools: kerneladapter.PipelineExecutor{Pipeline: pipeline},
 		Budget: kernel.NoopBudgetGate{},
-		Log:    postgres.New(rig.st, postgres.Hooks{Receipt: rig.receiptFunc(), Suspend: rig.onSuspend(approvals)}),
+		Log:    postgres.New(rig.st, postgres.Hooks{Chain: rig.chain, Suspend: rig.onSuspend(approvals)}),
 	}
 
 	rig.createSession(t, sessionID, userID, "supervised")
@@ -446,7 +439,7 @@ func TestErasure_StructuralReplayAndChainSurviveShredding(t *testing.T) {
 	k := &kernel.Kernel{
 		Provider: provider.Wrap([]provider.Provider{prov}), Tools: kernel.NotImplementedToolExecutor{},
 		Budget: kernel.NoopBudgetGate{},
-		Log:    postgres.New(rig.st, postgres.Hooks{Receipt: rig.receiptFunc()}),
+		Log:    postgres.New(rig.st, postgres.Hooks{Chain: rig.chain}),
 	}
 	st0 := &kernel.RunState{TenantID: rig.tenantID, SessionID: sessionID, Seal: rig.seal(t, sessionID)}
 	runToCompletion(t, k, st0, kernel.RunConfig{System: "test", ModelID: "fake", MaxTurns: 5, Input: "hi"})

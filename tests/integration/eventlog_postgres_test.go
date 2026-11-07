@@ -5,11 +5,13 @@ package integration
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/logtest"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
@@ -104,15 +106,9 @@ func TestPostgresEventLog_ReceiptFailureRollsBackTheEvent(t *testing.T) {
 	}
 
 	errReceipt := errors.New("signer unreachable")
-	failing := true
-	log := postgres.New(st, postgres.Hooks{
-		Receipt: func(context.Context, pgx.Tx, eventlog.Event) error {
-			if failing {
-				return errReceipt
-			}
-			return nil
-		},
-	})
+	signer := &flakySigner{fakeSigner: newFakeSigner(t), err: errReceipt}
+	signer.failing.Store(true)
+	log := postgres.New(st, postgres.Hooks{Chain: auditpg.NewChain(signer)})
 
 	e := eventlog.Event{
 		EventID: uuid.New(), SessionID: sessionID, TenantID: tenantID, SchemaVersion: eventlog.CurrentSchemaVersion,
@@ -122,7 +118,7 @@ func TestPostgresEventLog_ReceiptFailureRollsBackTheEvent(t *testing.T) {
 		t.Fatalf("Append with a failing receipt hook = %v, want %v", err, errReceipt)
 	}
 
-	failing = false
+	signer.failing.Store(false)
 	got, err := log.Append(ctx, e)
 	if err != nil {
 		t.Fatalf("Append after the receipt hook recovered: %v", err)
@@ -130,4 +126,20 @@ func TestPostgresEventLog_ReceiptFailureRollsBackTheEvent(t *testing.T) {
 	if got.Seq != 1 {
 		t.Fatalf("Seq = %d after a rolled-back append, want 1 (the failed attempt must not consume a sequence number)", got.Seq)
 	}
+}
+
+// flakySigner is a signer that can be made to fail, standing in for an
+// unreachable signerd: the audit chain wraps its error, so the append that
+// needed a receipt rolls back with it.
+type flakySigner struct {
+	*fakeSigner
+	err     error
+	failing atomic.Bool
+}
+
+func (s *flakySigner) Sign(ctx context.Context, digest []byte) ([]byte, string, error) {
+	if s.failing.Load() {
+		return nil, "", s.err
+	}
+	return s.fakeSigner.Sign(ctx, digest)
 }

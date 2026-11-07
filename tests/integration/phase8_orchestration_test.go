@@ -81,7 +81,7 @@ func TestPlan_ZeroTokenRouting(t *testing.T) {
 		Provider: provider.Wrap([]provider.Provider{counting}),
 		Tools:    kernel.NotImplementedToolExecutor{},
 		Budget:   kernel.NoopBudgetGate{},
-		Log:      postgres.New(r.st, postgres.Hooks{Receipt: r.receiptFunc()}),
+		Log:      postgres.New(r.st, postgres.Hooks{Chain: r.chain}),
 	}
 	exec := &plan.Executor{Kernel: k, System: "test", MaxTurns: 10}
 	exec.Store = planpg.New(r.st, r.keys, r.chain, delegatepg.CreateEnvelope)
@@ -158,9 +158,9 @@ func (a spawnerAdapter) Spawn(ctx context.Context, req builtin.SpawnRequest) (uu
 	})
 }
 
-func onDelegateFunc(d *delegate.Delegations) postgres.OnDelegate {
-	return func(ctx context.Context, tx pgx.Tx, req kernel.DelegateSuspendRequest) error {
-		return delegatepg.Bind(ctx, tx, req.ChildSessionID, req.ToolUseEventID)
+func onDelegateFunc(d *delegate.Delegations) postgres.DelegateFunc {
+	return func(ctx context.Context, req kernel.DelegateSuspendRequest) error {
+		return d.BindToolUse(ctx, req.TenantID, req.ChildSessionID, req.ToolUseEventID)
 	}
 }
 
@@ -203,7 +203,7 @@ func buildDelegationRig(t *testing.T, r *oversightRig, prov provider.Provider, t
 		Tools:    kerneladapter.PipelineExecutor{Pipeline: pipeline},
 		Budget:   kernel.NoopBudgetGate{},
 		Tracer:   tracer,
-		Log:      postgres.New(r.st, postgres.Hooks{Receipt: r.receiptFunc(), Delegate: onDelegateFunc(d)}),
+		Log:      postgres.New(r.st, postgres.Hooks{Chain: r.chain, Delegate: onDelegateFunc(d)}),
 	}
 	d.Wire(delegate.Config{Prices: costpg.New(r.st), Kernel: k, Pipeline: pipeline, System: "test", MaxTurns: 10})
 

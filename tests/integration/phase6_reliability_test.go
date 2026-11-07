@@ -732,7 +732,7 @@ func TestRunctl_Cancel_ReleasesPendingApprovalAndAborts(t *testing.T) {
 	k := &kernel.Kernel{
 		Provider: provider.Wrap([]provider.Provider{prov}), Tools: kerneladapter.PipelineExecutor{Pipeline: pipeline},
 		Budget: kernel.NoopBudgetGate{},
-		Log: postgres.New(rig.st, postgres.Hooks{Suspend: func(ctx context.Context, tx pgx.Tx, req kernel.SuspendRequest) error {
+		Log: postgres.New(rig.st, postgres.Hooks{Suspend: func(ctx context.Context, req kernel.SuspendRequest) error {
 			_, err := approvals.Create(ctx, oversight.CreateApprovalRequest{
 				TenantID: req.TenantID, SessionID: req.SessionID, ToolUseEventID: req.ToolUseEventID,
 				ToolID: req.ToolID, AskKind: req.AskKind, CanonicalDigest: req.CanonicalDigest,

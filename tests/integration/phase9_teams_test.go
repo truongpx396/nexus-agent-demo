@@ -48,7 +48,7 @@ func buildTeamsRig(t *testing.T, r *oversightRig, prov provider.Provider) (*team
 	k := &kernel.Kernel{
 		Provider: provider.Wrap([]provider.Provider{prov}),
 		Tools:    kernel.NotImplementedToolExecutor{},
-		Log:      postgres.New(r.st, postgres.Hooks{Receipt: r.receiptFunc()}),
+		Log:      postgres.New(r.st, postgres.Hooks{Chain: r.chain}),
 	}
 	approvals := oversight.NewApprovals(oversightpg.New(r.st, r.keys, r.chain))
 	ctl := &runctl.Control{Store: runctlpg.New(r.st, r.keys, r.chain), Approvals: approvals, Kernel: k, System: "test", MaxTurns: 10}

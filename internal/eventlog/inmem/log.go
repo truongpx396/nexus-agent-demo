@@ -49,6 +49,9 @@ func New() *Log {
 }
 
 func (l *Log) Append(_ context.Context, e eventlog.Event) (eventlog.Event, error) {
+	if !e.Type.Known() {
+		return eventlog.Event{}, eventlog.ErrUnknownType{Type: e.Type}
+	}
 	if l.FailAppend != nil {
 		if err := l.FailAppend(e); err != nil {
 			return eventlog.Event{}, err

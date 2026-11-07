@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 )
 
 // tableOwners says which feature owns each table: the one package tree whose SQL
@@ -249,4 +251,21 @@ func dedupe(sorted []string) []string {
 		}
 	}
 	return out
+}
+
+// TestEventTaxonomy_OwnersAreRealPackages checks the owner each event type names
+// (internal/eventlog/taxonomy.go) is a package that exists, so the table cannot
+// credit an event to a feature that was renamed or never was.
+func TestEventTaxonomy_OwnersAreRealPackages(t *testing.T) {
+	root := moduleRoot(t)
+	types := eventlog.Types()
+	if len(types) < 50 {
+		t.Fatalf("taxonomy lists only %d event types; the rule would pass vacuously", len(types))
+	}
+	for _, typ := range types {
+		owner := typ.Owner()
+		if info, err := os.Stat(filepath.Join(root, filepath.FromSlash(owner))); err != nil || !info.IsDir() {
+			t.Errorf("event type %q is owned by %q, which is not a package directory", typ, owner)
+		}
+	}
 }

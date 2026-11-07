@@ -211,12 +211,11 @@ func (t *txn) Resolvable(ctx context.Context, childSessionID uuid.UUID) (bool, e
 	return bound, nil
 }
 
-// Bind sets parent_tool_use_event_id — called from kernel.OnDelegate, right
+// BindToolUse implements delegate.Tx: it sets parent_tool_use_event_id, right
 // after suspendForDelegation appends EventDelegationRequested (README task
-// 8.10), so a delegations row is never left unbound to the tool_use it gates
-// for longer than one transaction.
-func Bind(ctx context.Context, tx pgx.Tx, childSessionID, toolUseEventID uuid.UUID) error {
-	tag, err := tx.Exec(ctx, `
+// 8.10).
+func (t *txn) BindToolUse(ctx context.Context, childSessionID, toolUseEventID uuid.UUID) error {
+	tag, err := t.Tx().Exec(ctx, `
 		UPDATE delegations SET parent_tool_use_event_id = $2
 		WHERE child_session_id = $1 AND status = 'pending'`,
 		childSessionID, toolUseEventID,

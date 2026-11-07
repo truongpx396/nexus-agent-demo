@@ -224,9 +224,9 @@ func serve(ctx context.Context) error {
 		Tools:    kerneladapter.PipelineExecutor{Pipeline: pipeline}, // real tool pipeline, Phase 3
 		Budget:   gate,                                               // real reserve-then-reconcile cost gate, Phase 4
 		Log: postgres.New(st, postgres.Hooks{
-			Receipt:  chainReceiptFunc(chain),  // hash-chained audit receipts, Phase 5 task 5.2
-			Suspend:  onSuspendFunc(approvals), // durably record an approval on every suspend, Phase 5 task 5.6
-			Delegate: onDelegateFunc(),         // bind a delegation to its gating tool_use, Phase 8 task 8.10
+			Chain:    chain,                       // hash-chained audit receipts, Phase 5 task 5.2
+			Suspend:  onSuspendFunc(approvals),    // durably record an approval on every suspend, Phase 5 task 5.6
+			Delegate: onDelegateFunc(delegations), // bind a delegation to its gating tool_use, Phase 8 task 8.10
 		}),
 		Stuck:        reliability.NewRegistry(stuckDetectionWindow),   // README task 6.8
 		Tracer:       spanExp,                                         // per-run/per-turn/per-tool-call spans, docs/local-llm.md

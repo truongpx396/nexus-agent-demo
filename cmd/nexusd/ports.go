@@ -7,14 +7,11 @@ import (
 	"fmt"
 	"iter"
 
-	delegatepg "github.com/truongpx396/nexus-agent-demo/internal/delegate/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/runs"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 
-	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/config"
 	"github.com/truongpx396/nexus-agent-demo/internal/delegate"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
@@ -29,16 +26,6 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
 
-// chainReceiptFunc adapts internal/auditpg.Chain.Append to the Postgres event
-// log's receipt hook, so every appended event extends the audit chain in the
-// same transaction. kernel itself never sees internal/audit.
-func chainReceiptFunc(chain *auditpg.Chain) postgres.ReceiptFunc {
-	return func(ctx context.Context, tx pgx.Tx, e eventlog.Event) error {
-		_, err := chain.Append(ctx, tx, e.TenantID, e.SessionID, e.Seq, e.EventID, string(e.Type), e.PayloadDigest)
-		return err
-	}
-}
-
 // onSuspendFunc adapts oversight.Approvals.Create to the Postgres event log's
 // suspend hook —
 // rendering the ContextPackage a human approver sees (README task 5.6:
@@ -46,8 +33,8 @@ func chainReceiptFunc(chain *auditpg.Chain) postgres.ReceiptFunc {
 // plaintext input, all of which kernel.SuspendRequest already carries
 // (tools/pipeline.go's Ask branch is where EffectClass and CanonicalDigest
 // both originate, in the one place that already has the descriptor).
-func onSuspendFunc(approvals *oversight.Approvals) postgres.OnSuspend {
-	return func(ctx context.Context, tx pgx.Tx, req kernel.SuspendRequest) error {
+func onSuspendFunc(approvals *oversight.Approvals) postgres.SuspendFunc {
+	return func(ctx context.Context, req kernel.SuspendRequest) error {
 		_, err := approvals.Create(ctx, oversight.CreateApprovalRequest{
 			TenantID: req.TenantID, SessionID: req.SessionID, ToolUseEventID: req.ToolUseEventID,
 			ToolID: req.ToolID, AskKind: req.AskKind, CanonicalDigest: req.CanonicalDigest,
@@ -57,11 +44,11 @@ func onSuspendFunc(approvals *oversight.Approvals) postgres.OnSuspend {
 	}
 }
 
-// onDelegateFunc adapts internal/delegate/postgres.Bind to the Postgres event
+// onDelegateFunc adapts delegate.Delegations.BindToolUse to the Postgres event
 // log's delegate hook. kernel itself never sees internal/delegate.
-func onDelegateFunc() postgres.OnDelegate {
-	return func(ctx context.Context, tx pgx.Tx, req kernel.DelegateSuspendRequest) error {
-		return delegatepg.Bind(ctx, tx, req.ChildSessionID, req.ToolUseEventID)
+func onDelegateFunc(delegations *delegate.Delegations) postgres.DelegateFunc {
+	return func(ctx context.Context, req kernel.DelegateSuspendRequest) error {
+		return delegations.BindToolUse(ctx, req.TenantID, req.ChildSessionID, req.ToolUseEventID)
 	}
 }
 
