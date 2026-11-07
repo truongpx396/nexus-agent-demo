@@ -604,7 +604,7 @@ func TestSnapshot_DeletingAllSnapshotsChangesNothingButHydrationTime(t *testing.
 	var beforeAny eventlog.Projection
 	if err := rig.st.InTenantTx(ctx, rig.tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
-		beforeAny, err = store.LoadProjection(ctx, tx, sessionID)
+		beforeAny, err = postgres.LoadProjection(ctx, tx, sessionID)
 		return err
 	}); err != nil {
 		t.Fatalf("LoadProjection (no snapshot yet): %v", err)
@@ -613,7 +613,7 @@ func TestSnapshot_DeletingAllSnapshotsChangesNothingButHydrationTime(t *testing.
 	// Save a snapshot claiming the SAME answer, then verify the cached path
 	// agrees with the from-scratch one.
 	if err := rig.st.InTenantTx(ctx, rig.tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		_, err := store.SaveSnapshot(ctx, tx, store.Snapshot{TenantID: rig.tenantID, SessionID: sessionID, AtSeq: 999, Status: beforeAny.Status, TerminalReason: beforeAny.TerminalReason})
+		_, err := postgres.SaveSnapshot(ctx, tx, postgres.Snapshot{TenantID: rig.tenantID, SessionID: sessionID, AtSeq: 999, Status: beforeAny.Status, TerminalReason: beforeAny.TerminalReason})
 		return err
 	}); err != nil {
 		t.Fatalf("SaveSnapshot: %v", err)
@@ -621,7 +621,7 @@ func TestSnapshot_DeletingAllSnapshotsChangesNothingButHydrationTime(t *testing.
 	var withSnapshot eventlog.Projection
 	if err := rig.st.InTenantTx(ctx, rig.tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
-		withSnapshot, err = store.LoadProjection(ctx, tx, sessionID)
+		withSnapshot, err = postgres.LoadProjection(ctx, tx, sessionID)
 		return err
 	}); err != nil {
 		t.Fatalf("LoadProjection (with snapshot): %v", err)
@@ -633,14 +633,14 @@ func TestSnapshot_DeletingAllSnapshotsChangesNothingButHydrationTime(t *testing.
 	// task 6.4's own acceptance line: delete EVERY snapshot, then verify
 	// the answer is UNCHANGED — only ever recomputed from scratch again.
 	if err := rig.st.InTenantTx(ctx, rig.tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		return store.DeleteAllSnapshots(ctx, tx, sessionID)
+		return postgres.DeleteAllSnapshots(ctx, tx, sessionID)
 	}); err != nil {
 		t.Fatalf("DeleteAllSnapshots: %v", err)
 	}
 	var afterDelete eventlog.Projection
 	if err := rig.st.InTenantTx(ctx, rig.tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
-		afterDelete, err = store.LoadProjection(ctx, tx, sessionID)
+		afterDelete, err = postgres.LoadProjection(ctx, tx, sessionID)
 		return err
 	}); err != nil {
 		t.Fatalf("LoadProjection (after delete): %v", err)

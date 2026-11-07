@@ -42,9 +42,9 @@ func adminDSN() string {
 	return envOr("NEXUS_ADMIN_DATABASE_URL", envOr("NEXUS_MIGRATE_DATABASE_URL", defaultMigrateDSN))
 }
 
-// tenantDirectory lists every tenant (tenancy.Directory), as the platform
-// operator.
-func tenantDirectory() tenancy.Directory { return tenancypg.Directory{DSN: adminDSN()} }
+// tenantDirectory is the platform operator's view of the tenants: it lists them
+// (tenancy.Directory) and says which one owns a session (tenancy.SessionLocator).
+func tenantDirectory() tenancypg.Directory { return tenancypg.Directory{DSN: adminDSN()} }
 
 // startPeriodic runs fn every interval until the returned stop is called. It is
 // the one ticker loop the platform's scheduled passes share; what a pass does,

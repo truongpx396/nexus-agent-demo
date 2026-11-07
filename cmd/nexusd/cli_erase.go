@@ -17,6 +17,7 @@ import (
 	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	retrievalpg "github.com/truongpx396/nexus-agent-demo/internal/retrieval/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
+	toolspg "github.com/truongpx396/nexus-agent-demo/internal/tools/postgres"
 )
 
 // runErase is `nexusd erase --tenant=name` (or --session=<uuid>): the
@@ -51,6 +52,7 @@ func runErase(ctx context.Context, args []string) error {
 
 	signer := audit.NewSignerClient(envOr("NEXUS_SIGNERD_SOCKET", defaultSignerdSocket))
 	chain := auditpg.NewChain(signer)
+	eraser := cryptopg.Eraser{Chain: chain, Artifacts: toolspg.DerivedArtifacts{}}
 
 	if *tenantName != "" {
 		tenantID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("nexus-agent-demo/tenant/"+*tenantName))
@@ -58,7 +60,7 @@ func runErase(ctx context.Context, args []string) error {
 		var deletedChunks, deletedDocs int
 		err := st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 			var eerr error
-			result, eerr = cryptopg.EraseTenant(ctx, tx, chain, tenantID, *reason)
+			result, eerr = eraser.EraseTenant(ctx, tx, tenantID, *reason)
 			if eerr != nil {
 				return eerr
 			}
@@ -84,26 +86,18 @@ func runErase(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("invalid --session: %w", err)
 	}
-	// A session's tenant isn't known up front from the id alone — and pool
-	// connects as nexus_app, RLS-restricted to whatever app.tenant_id the
-	// CURRENT transaction set, which is nothing yet (same reason
-	// tenantDirectory connects as the admin superuser instead of
-	// through st): resolving "which tenant owns this session" is
-	// necessarily a cross-tenant admin lookup, done here the same way.
-	adminDSN := envOr("NEXUS_ADMIN_DATABASE_URL", envOr("NEXUS_MIGRATE_DATABASE_URL", defaultMigrateDSN))
-	adminPool, err := pgxpool.New(ctx, adminDSN)
+	// A session's tenant isn't known up front from the id alone, and the pool
+	// above is the runtime role, which sees nothing until a transaction names a
+	// tenant. Resolving "which tenant owns this session" is the operator's
+	// cross-tenant lookup, which tenancy owns.
+	tenantID, err := tenantDirectory().TenantOfSession(ctx, sessionID)
 	if err != nil {
-		return fmt.Errorf("connect as admin: %w", err)
-	}
-	defer adminPool.Close()
-	var tenantID uuid.UUID
-	if err := adminPool.QueryRow(ctx, `SELECT tenant_id FROM sessions WHERE session_id = $1`, sessionID).Scan(&tenantID); err != nil {
-		return fmt.Errorf("resolve tenant for session %s: %w", sessionID, err)
+		return err
 	}
 	var result crypto.ErasureResult
 	err = st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var eerr error
-		result, eerr = cryptopg.EraseSession(ctx, tx, chain, tenantID, sessionID, *reason)
+		result, eerr = eraser.EraseSession(ctx, tx, tenantID, sessionID, *reason)
 		return eerr
 	})
 	if err != nil {

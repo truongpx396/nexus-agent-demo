@@ -228,7 +228,7 @@ foundational deliverable, and the property test for the paired-result invariant 
 - [X] T090 [US5] Queue port and admission, session-key serial lock in `internal/queue/types.go`, `internal/queue/admission.go`, `internal/queue/redis/lock.go`, `internal/queue/worker.go` (bp 6.1, 6.2; FR-064)
 - [X] T091 [P] [US5] Redis Streams consumer-group adapter with `XAUTOCLAIM` reclaim, replacing the Postgres adapter, in `internal/queue/redis/streams.go`, `migrations/0024_retire_queue_jobs.sql` (post-ledger, `2efa4ff`; research R-10)
 - [X] T092 [P] [US5] Checkpoint artifact in `internal/runctl/postgres/checkpoint.go`, `migrations/0013_checkpoints.sql` (bp 6.3; FR-065)
-- [X] T093 [P] [US5] Disposable snapshot in `internal/store/snapshot.go` (bp 6.4; FR-066)
+- [X] T093 [P] [US5] Disposable snapshot in `internal/eventlog/postgres/snapshots.go` (bp 6.4; FR-066)
 - [X] T094 [P] [US5] Condensation as a model-facing event in `internal/eventlog/condensation.go` (bp 6.5; FR-067)
 - [X] T095 [US5] Write-ahead effect claims in `internal/runctl/postgres/claims.go`, `internal/runctl/claims.go`, `migrations/0012_claims.sql` (bp 6.6; FR-068)
 - [X] T096 [P] [US5] Failure classifier, jittered logged backoff, circuit break at three in `internal/reliability/classifier.go` (bp 6.7; FR-069)

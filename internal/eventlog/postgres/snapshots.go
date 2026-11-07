@@ -1,4 +1,4 @@
-package store
+package postgres
 
 import (
 	"context"
@@ -7,7 +7,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
+	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
 // Snapshot is the artifact README task 6.4 names: a DISPOSABLE cache of one
@@ -90,7 +92,7 @@ func LoadProjection(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) (eventl
 	if ok {
 		return eventlog.Projection{Status: snap.Status, TerminalReason: snap.TerminalReason}, nil
 	}
-	history, err := ListEvents(ctx, tx, sessionID)
+	history, err := store.ListEvents(ctx, tx, sessionID)
 	if err != nil {
 		return eventlog.Projection{}, err
 	}

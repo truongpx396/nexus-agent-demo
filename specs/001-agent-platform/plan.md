@@ -113,7 +113,7 @@ confirm VIOLATION 1 is the only place a content-bearing channel crosses the tele
 | US2 | 3 | `internal/{tools,tools/builtin,permissions,hooks}` |
 | US3 | 4 | `internal/cost` |
 | US4 | 5 | `cmd/signerd`, `internal/{audit,oversight,sandbox}`, `internal/crypto/shred.go`, `internal/contentaccess/grants.go` |
-| US5 | 6, 18 | `internal/{queue,runctl,reliability}`, `internal/store/snapshot.go`, `internal/runctl/postgres/{checkpoint,claims}.go` |
+| US5 | 6, 18 | `internal/{queue,runctl,reliability}`, `internal/eventlog/postgres/snapshots.go`, `internal/runctl/postgres/{checkpoint,claims}.go` |
 | US6 | 7 | `internal/{memory,skills,surfaces,surfaces/cli}` |
 | US7 | 8 | `internal/{plan,delegate}`, `internal/tools/builtin/delegate.go` |
 | US8 | 10 | `evals/`, `internal/evalgate`, `cmd/nexusd/cli_golive.go` |

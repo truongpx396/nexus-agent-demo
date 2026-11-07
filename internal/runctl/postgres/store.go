@@ -59,7 +59,7 @@ func (t *txn) ListInFlightClaims(ctx context.Context, sessionID uuid.UUID) ([]ru
 }
 
 func (t *txn) ClaimAwaitingInput(ctx context.Context, sessionID uuid.UUID) (bool, error) {
-	return store.ClaimAwaitingInput(ctx, t.Tx(), sessionID)
+	return claimAwaitingInput(ctx, t.Tx(), sessionID)
 }
 
 func (t *txn) SetAutonomyLevel(ctx context.Context, sessionID uuid.UUID, level string) error {
@@ -78,5 +78,5 @@ func (t *txn) LatestCheckpoint(ctx context.Context, sessionID uuid.UUID) (runctl
 }
 
 func (t *txn) ListStaleAwaitingInput(ctx context.Context, olderThan time.Time) ([]uuid.UUID, error) {
-	return store.ListStaleAwaitingInputSessionIDs(ctx, t.Tx(), olderThan)
+	return listStaleAwaitingInput(ctx, t.Tx(), olderThan)
 }

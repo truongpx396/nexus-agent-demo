@@ -37,6 +37,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/tools"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools/builtin"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools/kerneladapter"
+	toolspg "github.com/truongpx396/nexus-agent-demo/internal/tools/postgres"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
 
@@ -481,7 +482,7 @@ func TestErasure_StructuralReplayAndChainSurviveShredding(t *testing.T) {
 	var result crypto.ErasureResult
 	if err := rig.st.InTenantTx(ctx, rig.tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
-		result, err = cryptopg.EraseSession(ctx, tx, rig.chain, rig.tenantID, sessionID, "test erasure")
+		result, err = cryptopg.Eraser{Chain: rig.chain, Artifacts: toolspg.DerivedArtifacts{}}.EraseSession(ctx, tx, rig.tenantID, sessionID, "test erasure")
 		return err
 	}); err != nil {
 		t.Fatalf("EraseSession: %v", err)
