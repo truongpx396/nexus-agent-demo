@@ -30,6 +30,15 @@ type Tx interface {
 	// (Executor.Start's own doc comment).
 	AppendFirst(ctx context.Context, tenantID, sessionID uuid.UUID, seal kernel.SealFunc, typ eventlog.EventType, payload any) (eventlog.Event, error)
 
+	// PinSession records the plan version sessionID is a run of, so that a later
+	// edit to the plan can never change what an in-flight run executes (task
+	// 8.4). The pin is plan's own record: the session aggregate does not carry it.
+	PinSession(ctx context.Context, tenantID, sessionID, planID uuid.UUID, version int) error
+
+	// PinnedPlan is the plan version sessionID was pinned to; ok=false means it
+	// is not a plan-driven session.
+	PinnedPlan(ctx context.Context, sessionID uuid.UUID) (planID uuid.UUID, version int, ok bool, err error)
+
 	// CreateFanoutEnvelope reserves a delegate_fanout step's whole cohort
 	// ceiling before its first child starts (task 8.13).
 	CreateFanoutEnvelope(ctx context.Context, tenantID, planSessionID uuid.UUID, ceiling cost.Money, childCount int) (uuid.UUID, error)

@@ -46,24 +46,6 @@ type Session struct {
 	// from are the spawning features' (internal/delegate's session_lineage).
 	ParentSessionID *uuid.UUID
 
-	// PlanID/PlanVersion pin which orchestration_plans row (README §8,
-	// Phase 8) this session's own event log is a run of — nil/nil for every
-	// ordinary, non-plan-driven session. Pinned at session creation, exactly
-	// like HarnessDigest, so a later plan edit can never retroactively
-	// change what an in-flight run is executing (internal/plan/lifecycle.go
-	// task 8.4's "in-flight runs finish on their version").
-	PlanID      *uuid.UUID
-	PlanVersion *int
-
-	// ForkedFromSessionID/ForkSeq/ForkOverrides are the fork lineage columns
-	// migrations/0002_sessions.sql seamed in at Phase 1, populated
-	// meaningfully starting Phase 6 (README task 6.11,
-	// internal/runctl.Fork). Nil/zero for every non-forked session — which
-	// is every session before this phase.
-	ForkedFromSessionID *uuid.UUID
-	ForkSeq             *int64
-	ForkOverrides       map[string]string
-
 	// CreatedAt is read-only (the column's own DEFAULT now() -- CreateSession
 	// never sets it). Added for ListSessionsForUser's own sort/display need;
 	// GetSession fills it too since it's cheap to select alongside every

@@ -19,10 +19,6 @@ func CreateSession(ctx context.Context, tx pgx.Tx, s eventlog.Session) error {
 	if err != nil {
 		return fmt.Errorf("marshal route_reason: %w", err)
 	}
-	overrides, err := json.Marshal(s.ForkOverrides)
-	if err != nil {
-		return fmt.Errorf("marshal fork_overrides: %w", err)
-	}
 	autonomy := s.AutonomyLevel
 	if autonomy == "" {
 		autonomy = "supervised"
@@ -33,16 +29,12 @@ func CreateSession(ctx context.Context, tx pgx.Tx, s eventlog.Session) error {
 			session_id, session_key, tenant_id, surface_id, user_id,
 			agent_id, agent_version, harness_digest,
 			data_label, route_model_id, route_reason,
-			autonomy_level, parent_session_id,
-			forked_from_session_id, fork_seq, fork_overrides,
-			plan_id, plan_version, conversational
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
+			autonomy_level, parent_session_id, conversational
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
 		s.SessionID, s.SessionKey, s.TenantID, s.SurfaceID, s.UserID,
 		s.AgentID, s.AgentVersion, s.HarnessDigest,
 		s.DataLabel, s.RouteModelID, reason,
-		autonomy, s.ParentSessionID,
-		s.ForkedFromSessionID, s.ForkSeq, overrides,
-		s.PlanID, s.PlanVersion, s.Conversational,
+		autonomy, s.ParentSessionID, s.Conversational,
 	)
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)
@@ -62,33 +54,24 @@ const sessionColumns = `session_id, session_key, tenant_id, surface_id, user_id,
 	agent_id, agent_version, harness_digest,
 	data_label, route_model_id, route_reason,
 	autonomy_level, parent_session_id,
-	status, terminal_reason,
-	forked_from_session_id, fork_seq, fork_overrides,
-	plan_id, plan_version, created_at, conversational, updated_at`
+	status, terminal_reason, created_at, conversational, updated_at`
 
 // scanSession reads one row selected with sessionColumns.
 func scanSession(row interface{ Scan(dest ...any) error }) (eventlog.Session, error) {
 	var s eventlog.Session
-	var reason, overrides []byte
+	var reason []byte
 	if err := row.Scan(
 		&s.SessionID, &s.SessionKey, &s.TenantID, &s.SurfaceID, &s.UserID,
 		&s.AgentID, &s.AgentVersion, &s.HarnessDigest,
 		&s.DataLabel, &s.RouteModelID, &reason,
 		&s.AutonomyLevel, &s.ParentSessionID,
-		&s.Status, &s.TerminalReason,
-		&s.ForkedFromSessionID, &s.ForkSeq, &overrides,
-		&s.PlanID, &s.PlanVersion, &s.CreatedAt, &s.Conversational, &s.UpdatedAt,
+		&s.Status, &s.TerminalReason, &s.CreatedAt, &s.Conversational, &s.UpdatedAt,
 	); err != nil {
 		return eventlog.Session{}, err
 	}
 	if len(reason) > 0 {
 		if err := json.Unmarshal(reason, &s.RouteReason); err != nil {
 			return eventlog.Session{}, fmt.Errorf("unmarshal route_reason: %w", err)
-		}
-	}
-	if len(overrides) > 0 {
-		if err := json.Unmarshal(overrides, &s.ForkOverrides); err != nil {
-			return eventlog.Session{}, fmt.Errorf("unmarshal fork_overrides: %w", err)
 		}
 	}
 	return s, nil

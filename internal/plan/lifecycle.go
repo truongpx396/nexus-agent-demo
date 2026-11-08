@@ -193,7 +193,7 @@ func (l *Lifecycle) SignOff(ctx context.Context, tenantID, planID uuid.UUID, ver
 // signed_off -> enabled — from here the row is immutable (task 8.4); a
 // session that already started on this version keeps running against the
 // spec it read at start, since Executor always loads by the EXACT
-// (plan_id, plan_version) pinned onto its own session row, never "whatever
+// (plan_id, plan_version) pinned to its own session (plan_sessions), never "whatever
 // is enabled now." The pins are recorded in the same unit as the status.
 func (l *Lifecycle) Enable(ctx context.Context, tenantID, planID uuid.UUID, version, agentVersion int, routeModelID string) error {
 	return l.transition(ctx, tenantID, planID, version, StatusSignedOff, StatusEnabled, func(p *Plan) {

@@ -109,12 +109,11 @@ func TestPlan_ZeroTokenRouting(t *testing.T) {
 
 	sessionID, userID := uuid.New(), uuid.New()
 	err = r.st.InTenantTx(context.Background(), r.tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		version := created.Version
 		return store.CreateSession(ctx, tx, eventlog.Session{
 			SessionID: sessionID, SessionKey: sessionID.String(), TenantID: r.tenantID,
 			SurfaceID: "test", UserID: userID, AgentID: uuid.Nil, AgentVersion: 1,
 			HarnessDigest: []byte("test"), DataLabel: "internal", RouteModelID: "fake",
-			AutonomyLevel: "autonomous", PlanID: &created.PlanID, PlanVersion: &version,
+			AutonomyLevel: "autonomous",
 		})
 	})
 	if err != nil {
@@ -128,6 +127,18 @@ func TestPlan_ZeroTokenRouting(t *testing.T) {
 	final := r.getSession(t, sessionID)
 	if final.Status != eventlog.SessionStatusCompleted {
 		t.Fatalf("session status = %q, want completed", final.Status)
+	}
+	// Start pins the version itself, in plan's own table, in the same transaction
+	// as the first event: the caller above never named the plan on the session.
+	var pinnedPlan uuid.UUID
+	var pinnedVersion int
+	if err := r.st.InTenantTx(context.Background(), r.tenantID, func(ctx context.Context, tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT plan_id, plan_version FROM plan_sessions WHERE session_id = $1`, sessionID).Scan(&pinnedPlan, &pinnedVersion)
+	}); err != nil {
+		t.Fatalf("read the plan pin: %v", err)
+	}
+	if pinnedPlan != created.PlanID || pinnedVersion != created.Version {
+		t.Errorf("pin = plan %s version %d, want %s version %d", pinnedPlan, pinnedVersion, created.PlanID, created.Version)
 	}
 	if got := counting.count(); got != 2 {
 		t.Fatalf("Provider.Stream was called %d times, want exactly 2 (one per agent step — transition evaluation must cost zero)", got)

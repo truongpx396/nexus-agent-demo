@@ -12,6 +12,7 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/google/uuid"
@@ -21,6 +22,7 @@ import (
 	delegatepg "github.com/truongpx396/nexus-agent-demo/internal/delegate/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
+	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
@@ -113,5 +115,47 @@ func TestSpawn_RecordsLineageAndKeepsSpawnedSessionsOutOfTheList(t *testing.T) {
 	// parent does) under the one root.
 	if open, total, err := d.CountForRoot(context.Background(), r.tenantID, rootID); err != nil || open != 2 || total != 2 {
 		t.Errorf("CountForRoot(root) = open %d total %d, %v, want both delegations counted: the root's and its child's", open, total, err)
+	}
+}
+
+// TestFork_RecordsItsProvenanceInRunctlsTableNotOnTheSession: a fork is a new
+// thread of its own, so it has no parent and shows in the sessions list, and what
+// ties it to the session it was taken from is runctl's session_forks record.
+func TestFork_RecordsItsProvenanceInRunctlsTableNotOnTheSession(t *testing.T) {
+	rig := newReliabilityRig(t)
+	parentID, userID := uuid.New(), uuid.New()
+	rig.createSession(t, parentID, userID, "autonomous")
+	seal, _ := rig.seal(t, parentID)
+	rig.seedOneEvent(t, parentID, seal)
+
+	res, err := rig.control(nil, nil, nil).Fork(context.Background(), rig.tenantID, parentID, 1, runctl.ForkOverrides{ModelID: "other-model"})
+	if err != nil {
+		t.Fatalf("Fork: %v", err)
+	}
+
+	var from uuid.UUID
+	var seq int64
+	var overrides []byte
+	if err := rig.st.InTenantTx(context.Background(), rig.tenantID, func(ctx context.Context, tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			`SELECT forked_from_session_id, fork_seq, overrides FROM session_forks WHERE session_id = $1`, res.SessionID,
+		).Scan(&from, &seq, &overrides)
+	}); err != nil {
+		t.Fatalf("read the fork record: %v", err)
+	}
+	var got map[string]string
+	if err := json.Unmarshal(overrides, &got); err != nil {
+		t.Fatalf("overrides are not a JSON object: %v", err)
+	}
+	if from != parentID || seq != 1 || got["model_id"] != "other-model" {
+		t.Errorf("fork record = from %s at %d overriding %v, want from %s at 1 overriding model_id=other-model", from, seq, got, parentID)
+	}
+
+	child := rig.getSession(t, res.SessionID)
+	if child.ParentSessionID != nil {
+		t.Errorf("fork.ParentSessionID = %v, want nil: a fork is its own thread, not a spawned session", child.ParentSessionID)
+	}
+	if child.AutonomyLevel != "read_only" {
+		t.Errorf("fork autonomy = %q, want read_only: a fork never inherits the parent's autonomy", child.AutonomyLevel)
 	}
 }

@@ -23,6 +23,7 @@ type fakeStore struct {
 
 	plans    map[planKey]*planRow
 	sessions map[uuid.UUID]eventlog.Session
+	pins     map[uuid.UUID]planKey // the plan version each plan-driven session is pinned to: plan's own table
 	events   []appended
 
 	failSignedOff error // makes SetSignedOffBy fail
@@ -49,7 +50,7 @@ type appended struct {
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{plans: map[planKey]*planRow{}, sessions: map[uuid.UUID]eventlog.Session{}}
+	return &fakeStore{plans: map[planKey]*planRow{}, sessions: map[uuid.UUID]eventlog.Session{}, pins: map[uuid.UUID]planKey{}}
 }
 
 var _ plan.Store = (*fakeStore)(nil)
@@ -65,6 +66,10 @@ func (f *fakeStore) InTenant(ctx context.Context, _ uuid.UUID, fn func(ctx conte
 	for k, v := range f.sessions {
 		sessions[k] = v
 	}
+	pins := map[uuid.UUID]planKey{}
+	for k, v := range f.pins {
+		pins[k] = v
+	}
 	events := append([]appended(nil), f.events...)
 	if err := fn(ctx, &fakeTx{f: f}); err != nil {
 		f.plans = map[planKey]*planRow{}
@@ -72,7 +77,7 @@ func (f *fakeStore) InTenant(ctx context.Context, _ uuid.UUID, fn func(ctx conte
 			v := v
 			f.plans[k] = &v
 		}
-		f.sessions, f.events = sessions, events
+		f.sessions, f.pins, f.events = sessions, pins, events
 		return err
 	}
 	return nil
@@ -113,6 +118,17 @@ func (t *fakeTx) GetSession(_ context.Context, id uuid.UUID) (eventlog.Session, 
 		return eventlog.Session{}, errors.New("no such session")
 	}
 	return s, nil
+}
+func (t *fakeTx) PinSession(_ context.Context, _, sessionID, planID uuid.UUID, version int) error {
+	if _, dup := t.f.pins[sessionID]; dup {
+		return errors.New("session already pinned")
+	}
+	t.f.pins[sessionID] = planKey{id: planID, version: version}
+	return nil
+}
+func (t *fakeTx) PinnedPlan(_ context.Context, sessionID uuid.UUID) (uuid.UUID, int, bool, error) {
+	k, ok := t.f.pins[sessionID]
+	return k.id, k.version, ok, nil
 }
 func (t *fakeTx) CreateSession(_ context.Context, s eventlog.Session) error {
 	t.f.sessions[s.SessionID] = s
