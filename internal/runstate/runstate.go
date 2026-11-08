@@ -5,7 +5,9 @@
 // carry its own copy of the same sequence: read the session and its sealed
 // history, decrypt through a key cache, rehydrate the transcript, find the key
 // the session currently seals under, and build a Seal bound to it. This is the
-// one copy.
+// one copy. ConfigFor (config.go) is the same idea for the kernel.RunConfig a
+// resumed run needs, which every resuming service, oversight included, takes
+// from here.
 //
 // It is generic over the caller's own unit-of-work type, so each service passes
 // its own Store without this package knowing it: anything whose Tx can read

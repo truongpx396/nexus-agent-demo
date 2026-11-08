@@ -11,6 +11,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/delegate"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
+	"github.com/truongpx396/nexus-agent-demo/internal/runstate"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
 
@@ -43,7 +44,7 @@ func (e *Executor) continueAgentStep(ctx context.Context, tenantID, sessionID uu
 	if err != nil {
 		return nil, false, err
 	}
-	cfg := kernel.RunConfig{System: e.System, Catalog: e.Catalog, MaxTurns: e.MaxTurns, AutonomyLevel: sess.AutonomyLevel, ModelID: sess.RouteModelID}
+	cfg := runstate.ConfigFor(sess, kernel.RunConfig{System: e.System, Catalog: e.Catalog, MaxTurns: e.MaxTurns})
 	for _, err := range e.Kernel.Continue(ctx, rs, cfg) {
 		if err != nil {
 			return nil, false, err
