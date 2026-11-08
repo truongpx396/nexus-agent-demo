@@ -60,7 +60,7 @@ func newTestSession(t *testing.T, ctx context.Context, st *store.Store, autonomy
 	}
 	keyStore := cryptopg.NewKeyStore(kek)
 
-	digest := harness.Digest(harness.Config{SystemPromptVersion: "phase3-test", PromptMode: "phase3-test"})
+	digest := harness.Digest(harness.Config{SystemPromptVersion: "permission-chain-test", PromptMode: "permission-chain-test"})
 	var dek crypto.DEK
 	err = st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var derr error

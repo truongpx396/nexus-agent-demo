@@ -112,10 +112,10 @@ func (s *Service) Launch(ctx context.Context, req LaunchRequest) (Launched, erro
 
 	sessionID := uuid.New()
 	digest := harness.Digest(harness.Config{
-		SystemPromptVersion:   "phase2-v1",
+		SystemPromptVersion:   harness.DefaultSystemPromptVersion,
 		CatalogManifestDigest: s.CatalogManifestDigest,
 		SkillSetDigest:        req.SkillSetDigest,
-		PromptMode:            "phase2-single-shot",
+		PromptMode:            harness.DefaultPromptMode,
 		MCPCatalogDigest:      req.MCPCatalogDigest,
 	})
 

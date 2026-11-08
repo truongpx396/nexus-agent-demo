@@ -58,7 +58,7 @@ import (
 // --- task 7.1: memory injected at session start ---
 
 func TestMemory_InjectedAtSessionStart_ProducesLeadingAuditEvent(t *testing.T) {
-	rig := newPhase6Rig(t)
+	rig := newReliabilityRig(t)
 	ctx := context.Background()
 	sessionID, userID := uuid.New(), uuid.New()
 	rig.createSession(t, sessionID, userID, "autonomous")
@@ -116,7 +116,7 @@ func TestMemory_InjectedAtSessionStart_ProducesLeadingAuditEvent(t *testing.T) {
 // mid-session tool revocation fails closed and the run continues ---
 
 func TestSkills_MidSessionToolRevocation_EmitsCapabilityIgnoredAndContinues(t *testing.T) {
-	rig := newPhase6Rig(t)
+	rig := newReliabilityRig(t)
 	ctx := context.Background()
 	sessionID, userID := uuid.New(), uuid.New()
 	rig.createSession(t, sessionID, userID, "autonomous")
@@ -241,7 +241,7 @@ func (s *flakySender) Send(context.Context, string, string, []byte) error {
 }
 
 func TestOutbox_RetriesThenDeliversAndStaysIdempotent(t *testing.T) {
-	rig := newPhase6Rig(t)
+	rig := newReliabilityRig(t)
 	ctx := context.Background()
 	sessionID, userID := uuid.New(), uuid.New()
 	rig.createSession(t, sessionID, userID, "autonomous")
@@ -286,7 +286,7 @@ func TestOutbox_RetriesThenDeliversAndStaysIdempotent(t *testing.T) {
 }
 
 func TestOutbox_FailsPermanentlyAfterCapAndNeverSendsAgain(t *testing.T) {
-	rig := newPhase6Rig(t)
+	rig := newReliabilityRig(t)
 	ctx := context.Background()
 	sessionID, userID := uuid.New(), uuid.New()
 	rig.createSession(t, sessionID, userID, "autonomous")

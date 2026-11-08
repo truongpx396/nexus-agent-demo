@@ -153,7 +153,7 @@ func (NotImplementedToolExecutor) Execute(_ context.Context, _ ToolUseRequest, _
 	return ToolResult{
 		IsError:   true,
 		Synthetic: true,
-		Reason:    "tool pipeline not implemented until Phase 3 (internal/tools/pipeline.go)",
+		Reason:    "no tool pipeline is wired into this kernel (internal/tools/pipeline.go)",
 	}
 }
 

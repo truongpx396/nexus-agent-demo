@@ -98,12 +98,12 @@ func (c *Control) Fork(ctx context.Context, tenantID, parentSessionID uuid.UUID,
 
 	systemPromptVersion := overrides.SystemPromptVersion
 	if systemPromptVersion == "" {
-		systemPromptVersion = "phase2-v1" // matches internal/runs/launch.go's own hardcoded default — no per-tenant config store exists yet
+		systemPromptVersion = harness.DefaultSystemPromptVersion // the same default a run starts under, or every fork would report drift
 	}
 	childDigest := harness.Digest(harness.Config{
 		SystemPromptVersion:   systemPromptVersion,
 		CatalogManifestDigest: c.CatalogManifestDigest,
-		PromptMode:            "phase2-single-shot",
+		PromptMode:            harness.DefaultPromptMode,
 	})
 	diverged := !bytes.Equal(parentSess.HarnessDigest, childDigest)
 
