@@ -59,13 +59,6 @@ type Session struct {
 	ForkSeq             *int64
 	ForkOverrides       map[string]string
 
-	// TeamID is the peer-team seam (README §9, Phase 9): nil for every
-	// non-team session (every session before this phase, and every root/
-	// delegation session after it). Set once at creation for a
-	// delegation_role="team_member" session and never updated afterward —
-	// the roster is fixed at team creation (internal/teams task 9.1).
-	TeamID *uuid.UUID
-
 	// CreatedAt is read-only (the column's own DEFAULT now() -- CreateSession
 	// never sets it). Added for ListSessionsForUser's own sort/display need;
 	// GetSession fills it too since it's cheap to select alongside every

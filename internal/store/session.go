@@ -43,14 +43,14 @@ func CreateSession(ctx context.Context, tx pgx.Tx, s eventlog.Session) error {
 			data_label, route_model_id, route_reason,
 			autonomy_level, root_session_id, depth, delegation_role,
 			forked_from_session_id, fork_seq, fork_overrides,
-			plan_id, plan_version, team_id, conversational
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
+			plan_id, plan_version, conversational
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
 		s.SessionID, s.SessionKey, s.TenantID, s.SurfaceID, s.UserID,
 		s.AgentID, s.AgentVersion, s.HarnessDigest,
 		s.DataLabel, s.RouteModelID, reason,
 		autonomy, root, s.Depth, delegationRole,
 		s.ForkedFromSessionID, s.ForkSeq, overrides,
-		s.PlanID, s.PlanVersion, s.TeamID, s.Conversational,
+		s.PlanID, s.PlanVersion, s.Conversational,
 	)
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)
@@ -63,34 +63,31 @@ func CreateSession(ctx context.Context, tx pgx.Tx, s eventlog.Session) error {
 // the two apart, and neither should the caller).
 var ErrSessionNotFound = errors.New("session not found")
 
-// GetSession loads one session row, RLS-scoped like every read in this
-// package.
-func GetSession(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) (eventlog.Session, error) {
+// sessionColumns is every column the session reads select, in the order
+// scanSession scans them: one list, so a column added to the aggregate is added
+// in one place and cannot be read by one query and forgotten by another.
+const sessionColumns = `session_id, session_key, tenant_id, surface_id, user_id,
+	agent_id, agent_version, harness_digest,
+	data_label, route_model_id, route_reason,
+	autonomy_level, root_session_id, depth, delegation_role,
+	status, terminal_reason,
+	forked_from_session_id, fork_seq, fork_overrides,
+	plan_id, plan_version, created_at, conversational, updated_at`
+
+// scanSession reads one row selected with sessionColumns.
+func scanSession(row interface{ Scan(dest ...any) error }) (eventlog.Session, error) {
 	var s eventlog.Session
 	var reason, overrides []byte
-	err := tx.QueryRow(ctx, `
-		SELECT session_id, session_key, tenant_id, surface_id, user_id,
-		       agent_id, agent_version, harness_digest,
-		       data_label, route_model_id, route_reason,
-		       autonomy_level, root_session_id, depth, delegation_role,
-		       status, terminal_reason,
-		       forked_from_session_id, fork_seq, fork_overrides,
-		       plan_id, plan_version, team_id, created_at, conversational, updated_at
-		FROM sessions WHERE session_id = $1`, sessionID,
-	).Scan(
+	if err := row.Scan(
 		&s.SessionID, &s.SessionKey, &s.TenantID, &s.SurfaceID, &s.UserID,
 		&s.AgentID, &s.AgentVersion, &s.HarnessDigest,
 		&s.DataLabel, &s.RouteModelID, &reason,
 		&s.AutonomyLevel, &s.RootSessionID, &s.Depth, &s.DelegationRole,
 		&s.Status, &s.TerminalReason,
 		&s.ForkedFromSessionID, &s.ForkSeq, &overrides,
-		&s.PlanID, &s.PlanVersion, &s.TeamID, &s.CreatedAt, &s.Conversational, &s.UpdatedAt,
-	)
-	if err != nil {
-		if err == pgx.ErrNoRows {
-			return eventlog.Session{}, fmt.Errorf("session %s (wrong tenant scope, or it does not exist): %w", sessionID, ErrSessionNotFound)
-		}
-		return eventlog.Session{}, fmt.Errorf("get session %s: %w", sessionID, err)
+		&s.PlanID, &s.PlanVersion, &s.CreatedAt, &s.Conversational, &s.UpdatedAt,
+	); err != nil {
+		return eventlog.Session{}, err
 	}
 	if len(reason) > 0 {
 		if err := json.Unmarshal(reason, &s.RouteReason); err != nil {
@@ -101,6 +98,19 @@ func GetSession(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) (eventlog.S
 		if err := json.Unmarshal(overrides, &s.ForkOverrides); err != nil {
 			return eventlog.Session{}, fmt.Errorf("unmarshal fork_overrides: %w", err)
 		}
+	}
+	return s, nil
+}
+
+// GetSession loads one session row, RLS-scoped like every read in this
+// package.
+func GetSession(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) (eventlog.Session, error) {
+	s, err := scanSession(tx.QueryRow(ctx, `SELECT `+sessionColumns+` FROM sessions WHERE session_id = $1`, sessionID))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return eventlog.Session{}, fmt.Errorf("session %s (wrong tenant scope, or it does not exist): %w", sessionID, ErrSessionNotFound)
+		}
+		return eventlog.Session{}, fmt.Errorf("get session %s: %w", sessionID, err)
 	}
 	return s, nil
 }
@@ -116,42 +126,14 @@ func GetSession(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) (eventlog.S
 // session for this peer yet" case, mirroring ChannelPort.WebhookSecret's
 // own (string, bool, error) convention in those same packages.
 func GetSessionByKey(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, sessionKey string) (eventlog.Session, bool, error) {
-	var s eventlog.Session
-	var reason, overrides []byte
-	err := tx.QueryRow(ctx, `
-		SELECT session_id, session_key, tenant_id, surface_id, user_id,
-		       agent_id, agent_version, harness_digest,
-		       data_label, route_model_id, route_reason,
-		       autonomy_level, root_session_id, depth, delegation_role,
-		       status, terminal_reason,
-		       forked_from_session_id, fork_seq, fork_overrides,
-		       plan_id, plan_version, team_id, created_at, conversational, updated_at
+	s, err := scanSession(tx.QueryRow(ctx, `SELECT `+sessionColumns+`
 		FROM sessions WHERE tenant_id = $1 AND session_key = $2
-		ORDER BY created_at DESC LIMIT 1`, tenantID, sessionKey,
-	).Scan(
-		&s.SessionID, &s.SessionKey, &s.TenantID, &s.SurfaceID, &s.UserID,
-		&s.AgentID, &s.AgentVersion, &s.HarnessDigest,
-		&s.DataLabel, &s.RouteModelID, &reason,
-		&s.AutonomyLevel, &s.RootSessionID, &s.Depth, &s.DelegationRole,
-		&s.Status, &s.TerminalReason,
-		&s.ForkedFromSessionID, &s.ForkSeq, &overrides,
-		&s.PlanID, &s.PlanVersion, &s.TeamID, &s.CreatedAt, &s.Conversational, &s.UpdatedAt,
-	)
+		ORDER BY created_at DESC LIMIT 1`, tenantID, sessionKey))
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return eventlog.Session{}, false, nil
 		}
 		return eventlog.Session{}, false, fmt.Errorf("get session by key %q: %w", sessionKey, err)
-	}
-	if len(reason) > 0 {
-		if err := json.Unmarshal(reason, &s.RouteReason); err != nil {
-			return eventlog.Session{}, false, fmt.Errorf("unmarshal route_reason: %w", err)
-		}
-	}
-	if len(overrides) > 0 {
-		if err := json.Unmarshal(overrides, &s.ForkOverrides); err != nil {
-			return eventlog.Session{}, false, fmt.Errorf("unmarshal fork_overrides: %w", err)
-		}
 	}
 	return s, true, nil
 }
@@ -163,19 +145,11 @@ func GetSessionByKey(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, session
 // UI's session sidebar (internal/surfaces/rest's GET /v1/sessions) -- there
 // is otherwise no "list runs" capability, only GetSession's lookup-by-id.
 func ListSessionsForUser(ctx context.Context, tx pgx.Tx, userID uuid.UUID, limit int) ([]eventlog.Session, error) {
-	rows, err := tx.Query(ctx, `
-		SELECT session_id, session_key, tenant_id, surface_id, user_id,
-		       agent_id, agent_version, harness_digest,
-		       data_label, route_model_id, route_reason,
-		       autonomy_level, root_session_id, depth, delegation_role,
-		       status, terminal_reason,
-		       forked_from_session_id, fork_seq, fork_overrides,
-		       plan_id, plan_version, team_id, created_at, conversational, updated_at
+	rows, err := tx.Query(ctx, `SELECT `+sessionColumns+`
 		FROM sessions
 		WHERE user_id = $1 AND delegation_role = 'root'
 		ORDER BY created_at DESC
-		LIMIT $2`, userID, limit,
-	)
+		LIMIT $2`, userID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list sessions for user %s: %w", userID, err)
 	}
@@ -183,28 +157,9 @@ func ListSessionsForUser(ctx context.Context, tx pgx.Tx, userID uuid.UUID, limit
 
 	var out []eventlog.Session
 	for rows.Next() {
-		var s eventlog.Session
-		var reason, overrides []byte
-		if err := rows.Scan(
-			&s.SessionID, &s.SessionKey, &s.TenantID, &s.SurfaceID, &s.UserID,
-			&s.AgentID, &s.AgentVersion, &s.HarnessDigest,
-			&s.DataLabel, &s.RouteModelID, &reason,
-			&s.AutonomyLevel, &s.RootSessionID, &s.Depth, &s.DelegationRole,
-			&s.Status, &s.TerminalReason,
-			&s.ForkedFromSessionID, &s.ForkSeq, &overrides,
-			&s.PlanID, &s.PlanVersion, &s.TeamID, &s.CreatedAt, &s.Conversational, &s.UpdatedAt,
-		); err != nil {
+		s, err := scanSession(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scan session: %w", err)
-		}
-		if len(reason) > 0 {
-			if err := json.Unmarshal(reason, &s.RouteReason); err != nil {
-				return nil, fmt.Errorf("unmarshal route_reason: %w", err)
-			}
-		}
-		if len(overrides) > 0 {
-			if err := json.Unmarshal(overrides, &s.ForkOverrides); err != nil {
-				return nil, fmt.Errorf("unmarshal fork_overrides: %w", err)
-			}
 		}
 		out = append(out, s)
 	}

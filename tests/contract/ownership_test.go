@@ -52,6 +52,7 @@ var tableOwners = map[string]string{
 	"sessions":              "internal/eventlog",
 	"snapshots":             "internal/eventlog",
 	"team_envelopes":        "internal/teams",
+	"team_members":          "internal/teams",
 	"teams":                 "internal/teams",
 	"tenant_configs":        "internal/config",
 	"tenants":               "internal/tenancy",

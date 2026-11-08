@@ -132,15 +132,17 @@ func (s *Service) spawnMember(ctx context.Context, tenantID, teamID, envelopeID 
 		if err != nil {
 			return err
 		}
-		tid := teamID
-		return tx.CreateSession(ctx, eventlog.Session{
+		if err := tx.CreateSession(ctx, eventlog.Session{
 			SessionID: memberID, SessionKey: memberID.String(), TenantID: tenantID,
 			SurfaceID: "team", UserID: creator.UserID, AgentID: uuid.Nil, AgentVersion: 1,
 			HarnessDigest: creator.HarnessDigest, DataLabel: creator.DataLabel,
 			RouteModelID: creator.RouteModelID, RouteReason: creator.RouteReason,
 			AutonomyLevel: creator.AutonomyLevel, RootSessionID: creator.RootSessionID,
-			Depth: creator.Depth + 1, DelegationRole: "team_member", TeamID: &tid,
-		})
+			Depth: creator.Depth + 1, DelegationRole: "team_member",
+		}); err != nil {
+			return err
+		}
+		return tx.AddMember(ctx, tenantID, teamID, memberID)
 	})
 	if err != nil {
 		return fmt.Errorf("teams: create member session: %w", err)
@@ -186,15 +188,21 @@ func (s *Service) spawnMember(ctx context.Context, tenantID, teamID, envelopeID 
 // (a later call site will find it).
 func (s *Service) OnMemberTerminal(ctx context.Context, tenantID, memberSessionID uuid.UUID) error {
 	var member eventlog.Session
+	var teamID uuid.UUID
+	var onTeam bool
 	err := s.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
 		var err error
 		member, err = tx.GetSession(ctx, memberSessionID)
+		if err != nil {
+			return err
+		}
+		teamID, onTeam, err = tx.TeamIDForSession(ctx, memberSessionID)
 		return err
 	})
 	if err != nil {
 		return err
 	}
-	if member.TeamID == nil {
+	if !onTeam {
 		return nil
 	}
 	if member.Status != eventlog.SessionStatusCompleted && member.Status != eventlog.SessionStatusFailed {
@@ -206,10 +214,10 @@ func (s *Service) OnMemberTerminal(ctx context.Context, tenantID, memberSessionI
 	// next Reserve call also starts failing: this member's own terminal
 	// reason already told us the shared ceiling is at zero.
 	if member.TerminalReason != nil && *member.TerminalReason == string(kernel.ReasonCostExhausted) {
-		return s.endTeam(ctx, tenantID, *member.TeamID, StatusCeilingExhausted,
+		return s.endTeam(ctx, tenantID, teamID, StatusCeilingExhausted,
 			fmt.Sprintf("member session %s exhausted the shared team budget envelope", memberSessionID))
 	}
-	return s.maybeComplete(ctx, tenantID, *member.TeamID)
+	return s.maybeComplete(ctx, tenantID, teamID)
 }
 
 // maybeComplete is task 9.9's own natural-completion predicate: the board

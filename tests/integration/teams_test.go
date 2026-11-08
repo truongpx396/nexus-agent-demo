@@ -322,7 +322,7 @@ func TestCreateTeam_SpawnsMembersAndCompletesWhenBoardEmptyAndMembersTerminal(t 
 
 	var memberCount int
 	if err := r.st.InTenantTx(context.Background(), r.tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `SELECT count(*) FROM sessions WHERE team_id = $1 AND delegation_role = 'team_member'`, teamID).Scan(&memberCount)
+		return tx.QueryRow(ctx, `SELECT count(*) FROM team_members m JOIN sessions s ON s.session_id = m.session_id WHERE m.team_id = $1 AND s.delegation_role = 'team_member'`, teamID).Scan(&memberCount)
 	}); err != nil {
 		t.Fatalf("count members: %v", err)
 	}

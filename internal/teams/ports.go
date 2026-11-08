@@ -40,11 +40,18 @@ type Tx interface {
 	// do. It returns the coordinator session the team_ended event belongs to.
 	EndTeamIfActive(ctx context.Context, teamID uuid.UUID, status Status, reason string) (coordinatorSessionID uuid.UUID, ok bool, err error)
 
+	// AddMember records sessionID as a member of teamID. The roster is the
+	// team's own table, not a column on the session: a session does not know it
+	// is on a team, and this is the only place that is written.
+	AddMember(ctx context.Context, tenantID, teamID, sessionID uuid.UUID) error
+
 	// BoardAndMemberCounts is how many cards are still open or claimed and how
 	// many member sessions have not reached a terminal status.
 	BoardAndMemberCounts(ctx context.Context, teamID uuid.UUID) (openOrClaimed, activeMembers int, err error)
 	ListActiveMemberSessionIDs(ctx context.Context, teamID uuid.UUID) ([]uuid.UUID, error)
 	ListStaleActiveTeamIDs(ctx context.Context, tenantID uuid.UUID, olderThan time.Time) ([]uuid.UUID, error)
+	// TeamIDForSession is the team sessionID is a member of; ok=false means it
+	// is on none (every session that is not a team member).
 	TeamIDForSession(ctx context.Context, sessionID uuid.UUID) (teamID uuid.UUID, ok bool, err error)
 
 	// The board.
