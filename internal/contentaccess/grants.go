@@ -20,7 +20,7 @@ import (
 // Grant mirrors one content_access_grants row (migrations/
 // 0009_content_access_grants.sql): the only path to plaintext outside a
 // run's own audience (README task 5.11, pattern 35). This is deliberately
-// distinct from internal/surfaces/rest/server.go's existing owner-decrypt
+// distinct from internal/runs/rest/run_events.go's existing owner-decrypt
 // path (handleEvents, gated on sess.UserID == userID — pattern #51,
 // already shipped): that path is the run's OWN audience reading its own
 // content; a Grant authorizes someone ELSE — an operator/support

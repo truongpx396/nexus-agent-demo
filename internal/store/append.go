@@ -21,6 +21,9 @@ import (
 // values Postgres actually assigned, which is what kernel/loop.go yields to
 // its caller and what internal/surfaces/rest forwards over SSE.
 func Append(ctx context.Context, tx pgx.Tx, e eventlog.Event) (eventlog.Event, error) {
+	if !e.Type.Known() {
+		return eventlog.Event{}, fmt.Errorf("append event: %w", eventlog.ErrUnknownType{Type: e.Type})
+	}
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`, e.SessionID.String()); err != nil {
 		return eventlog.Event{}, fmt.Errorf("acquire session append lock: %w", err)
 	}

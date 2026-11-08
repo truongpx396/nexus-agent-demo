@@ -320,7 +320,7 @@ type PendingResolution struct {
 }
 
 // DelegateSuspendRequest is everything EventLog.RecordDelegation needs to bind the
-// delegation internal/tools/builtin.Delegate's Call already created (as a
+// delegation internal/delegate/tool.Delegate's Call already created (as a
 // pending row with no tool_use_event_id yet) to the tool_use it gates —
 // mirrors SuspendRequest field-for-field, minus the approval-specific
 // digest/effect-class fields a delegation has no use for (a delegation is

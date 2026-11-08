@@ -198,6 +198,17 @@ func (t *fakeTx) SetDelegationResult(_ context.Context, id uuid.UUID, status del
 	t.f.delegations[id] = d
 	return nil
 }
+func (t *fakeTx) BindToolUse(_ context.Context, child, toolUseEventID uuid.UUID) error {
+	for id, d := range t.f.delegations {
+		if d.ChildSessionID == child && d.Status == delegate.StatusPending {
+			d.ParentToolUseEventID = toolUseEventID
+			t.f.delegations[id] = d
+			return nil
+		}
+	}
+	return fmt.Errorf("no pending delegation for child %s", child)
+}
+
 func (t *fakeTx) Resolvable(_ context.Context, child uuid.UUID) (bool, error) {
 	for _, d := range t.f.delegations {
 		if d.ChildSessionID == child {

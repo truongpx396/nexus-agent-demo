@@ -16,7 +16,7 @@ import (
 	queueredis "github.com/truongpx396/nexus-agent-demo/internal/queue/redis"
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
 	runctlpg "github.com/truongpx396/nexus-agent-demo/internal/runctl/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
+	runsrest "github.com/truongpx396/nexus-agent-demo/internal/runs/rest"
 	"github.com/truongpx396/nexus-agent-demo/internal/teams"
 	"github.com/truongpx396/nexus-agent-demo/internal/tenancy"
 	tenancypg "github.com/truongpx396/nexus-agent-demo/internal/tenancy/postgres"
@@ -42,9 +42,9 @@ func adminDSN() string {
 	return envOr("NEXUS_ADMIN_DATABASE_URL", envOr("NEXUS_MIGRATE_DATABASE_URL", defaultMigrateDSN))
 }
 
-// tenantDirectory lists every tenant (tenancy.Directory), as the platform
-// operator.
-func tenantDirectory() tenancy.Directory { return tenancypg.Directory{DSN: adminDSN()} }
+// tenantDirectory is the platform operator's view of the tenants: it lists them
+// (tenancy.Directory) and says which one owns a session (tenancy.SessionLocator).
+func tenantDirectory() tenancypg.Directory { return tenancypg.Directory{DSN: adminDSN()} }
 
 // startPeriodic runs fn every interval until the returned stop is called. It is
 // the one ticker loop the platform's scheduled passes share; what a pass does,
@@ -130,7 +130,7 @@ func startIdleConversationSweepLoop(ctx context.Context, dir tenancy.Directory, 
 // "running" in the first place, so a session only ever reaches "running"
 // once it durably has at least its seed/message event — recovering an
 // orphaned FRESH run is already exactly what this sweep covers.
-func startQueueWorkers(ctx context.Context, redisClient *redis.Client, port queue.Port, srv *rest.Server, ctl *runctl.Control) (stop func()) {
+func startQueueWorkers(ctx context.Context, redisClient *redis.Client, port queue.Port, runsAPI *runsrest.Handler, ctl *runctl.Control) (stop func()) {
 	adminPool, err := pgxpool.New(ctx, adminDSN())
 	if err != nil {
 		log.Error().Err(err).Msg("nexusd: queue: connect as admin failed; the worker pool is NOT running (fresh runs will be seeded but never actually driven, and crash recovery does not happen)")
@@ -138,7 +138,7 @@ func startQueueWorkers(ctx context.Context, redisClient *redis.Client, port queu
 	}
 
 	lock := queueredis.NewSessionLock(redisClient, sessionLockTTL)
-	runner := &queueRunner{ctl: ctl, srv: srv}
+	runner := &queueRunner{ctl: ctl, runsAPI: runsAPI}
 
 	workerCtx, cancel := context.WithCancel(ctx)
 	runctl.StartRecovery(workerCtx, func(ctx context.Context) ([]runctl.Orphan, error) { return runctlpg.ListRunning(ctx, adminPool) }, lock, port, orphanRecheckAfter)
@@ -165,19 +165,19 @@ func startQueueWorkers(ctx context.Context, redisClient *redis.Client, port queu
 type queueRunner struct {
 	ctl *runctl.Control
 
-	// srv publishes every event this job's own turn loop produces — the
-	// same PublishEvent call internal/surfaces/rest's own synchronous fast
+	// runsAPI publishes every event this job's own turn loop produces — the
+	// same PublishEvent call internal/runs/rest's own synchronous fast
 	// path (publishUntilDone) makes, so an SSE client sees a queued run's
 	// real output (and its eventual EventTerminal) regardless of which
 	// process's worker actually drove it, and approval-outbox delivery/
 	// terminal-span emission fire exactly once either way.
-	srv *rest.Server
+	runsAPI *runsrest.Handler
 }
 
 func (r *queueRunner) Run(ctx context.Context, job queue.Job) error {
 	for ev, err := range r.ctl.Resume(ctx, job.TenantID, job.SessionID) {
-		if r.srv != nil {
-			r.srv.PublishEvent(job.TenantID, job.SessionID, ev, err)
+		if r.runsAPI != nil {
+			r.runsAPI.PublishEvent(job.TenantID, job.SessionID, ev, err)
 		}
 		if err != nil {
 			return err

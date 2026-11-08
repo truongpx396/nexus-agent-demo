@@ -54,7 +54,7 @@ type Retriever struct {
 // verdict is anything but clean gets a documents row recording that (so an
 // operator can see WHY nothing was indexed) but contributes zero chunks —
 // the same fail-closed "never surfaced" posture a flagged board card gets
-// (internal/tools/builtin/board.go).
+// (internal/teams/tool/board.go).
 func (r *Retriever) IndexDocument(ctx context.Context, tenantID, sessionID uuid.UUID, sourceName, mimeType string, data []byte) (Document, error) {
 	doc, err := ingest.Convert(sourceName, mimeType, data)
 	if err != nil {
@@ -140,7 +140,7 @@ func (r *Retriever) Search(ctx context.Context, tenantID, sessionID uuid.UUID, q
 // its own pure function so it is unit-testable without a live Postgres —
 // the rest of Search is a thin embed-then-query wrapper around this and
 // internal/retrieval's own SQL, exercised together in
-// tests/integration/phase12_retrieval_test.go.
+// tests/integration/retrieval_test.go.
 func screenClean(results []ScoredChunk) []ScoredChunk {
 	clean := make([]ScoredChunk, 0, len(results))
 	for _, c := range results {

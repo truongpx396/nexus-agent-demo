@@ -93,7 +93,7 @@ The transcript should show a `platform/delegate` call with
 call routed through `internal/sandbox/opensandbox.go` — check the child's own event
 log for the `platform/shell` `tool_result`.
 
-The web app's suggested-prompt chips (`web/src/lib/suggestedPrompts.ts`) reproduce
+The web app's suggested-prompt chips (`web/src/features/chat/suggestedPrompts.ts`) reproduce
 both without typing.
 
 ## What "subagent" means here

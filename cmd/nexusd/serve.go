@@ -33,6 +33,7 @@ import (
 	connectorspg "github.com/truongpx396/nexus-agent-demo/internal/connectors/postgres"
 	connectorsredis "github.com/truongpx396/nexus-agent-demo/internal/connectors/redis"
 	contentaccesspg "github.com/truongpx396/nexus-agent-demo/internal/contentaccess/postgres"
+	contentrest "github.com/truongpx396/nexus-agent-demo/internal/contentaccess/rest"
 	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/delegate"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
@@ -40,19 +41,22 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/obs/profiling"
 	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
 	oversightpg "github.com/truongpx396/nexus-agent-demo/internal/oversight/postgres"
+	oversightrest "github.com/truongpx396/nexus-agent-demo/internal/oversight/rest"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/reliability"
 	reportingpg "github.com/truongpx396/nexus-agent-demo/internal/reporting/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
+	runctlrest "github.com/truongpx396/nexus-agent-demo/internal/runctl/rest"
 	"github.com/truongpx396/nexus-agent-demo/internal/runs"
 	runspg "github.com/truongpx396/nexus-agent-demo/internal/runs/postgres"
+	runsrest "github.com/truongpx396/nexus-agent-demo/internal/runs/rest"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/cron"
 	cronpg "github.com/truongpx396/nexus-agent-demo/internal/surfaces/cron/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/email"
 	surfpg "github.com/truongpx396/nexus-agent-demo/internal/surfaces/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
+	restkit "github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/telegram"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/zalo"
 	"github.com/truongpx396/nexus-agent-demo/internal/teams"
@@ -108,7 +112,7 @@ func serve(ctx context.Context) error {
 
 	// Built ahead of kernel.Kernel below (moved up from its original
 	// pre-Tracer position further down this function) — Kernel.Tracer needs
-	// this same exporter, not just rest.Server.Exporter, so it has to exist
+	// this same exporter, not just runsrest.Handler.Exporter, so it has to exist
 	// before the Kernel literal does.
 	spanExp, shutdownSpanExp, err := newSpanExporter(ctx)
 	if err != nil {
@@ -224,9 +228,9 @@ func serve(ctx context.Context) error {
 		Tools:    kerneladapter.PipelineExecutor{Pipeline: pipeline}, // real tool pipeline, Phase 3
 		Budget:   gate,                                               // real reserve-then-reconcile cost gate, Phase 4
 		Log: postgres.New(st, postgres.Hooks{
-			Receipt:  chainReceiptFunc(chain),  // hash-chained audit receipts, Phase 5 task 5.2
-			Suspend:  onSuspendFunc(approvals), // durably record an approval on every suspend, Phase 5 task 5.6
-			Delegate: onDelegateFunc(),         // bind a delegation to its gating tool_use, Phase 8 task 8.10
+			Chain:    chain,                       // hash-chained audit receipts, Phase 5 task 5.2
+			Suspend:  onSuspendFunc(approvals),    // durably record an approval on every suspend, Phase 5 task 5.6
+			Delegate: onDelegateFunc(delegations), // bind a delegation to its gating tool_use, Phase 8 task 8.10
 		}),
 		Stuck:        reliability.NewRegistry(stuckDetectionWindow),   // README task 6.8
 		Tracer:       spanExp,                                         // per-run/per-turn/per-tool-call spans, docs/local-llm.md
@@ -292,28 +296,34 @@ func serve(ctx context.Context) error {
 		CatalogManifestDigest: catalogManifestDigest,
 	}
 
-	srv := rest.NewServer(launcher, runspg.Reader{Store: st, KeyStore: keyStore})
-	srv.Verifier = verifier
+	// Every feature that exposes REST endpoints supplies its own module, mounted
+	// by the kit that authenticates them. The run endpoints also own the live
+	// fan-out of a run's events, which the queue workers and the kernel's chunk
+	// callback publish into, so they are built first and kept.
+	runsAPI := runsrest.NewHandler(launcher, runspg.Reader{Store: st, KeyStore: keyStore})
 	// Redis Pub/Sub-backed EventBus (broker.go's own doc comment on why this
 	// surface needs one now): every publish reaches every nexusd process,
 	// not just whichever one produced it — required once a run's turn loop
 	// may execute on a different process (internal/queue's worker pool)
 	// than whichever process holds the client's own SSE connection.
-	srv.Bus = redisEventBus{client: redisClient}
-	srv.Oversight = &nexusdOversightPort{approvals: approvals, resumer: resumer, settled: ctl}
-	srv.Grants = grants
-	srv.RunCtl = &nexusdRunCtlPort{ctl: ctl}
-	srv.Skills = &nexusdSkillSetPort{config: cfgStore, bundles: admittedSkillBundles}
-	srv.MCP = mcpPort
-	srv.Outbox = &surfaces.Outbox{Ledger: surfpg.NewLedger(st, keyStore, chain)}
-	srv.OutboxSender = logSender{}
+	runsAPI.Bus = redisEventBus{client: redisClient}
+	runsAPI.Skills = &nexusdSkillSetPort{config: cfgStore, bundles: admittedSkillBundles}
+	runsAPI.MCP = mcpPort
+	runsAPI.Outbox = &surfaces.Outbox{Ledger: surfpg.NewLedger(st, keyStore, chain)}
+	runsAPI.OutboxSender = logSender{}
+	runsAPI.Exporter = spanExp
 
-	srv.Exporter = spanExp
+	srv := restkit.NewServer(verifier,
+		runsAPI,
+		oversightrest.Handler{Approvals: approvals, Decisions: oversight.Decisions{Resume: resumer, Settled: ctl}},
+		contentrest.Handler{Grants: grants},
+		runctlrest.Handler{Control: ctl},
+	)
 
 	// Live typing-style preview over SSE, decoupled from the durable event
 	// path: k.OnChunk fires as the current turn's provider stream decodes
 	// each chunk (kernel/turns.go), well before that turn's own
-	// accumulation/classification/append — srv.PublishDelta fans it out to
+	// accumulation/classification/append — runsAPI.PublishDelta fans it out to
 	// whichever clients are subscribed to that session's /v1/runs/{id}/events
 	// stream right now, and drops it silently for anyone who isn't (same
 	// non-blocking, best-effort delivery the durable path's own
@@ -323,16 +333,16 @@ func serve(ctx context.Context) error {
 	k.OnChunk = func(ev kernel.ChunkEvent) {
 		switch ev.Chunk.Kind {
 		case provider.ChunkContent:
-			srv.PublishDelta(ev.SessionID, rest.DeltaDTO{Kind: "content", Text: ev.Chunk.Text})
+			runsAPI.PublishDelta(ev.SessionID, runsrest.DeltaDTO{Kind: "content", Text: ev.Chunk.Text})
 		case provider.ChunkToolUse:
-			srv.PublishDelta(ev.SessionID, rest.DeltaDTO{Kind: "tool_use", ToolUseID: ev.Chunk.ToolUseID, ToolName: ev.Chunk.ToolName})
+			runsAPI.PublishDelta(ev.SessionID, runsrest.DeltaDTO{Kind: "tool_use", ToolUseID: ev.Chunk.ToolUseID, ToolName: ev.Chunk.ToolName})
 		case provider.ChunkReasoning:
 			// No Text/Opaque on this signal at all (kernel.Kernel.OnChunk's
 			// own doc comment already strips it before this closure ever
 			// sees it) — a client learns only that the model is reasoning
 			// right now, the same "event visible, body redacted" shape
 			// EventThought's own durable record has.
-			srv.PublishDelta(ev.SessionID, rest.DeltaDTO{Kind: "reasoning"})
+			runsAPI.PublishDelta(ev.SessionID, runsrest.DeltaDTO{Kind: "reasoning"})
 		case provider.ChunkUsage, provider.ChunkDone:
 			// Turn-level bookkeeping a client has no use for as a live
 			// preview — the durable EventTerminal/cost records still carry
@@ -349,10 +359,10 @@ func serve(ctx context.Context) error {
 	stopIdleConversationSweep := startIdleConversationSweepLoop(ctx, tenantDirectory(), ctl)
 	defer stopIdleConversationSweep()
 
-	stopWorkers := startQueueWorkers(ctx, redisClient, queuePort, srv, ctl)
+	stopWorkers := startQueueWorkers(ctx, redisClient, queuePort, runsAPI, ctl)
 	defer stopWorkers()
 
-	stopEventBus := startEventBus(ctx, redisClient, srv)
+	stopEventBus := startEventBus(ctx, redisClient, runsAPI)
 	defer stopEventBus()
 
 	// Phase 11: four more thin surfaces over the same kernel (README §11) —
@@ -394,7 +404,7 @@ func serve(ctx context.Context) error {
 	mux := http.NewServeMux()
 	// /healthz (liveness) and /readyz (Postgres + Redis + signerd all
 	// reachable) are unauthenticated and mounted on this OUTER mux — never
-	// wrapped by rest.Server's auth middleware (README task 13.1/13.2):
+	// wrapped by the REST kit's auth middleware (README task 13.1/13.2):
 	// a load balancer or Kubernetes probe has no bearer token to send.
 	mux.HandleFunc("GET /healthz", handleHealthz)
 	mux.HandleFunc("GET /readyz", handleReadyz(pool, redisClient, signer))

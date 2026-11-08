@@ -50,7 +50,7 @@ type Control struct {
 
 	// CatalogManifestDigest folds into a forked session's harness_digest
 	// (Fork, README task 6.11) exactly the way
-	// internal/surfaces/rest/server.go's own run-creation path already
+	// internal/runs/launch.go's run-admission path already
 	// folds it into a fresh session's — cmd/nexusd wires the SAME value
 	// into both, so a fork taken with no overrides at all reproduces the
 	// parent's digest exactly (never "diverged" merely because two

@@ -37,10 +37,10 @@ func TestDelegate_ChildFinishingBeforeItsDelegationIsBound(t *testing.T) {
 
 	const bindDelay = 750 * time.Millisecond
 	k.Log = postgres.New(r.st, postgres.Hooks{
-		Receipt: r.receiptFunc(),
-		Delegate: func(ctx context.Context, tx pgx.Tx, req kernel.DelegateSuspendRequest) error {
+		Chain: r.chain,
+		Delegate: func(ctx context.Context, req kernel.DelegateSuspendRequest) error {
 			time.Sleep(bindDelay)
-			return onDelegateFunc(d)(ctx, tx, req)
+			return onDelegateFunc(d)(ctx, req)
 		},
 	})
 

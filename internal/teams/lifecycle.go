@@ -38,7 +38,7 @@ type CreateTeamRequest struct {
 //
 // The depth/leaf check (README task 9.10: "a team member is a leaf... no
 // recursive teams") runs here, in the same place and against the same
-// MaxDepth bound internal/tools/builtin/delegate.go's own CheckPermissions
+// MaxDepth bound internal/delegate/tool/delegate.go's own CheckPermissions
 // re-derives for platform/delegate — a session already at MaxDepth cannot
 // create a team any more than it can delegate further, and a session
 // created AS a team member is always already at that bound (spawnMember

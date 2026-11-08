@@ -1,177 +1,74 @@
-// Package rest is the REST surface (README task 2.10): POST /v1/runs, GET
-// /v1/runs/{id}, GET /v1/runs/{id}/events. A thin translator only — it
-// launches a run through a runs.Launcher, and forwards
-// what comes back; it holds no agent control flow of its own (constitution
-// Principle I) and never imports the kernel package directly
-// (tests/contract/boundaries_test.go).
+// Package rest is the REST surface's shared kit: the HTTP server, bearer-token
+// authentication, CORS, and the seam each feature mounts its own routes through.
+// It holds no endpoint. The endpoints belong to the features they expose, each in
+// its own rest package beside the feature (internal/runs/rest, internal/oversight/
+// rest, internal/runctl/rest, internal/contentaccess/rest), the way each feature's
+// storage sits in its postgres package; cmd/nexusd decides which of them are
+// mounted.
 //
-// AuthN (README task 13.1): every route Handler() mounts requires a verified
-// bearer token — the calling principal comes only from Verifier.Verify's
-// claims, never a client-supplied header. See authn.go.
+// A handler is a thin translator only: it decodes the request, calls its
+// feature's use case, and encodes what comes back. It holds no agent control
+// flow of its own (constitution Principle I), and this package never imports the
+// kernel (tests/contract/boundaries_test.go).
+//
+// AuthN (README task 13.1): every route a Module mounts through Router.Handle
+// requires a verified bearer token — the calling principal comes only from
+// Verifier.Verify's claims, never a client-supplied header. See authn.go.
 package rest
 
 import (
-	"context"
+	"encoding/json"
 	"net/http"
 
 	"github.com/google/uuid"
-
-	"github.com/truongpx396/nexus-agent-demo/internal/contentaccess"
-	"github.com/truongpx396/nexus-agent-demo/internal/obs"
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
-	"github.com/truongpx396/nexus-agent-demo/internal/runs"
-	"github.com/truongpx396/nexus-agent-demo/internal/surfaces"
 )
 
-// Server holds everything one REST process needs to admit and serve runs
-// over the runs.Launcher it wraps.
-type Server struct {
-	// Launcher admits and starts a run (runs.Service in production): the one
-	// definition of session admission, key provisioning and run start that
-	// every surface shares. Mandatory: a nil Launcher fails handleCreateRun
-	// closed (500) rather than panic.
-	Launcher runs.Launcher
-	// Reader is the read side of runs (runs.Reader): run rows and their
-	// events, with payload decryption for the run's own audience. Mandatory,
-	// like Launcher.
-	Reader runs.Reader
+// Module is one feature's REST endpoints. Routes registers them on r, which wraps
+// each in authentication, so a feature cannot mount an unauthenticated route by
+// forgetting to.
+type Module interface {
+	Routes(r Router)
+}
 
+// Router is what a Module registers its routes on. The only way to add a route is
+// Handle, which authenticates it.
+type Router struct {
+	mux *http.ServeMux
+	srv *Server
+}
+
+// Handle registers h for pattern (a net/http ServeMux pattern such as
+// "GET /v1/approvals/{id}"), behind the bearer-token check.
+func (r Router) Handle(pattern string, h http.HandlerFunc) {
+	r.mux.Handle(pattern, r.srv.authed(h))
+}
+
+// Server serves the modules it was given over HTTP.
+type Server struct {
 	// Verifier resolves the bearer token on every request to the principal
-	// submitting it (README task 13.1) — mandatory, unlike every other Port
-	// on this struct: a nil Verifier fails every request closed (401/500),
-	// it never falls back to trusting a client-supplied header.
+	// submitting it (README task 13.1). It is mandatory: a nil Verifier fails
+	// every request closed (401/500), it never falls back to trusting a
+	// client-supplied header.
 	Verifier PrincipalVerifier
 
-	// Oversight, if set, backs the approval endpoints (README task 5.6-5.8)
-	// — nil leaves them unmounted, which every pre-Phase-5 caller and test
-	// gets.
-	Oversight OversightPort
-
-	// Grants, if set, backs the content-access-grant endpoints (README
-	// task 5.11). internal/obs has no reason to import kernel, so — unlike
-	// Oversight — this package imports it directly; no translation seam is
-	// needed (tests/contract/boundaries_test.go's transitive kernel-import
-	// check on internal/surfaces is what actually decides which
-	// dependencies need one, not this package's own convenience).
-	Grants *contentaccess.Grants
-
-	// RunCtl, if set, backs the cancel/steer/tighten-autonomy/fork endpoints
-	// (README task 6.9-6.11) — nil leaves them unmounted, which every
-	// pre-Phase-6 caller and test gets.
-	RunCtl RunCtlPort
-
-	// Skills, if set, resolves one tenant's admitted-skill-set digest at
-	// session-creation time (README task 7.6) — nil leaves
-	// harness.Config.SkillSetDigest at its pre-Phase-7 zero value, which
-	// every earlier caller and test still gets. Unlike CatalogManifestDigest
-	// (fixed once at process startup — the resident tool catalog is
-	// process-wide), a skill set is per-tenant, so this has to be resolved
-	// per request rather than baked into a Server field.
-	Skills SkillSetPort
-
-	// Outbox/OutboxSender, if both set, back durable at-least-once delivery
-	// (README task 7.14) of one event class — EventApprovalRequested — that
-	// genuinely needs it: a human must actually see this to act, unlike the
-	// broker's best-effort SSE fan-out to whichever clients happen to be
-	// connected right now. Nil leaves this unmounted, which every
-	// pre-Phase-7 caller and test still gets; a real Telegram/email sender
-	// is Phase 11's.
-	Outbox       *surfaces.Outbox
-	OutboxSender surfaces.Sender
-
-	// MCP, if set, resolves one tenant's admitted MCP tool set at
-	// session-creation time (README task 11.1) — nil leaves it unmounted,
-	// which every pre-Phase-11 caller and test still gets. Unlike
-	// CatalogManifestDigest (process-wide, fixed at startup), a tenant's
-	// MCP catalog is per-tenant and per-user (an oauth_connector-authed
-	// server authenticates as the calling user), so it's resolved fresh
-	// per run the same way Skills already is.
-	MCP MCPPort
-
-	// Exporter, if set, emits one content-free span per completed run
-	// (README task 13.12) — session.id/tenant.id/terminal_reason only, the
-	// same allowlist-filtered shape internal/obs's stdout Exporter and
-	// OTLPExporter both already enforce; nil leaves this unmounted, which
-	// every pre-Phase-13 caller and test still gets.
-	Exporter SpanEmitter
-
-	// Bus fans a durably-appended event or a live delta out to every
-	// nexusd process, not just this one (broker.go's own doc comment) — the
-	// companion this surface needs now that a run's turn loop may execute
-	// on a different process entirely (internal/queue's worker pool)
-	// than whichever process holds the client's own SSE connection. Nil is
-	// valid (every pre-this-change test, and any single-process dev run)
-	// and simply means every publish stays local to this process's own
-	// in-memory broker — exactly today's behavior.
-	Bus EventBus
-
-	broker *broker
+	modules []Module
 }
 
-// EventBus is the minimal publish surface broker.go/run_create.go need —
-// cmd/nexusd wires a *redis.Client-backed implementation (Redis Pub/Sub, a
-// single Publish call) and runs the matching subscriber loop
-// (startEventBus) that turns a remote publish back into a local
-// broker.publish/closeSession call, so run_events.go's own merge-by-seq SSE
-// logic needs zero changes regardless of which process actually produced
-// the event.
-type EventBus interface {
-	Publish(ctx context.Context, channel string, payload []byte) error
-}
-
-// MCPPort is the seam between this surface and internal/surfaces/mcp — the
-// same nil-valid-optional-interface idiom SkillSetPort/RunCtlPort/
-// OversightPort already use.
-type MCPPort interface {
-	Resolve(ctx context.Context, tenantID, userID uuid.UUID) (schemas []provider.ToolSchema, digest []byte, err error)
-}
-
-// SpanEmitter is the seam between this surface and internal/obs's two
-// Exporter implementations (stdout, OTLPExporter) — structurally identical
-// to obs.Exporter/obs.OTLPExporter's own Emit method, declared locally so
-// this package depends on the shape, not a concrete exporter type (this
-// package already imports internal/obs directly for Grants, so this is a
-// convenience seam, not a boundary-rule requirement).
-type SpanEmitter interface {
-	Emit(name string, attrs obs.Attrs) error
-}
-
-// SkillSetPort is the seam between this surface and internal/skills — the
-// same nil-valid-optional-interface idiom RunCtlPort/OversightPort already
-// use, so this package never imports internal/skills directly.
-type SkillSetPort interface {
-	Digest(ctx context.Context, tenantID uuid.UUID) ([]byte, error)
-}
-
-func NewServer(launcher runs.Launcher, reader runs.Reader) *Server {
-	return &Server{Launcher: launcher, Reader: reader, broker: newBroker()}
+// NewServer returns a Server that authenticates with verifier and serves the
+// routes of modules. A feature whose module is not passed has no routes, so its
+// paths answer 404, which is how a capability that is not wired shows as absent.
+func NewServer(verifier PrincipalVerifier, modules ...Module) *Server {
+	return &Server{Verifier: verifier, modules: modules}
 }
 
 // Handler returns the http.Handler cmd/nexusd mounts. Every route is
-// individually wrapped in authMiddleware (README task 13.1) — an
-// unregistered path still gets the mux's own native 404 without needing a
-// token first.
+// individually wrapped in authMiddleware (README task 13.1) — an unregistered
+// path still gets the mux's own native 404 without needing a token first.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.Handle("POST /v1/runs", s.authed(s.handleCreateRun))
-	mux.Handle("GET /v1/runs/{id}", s.authed(s.handleGetRun))
-	mux.Handle("GET /v1/runs/{id}/events", s.authed(s.handleEvents))
-	mux.Handle("GET /v1/sessions", s.authed(s.handleListSessions))
-	if s.Oversight != nil {
-		mux.Handle("GET /v1/approvals", s.authed(s.handleListApprovals))
-		mux.Handle("GET /v1/approvals/{id}", s.authed(s.handleGetApproval))
-		mux.Handle("POST /v1/approvals/{id}/grant", s.authed(s.handleGrantApproval))
-		mux.Handle("POST /v1/approvals/{id}/deny", s.authed(s.handleDenyApproval))
-	}
-	if s.Grants != nil {
-		mux.Handle("POST /v1/sessions/{id}/content-access-grants", s.authed(s.handleRequestContentAccessGrant))
-		mux.Handle("GET /v1/sessions/{id}/content-access-grants/read", s.authed(s.handleReadUnderGrant))
-	}
-	if s.RunCtl != nil {
-		mux.Handle("POST /v1/runs/{id}/cancel", s.authed(s.handleCancelRun))
-		mux.Handle("POST /v1/runs/{id}/steer", s.authed(s.handleSteerRun))
-		mux.Handle("POST /v1/runs/{id}/autonomy", s.authed(s.handleTightenAutonomy))
-		mux.Handle("POST /v1/runs/{id}/fork", s.authed(s.handleForkRun))
+	r := Router{mux: mux, srv: s}
+	for _, m := range s.modules {
+		m.Routes(r)
 	}
 	return withCORS(mux)
 }
@@ -209,16 +106,23 @@ func withCORS(next http.Handler) http.Handler {
 	})
 }
 
-// principal reads the calling identity authMiddleware already verified and
+// Principal reads the calling identity authMiddleware already verified and
 // stored on the request context. It writes the response itself on failure,
-// mirroring the shape http.Error already uses, so call sites just check ok
-// — in practice this only fails if authMiddleware somehow didn't run, since
-// every route Handler() mounts is wrapped by it.
-func (s *Server) principal(w http.ResponseWriter, r *http.Request) (tenantID, userID uuid.UUID, ok bool) {
+// mirroring the shape http.Error already uses, so call sites just check ok —
+// in practice this only fails if authMiddleware somehow didn't run, since every
+// route a Module mounts is wrapped by it.
+func Principal(w http.ResponseWriter, r *http.Request) (tenantID, userID uuid.UUID, ok bool) {
 	tenantID, userID, ok = principalFromContext(r.Context())
 	if !ok {
 		http.Error(w, "no verified principal on request context", http.StatusUnauthorized)
 		return uuid.Nil, uuid.Nil, false
 	}
 	return tenantID, userID, true
+}
+
+// WriteJSON writes v as a JSON response with the given status.
+func WriteJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("content-type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
 }
