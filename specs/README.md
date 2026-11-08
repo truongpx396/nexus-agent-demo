@@ -14,7 +14,7 @@ Each directory is one feature (or, like 001 and 002, a set of related stories), 
 | [002](002-post-baseline-increments/spec.md) | Post-baseline increments: webhook idempotency, hexagonal architecture, a provable topology seam | Implemented (retroactive) | 18, 19, 20 |
 | [003](003-trust-surface-conformance/spec.md) | Trust-surface conformance: webhook replay and per-sender limits, the telemetry content channel, audit anchoring and alerting, digest pinning, egress masking | Draft (proposed); open decisions marked | none (new work) |
 | [004](004-delivery-and-quality-gates/spec.md) | Delivery and quality gates: backup and restore, SLOs, SBOM and signing, release-gate metrics, a routing capability floor | Draft (proposed); open decisions marked | none (new work) |
-| [005](005-modular-monolith-boundaries/spec.md) | Modular-monolith boundaries: infrastructure out of the core, each table owned by its feature, a composition root that only wires, every driving adapter beside its feature, and the rules that enforce it | Implemented; two follow-ups open ([tasks](005-modular-monolith-boundaries/tasks.md#open-follow-ups)) | none (new work) |
+| [005](005-modular-monolith-boundaries/spec.md) | Modular-monolith boundaries: infrastructure out of the core, each table owned by its feature, a composition root that only wires, every driving adapter beside its feature, a session aggregate no feature stamps or references, and the rules that enforce it | Implemented; one follow-up open ([tasks](005-modular-monolith-boundaries/tasks.md#open-follow-ups)) | none (new work) |
 
 Also in [001](001-agent-platform/): [pattern-coverage.md](001-agent-platform/pattern-coverage.md), the original design's 67 patterns against this demo.
 
