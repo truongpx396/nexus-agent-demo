@@ -93,7 +93,7 @@ func newTaintTestPipeline(t *testing.T) *tools.Pipeline {
 	manifest := tools.BuildManifest(reg)
 	chain := permissions.NewChain(permissions.ChainConfig{
 		Profiles: permissions.ProfileSet{Profiles: []permissions.ToolProfile{permissions.NewToolProfile("default", 1, refs...)}},
-		// alwaysDeferModel (phase6_reliability_test.go, same package) — Gate
+		// alwaysDeferModel (reliability_test.go, same package) — Gate
 		// 3's safety classifier fails closed to Ask with no model leg
 		// configured; this test's own concern is Rule-of-Two, not Gate 3.
 		Safety: safety.NewClassifier(safety.DefaultRules(), alwaysDeferModel{}, 0),

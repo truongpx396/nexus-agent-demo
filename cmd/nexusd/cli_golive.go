@@ -14,6 +14,8 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/evals"
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
 	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
+	"github.com/truongpx396/nexus-agent-demo/internal/cost"
+	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/reporting"
 	reportingpg "github.com/truongpx396/nexus-agent-demo/internal/reporting/postgres"
@@ -86,11 +88,13 @@ func runGoLive(ctx context.Context, args []string) error {
 
 	// Item 5: per-task/per-tenant cost ceilings.
 	for _, tenantID := range tenantIDs {
-		var tenantBudgets int
+		var hasBudget bool
 		err := st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-			return tx.QueryRow(ctx, `SELECT count(*) FROM budgets WHERE scope = 'tenant'`).Scan(&tenantBudgets)
+			var gerr error
+			_, hasBudget, gerr = costpg.GetBudget(ctx, tx, cost.BudgetScopeTenant, nil)
+			return gerr
 		})
-		check(err == nil && tenantBudgets > 0, "item 5 (cost ceilings): tenant %s has a tenant-scoped budget configured", tenantID)
+		check(err == nil && hasBudget, "item 5 (cost ceilings): tenant %s has a tenant-scoped budget configured", tenantID)
 	}
 
 	// Items 6 and 8, from the golden-signal dashboard.

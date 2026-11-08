@@ -25,7 +25,9 @@ const (
 
 // EventType is the taxonomy an append-only log replays through. It must stay
 // complete enough to reconstruct any run — including who authorized what, on
-// what basis, and when — from the log alone (README.md §5, task 1.5).
+// what basis, and when — from the log alone (README.md §5, task 1.5). The list
+// below is closed on purpose; taxonomy.go says who owns each type and why it is
+// not an open registry.
 type EventType string
 
 const (

@@ -1,4 +1,6 @@
-// Package postgres is the Postgres adapter for tenancy.Directory.
+// Package postgres is the Postgres adapter for the tenants table: the
+// operator's directory of tenants (Directory) and the registration of a new one
+// (Register).
 package postgres
 
 import (
@@ -25,7 +27,10 @@ type Directory struct {
 	DSN string
 }
 
-var _ tenancy.Directory = Directory{}
+var (
+	_ tenancy.Directory      = Directory{}
+	_ tenancy.SessionLocator = Directory{}
+)
 
 func (d Directory) ListTenantIDs(ctx context.Context) ([]uuid.UUID, error) {
 	pool, err := pgxpool.New(ctx, d.DSN)
@@ -48,4 +53,20 @@ func (d Directory) ListTenantIDs(ctx context.Context) ([]uuid.UUID, error) {
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+// TenantOfSession implements tenancy.SessionLocator. It reads sessions as the
+// administrative role, since no tenant scope exists yet to read it under.
+func (d Directory) TenantOfSession(ctx context.Context, sessionID uuid.UUID) (uuid.UUID, error) {
+	pool, err := pgxpool.New(ctx, d.DSN)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("tenancy: connect as admin: %w", err)
+	}
+	defer pool.Close()
+
+	var tenantID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT tenant_id FROM sessions WHERE session_id = $1`, sessionID).Scan(&tenantID); err != nil {
+		return uuid.Nil, fmt.Errorf("tenancy: resolve tenant for session %s: %w", sessionID, err)
+	}
+	return tenantID, nil
 }

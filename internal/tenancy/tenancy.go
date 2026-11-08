@@ -21,6 +21,15 @@ type Directory interface {
 	ListTenantIDs(ctx context.Context) ([]uuid.UUID, error)
 }
 
+// SessionLocator answers the other question only the operator can ask: which
+// tenant owns this session. A session id alone does not say, and every
+// tenant-scoped store needs the tenant before it can read the session, so the
+// operator commands that start from a bare id (erase --session) resolve it here.
+// Like Directory, an implementation must act as the platform operator.
+type SessionLocator interface {
+	TenantOfSession(ctx context.Context, sessionID uuid.UUID) (uuid.UUID, error)
+}
+
 // ForEach runs fn once per tenant in dir, in listing order. It is the shape
 // every periodic cross-tenant pass shares: a failure to list the tenants is
 // logged and ends the pass, and a failure for one tenant is logged and does not

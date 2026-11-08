@@ -17,6 +17,7 @@ import (
 
 	"github.com/truongpx396/nexus-agent-demo/internal/config"
 	"github.com/truongpx396/nexus-agent-demo/internal/connectors"
+	connoauth "github.com/truongpx396/nexus-agent-demo/internal/connectors/oauth2"
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 )
 
@@ -116,7 +117,7 @@ func newVault(t *testing.T, admitted []string, tokenURL string) (*connectors.Vau
 	states, conns := newFakeStates(), newFakeConnections(t)
 	return &connectors.Vault{
 		Config: fakeConfig{admitted: admitted}, Connections: conns, States: states,
-		Providers: connectors.NewRegistry(connectors.Provider{
+		Providers: connoauth.NewRegistry(connoauth.Provider{
 			Name: "acme", ClientID: "client-1", ClientSecret: "secret-1", //nolint:gosec // fixture, no credential
 			Endpoint: oauth2.Endpoint{AuthURL: "https://acme.example/authorize", TokenURL: tokenURL},
 		}),

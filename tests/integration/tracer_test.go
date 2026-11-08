@@ -31,8 +31,9 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
 	runspg "github.com/truongpx396/nexus-agent-demo/internal/runs/postgres"
+	runsrest "github.com/truongpx396/nexus-agent-demo/internal/runs/rest"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
-	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
+	restkit "github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
 
@@ -184,8 +185,7 @@ func TestKernelTracerProducesRootGenerationToolTree(t *testing.T) {
 	verifier := authn.NewDevVerifier(authn.PublicKey(signingKey))
 	token := mustIssueToken(t, issuer, tenantID, userID)
 
-	srv := rest.NewServer(newTestLauncher(st, keyStore, starter), runspg.Reader{Store: st, KeyStore: keyStore})
-	srv.Verifier = verifier
+	srv := restkit.NewServer(verifier, runsrest.NewHandler(newTestLauncher(st, keyStore, starter), runspg.Reader{Store: st, KeyStore: keyStore}))
 	httpSrv := httptest.NewServer(srv.Handler())
 	defer httpSrv.Close()
 
@@ -353,8 +353,7 @@ func TestKernelTracerContentOptIn(t *testing.T) {
 	verifier := authn.NewDevVerifier(authn.PublicKey(signingKey))
 	token := mustIssueToken(t, issuer, tenantID, userID)
 
-	srv := rest.NewServer(newTestLauncher(st, keyStore, starter), runspg.Reader{Store: st, KeyStore: keyStore})
-	srv.Verifier = verifier
+	srv := restkit.NewServer(verifier, runsrest.NewHandler(newTestLauncher(st, keyStore, starter), runspg.Reader{Store: st, KeyStore: keyStore}))
 	httpSrv := httptest.NewServer(srv.Handler())
 	defer httpSrv.Close()
 

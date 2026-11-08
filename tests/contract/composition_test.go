@@ -17,19 +17,19 @@ var sqlStatement = regexp.MustCompile(`(?is)\b(select\b.+?\bfrom\s+\w+|insert\s+
 // stringLiteral matches a Go raw or interpreted string literal.
 var stringLiteral = regexp.MustCompile("(?s)`[^`]*`|\"(?:[^\"\\\\\\n]|\\\\.)*\"")
 
-// TestComposition_ServingPathContainsNoSQL pins the rule that cmd/nexusd is the
+// TestComposition_MainContainsNoSQL pins the rule that cmd/nexusd is the
 // composition root: it wires adapters to ports and decides when a scheduled pass
-// runs, and it does not hold SQL. A query in main is a use case or an adapter
-// that has no package of its own, which is how a table ends up owned by nobody
-// (it is also how the checkpoint writer, the idle sweep, the orphan finder and
-// the messaging-channel adapter once lived in package main).
+// runs, and it holds no SQL. A query in main is a use case or an adapter that
+// has no package of its own, which is how a table ends up owned by nobody (it is
+// also how the checkpoint writer, the idle sweep, the orphan finder, the
+// messaging-channel adapter and the tenants insert once lived in package main).
 //
-// The exemption is the operator commands, cli_*.go: migrate, seed, erase,
-// ingest, go-live and dashboard are run once by a human with administrative
-// credentials against a database that is not yet (or no longer) serving, so
-// they bootstrap and inspect the schema directly. That is a deliberate
-// carve-out, named here, and it is a file-name convention a reviewer can see.
-func TestComposition_ServingPathContainsNoSQL(t *testing.T) {
+// There is no exemption. The operator commands (cli_*.go: seed, erase, go-live)
+// used to be one, on the grounds that a human runs them once with administrative
+// credentials; each of the four statements they held belonged to a feature, and
+// is now that feature's port (tenancy.Register, tenancy.SessionLocator,
+// costpg.GetBudget), so a command is as thin as the server.
+func TestComposition_MainContainsNoSQL(t *testing.T) {
 	root := moduleRoot(t)
 	dir := filepath.Join(root, "cmd", "nexusd")
 	entries, err := os.ReadDir(dir)
@@ -41,7 +41,7 @@ func TestComposition_ServingPathContainsNoSQL(t *testing.T) {
 	checked := 0
 	for _, e := range entries {
 		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") || strings.HasPrefix(name, "cli_") {
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
 			continue
 		}
 		b, err := os.ReadFile(filepath.Join(dir, name)) //nolint:gosec // path built from this repo's own cmd/nexusd listing
@@ -56,11 +56,11 @@ func TestComposition_ServingPathContainsNoSQL(t *testing.T) {
 		}
 	}
 	if checked == 0 {
-		t.Fatal("no serving-path files found under cmd/nexusd; the rule would pass vacuously")
+		t.Fatal("no source files found under cmd/nexusd; the rule would pass vacuously")
 	}
 	sort.Strings(offenders)
 	for _, o := range offenders {
-		t.Errorf("cmd/nexusd/%s holds SQL; move it behind a port into the package that owns the table (cmd/nexusd/cli_*.go operator commands are the only exemption)", o)
+		t.Errorf("cmd/nexusd/%s holds SQL; move it behind a port into the package that owns the table", o)
 	}
 }
 

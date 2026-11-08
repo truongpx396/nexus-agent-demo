@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -213,32 +212,6 @@ func ListSessionsForUser(ctx context.Context, tx pgx.Tx, userID uuid.UUID, limit
 		return nil, fmt.Errorf("list sessions for user %s: %w", userID, err)
 	}
 	return out, nil
-}
-
-// ListStaleAwaitingInputSessionIDs returns every session_id in
-// SessionStatusAwaitingInput whose updated_at is older than olderThan --
-// the idle-conversation sweep's own query (cmd/nexusd/background.go,
-// mirroring internal/teams's own listStaleActiveTeamIDs wall-clock-backstop
-// shape exactly). RLS-scoped like every read in this package: called once
-// per tenant, inside that tenant's own InTenantTx.
-func ListStaleAwaitingInputSessionIDs(ctx context.Context, tx pgx.Tx, olderThan time.Time) ([]uuid.UUID, error) {
-	rows, err := tx.Query(ctx,
-		`SELECT session_id FROM sessions WHERE status = $1 AND updated_at < $2`,
-		eventlog.SessionStatusAwaitingInput, olderThan,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("list stale awaiting-input sessions: %w", err)
-	}
-	defer rows.Close()
-	var out []uuid.UUID
-	for rows.Next() {
-		var id uuid.UUID
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("scan stale awaiting-input session id: %w", err)
-		}
-		out = append(out, id)
-	}
-	return out, rows.Err()
 }
 
 // ListEvents returns every event for sessionID in seq order — the full

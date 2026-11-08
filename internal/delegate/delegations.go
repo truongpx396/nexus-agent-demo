@@ -45,6 +45,18 @@ func (d *Delegations) CountForRoot(ctx context.Context, tenantID, rootSessionID 
 	return open, total, err
 }
 
+// BindToolUse binds the pending delegation of childSessionID to the tool_use
+// event that gates it. The run calls it right after appending
+// delegation_requested (README task 8.10), so a delegation is never left
+// unbound to the tool_use it gates for longer than one transaction, and the
+// child's resolution always finds the parent call to resume. The event log's
+// suspension hook is how the kernel reaches it; this is the use case behind it.
+func (d *Delegations) BindToolUse(ctx context.Context, tenantID, childSessionID, toolUseEventID uuid.UUID) error {
+	return d.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
+		return tx.BindToolUse(ctx, childSessionID, toolUseEventID)
+	})
+}
+
 // Get loads one delegation by id.
 func (d *Delegations) Get(ctx context.Context, tenantID, delegationID uuid.UUID) (Delegation, error) {
 	var out Delegation

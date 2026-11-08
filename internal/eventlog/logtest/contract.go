@@ -6,6 +6,7 @@ package logtest
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -65,6 +66,21 @@ func Run(t *testing.T, s Subject) {
 			if got.CreatedAt.IsZero() {
 				t.Fatalf("Append #%d returned a zero CreatedAt", i+1)
 			}
+		}
+	})
+
+	t.Run("Append refuses an event type outside the taxonomy and consumes no sequence number", func(t *testing.T) {
+		tenantID, sessionID := s.NewSession(t)
+		var unknown eventlog.ErrUnknownType
+		if _, err := s.Log.Append(ctx, event(tenantID, sessionID, "not_a_real_event", "p")); !errors.As(err, &unknown) || unknown.Type != "not_a_real_event" {
+			t.Fatalf("Append of an unknown type = %v, want ErrUnknownType naming it", err)
+		}
+		got, err := s.Log.Append(ctx, event(tenantID, sessionID, eventlog.EventUserMessage, "p"))
+		if err != nil {
+			t.Fatalf("Append after the refusal: %v", err)
+		}
+		if got.Seq != 1 {
+			t.Fatalf("Seq = %d after a refused append, want 1", got.Seq)
 		}
 	})
 

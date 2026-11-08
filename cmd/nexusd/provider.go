@@ -16,7 +16,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/anthropic"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/litellm"
-	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
+	runsrest "github.com/truongpx396/nexus-agent-demo/internal/runs/rest"
 )
 
 // newProvider picks the fake (default, no credentials needed — the demo
@@ -111,13 +111,13 @@ func (r repeatingFakeProvider) Stream(ctx context.Context, p provider.Prompt, to
 	return fake.New(r.script).Stream(ctx, p, tools, rc)
 }
 
-// spanExporter is what newSpanExporter returns: rest.Server.Exporter's own
+// spanExporter is what newSpanExporter returns: runsrest.Handler.Exporter's own
 // point-event Emit, plus obs.Tracer's real start/end spans that
 // kernel.Kernel.Tracer uses (docs/local-llm.md) — obs.Exporter and
 // otlp.OTLPExporter both satisfy this already, this interface just names the
 // combination once instead of at each of the two call sites that need it.
 type spanExporter interface {
-	rest.SpanEmitter
+	runsrest.SpanEmitter
 	obs.Tracer
 }
 

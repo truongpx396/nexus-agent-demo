@@ -11,8 +11,8 @@ import (
 // PrincipalVerifier is the seam between this surface and internal/authn —
 // declared locally (structurally identical to authn.Verifier) so this
 // package never imports internal/authn directly, the same
-// never-import-the-concrete-implementation-package idiom OversightPort/
-// RunCtlPort/SkillSetPort/MCPPort already use one file over. Swapping the
+// never-import-the-concrete-implementation-package idiom the feature
+// handlers' own ports (SkillSetPort, MCPPort, ...) use. Swapping the
 // dev Ed25519 issuer for a real OIDC provider (Casdoor, Keycloak, ...) later
 // is purely a cmd/nexusd wiring change: any type with this one method
 // satisfies this interface without rest ever knowing what backs it.
@@ -23,15 +23,15 @@ type PrincipalVerifier interface {
 type principalContextKey struct{}
 
 // resolvedPrincipal is what authMiddleware stores in the request context —
-// the ONLY place a tenantID/userID pair enters this package's request
-// handling from here on (README task 13.1 deletes the header-reading path
-// principal()/resolvePrincipal() used to implement).
+// the ONLY place a tenantID/userID pair enters request handling from here on
+// (README task 13.1 deleted the header-reading path Principal/ResolvePrincipal
+// used to implement).
 type resolvedPrincipal struct {
 	tenantID, userID uuid.UUID
 }
 
 // authed wraps one handler with authMiddleware — the per-route registration
-// helper Handler() uses for every route it mounts, so an UNREGISTERED route
+// helper Router.Handle uses for every route a Module mounts, so an UNREGISTERED route
 // still gets the mux's own native 404 without needing a valid token first
 // (wrapping the whole mux instead would turn every 404 into a 401, which is
 // also what breaks the "404 means unmounted" conformance-test technique
@@ -67,9 +67,8 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 }
 
 // principalFromContext reads back what authMiddleware stored — the single
-// implementation behind both principal() (server.go) and resolvePrincipal()
-// (capability.go), kept as two call-site names only to avoid an unrelated
-// rename churn across every existing handler.
+// implementation behind both Principal (server.go) and ResolvePrincipal
+// (capability.go).
 func principalFromContext(ctx context.Context) (tenantID, userID uuid.UUID, ok bool) {
 	p, ok := ctx.Value(principalContextKey{}).(resolvedPrincipal)
 	if !ok {

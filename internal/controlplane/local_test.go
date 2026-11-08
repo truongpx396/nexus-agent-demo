@@ -15,7 +15,7 @@ import (
 // F15) — LocalPort itself touches no database, so its own orchestration
 // logic (the AdmitRun autonomy check, and otherwise pure delegation) is
 // fully testable without Postgres; the two REST integration tests
-// (tests/integration/rest_run_test.go, phase7_harness_growth_test.go)
+// (tests/integration/rest_run_test.go, harness_growth_test.go)
 // already prove AdmitRun end to end against a real one.
 type fakeSessionStore struct {
 	called bool

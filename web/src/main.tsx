@@ -2,9 +2,9 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import './index.css'
-import App from './App.tsx'
-import { SettingsProvider } from './lib/settings.tsx'
-import { ThemeProvider } from './lib/theme.tsx'
+import App from './App.tsx';
+import { SettingsProvider } from './shared/settings/settings.tsx';
+import { ThemeProvider } from './shared/theme/theme.tsx';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
