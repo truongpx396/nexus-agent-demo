@@ -49,6 +49,7 @@ var tableOwners = map[string]string{
 	"price_book":            "internal/cost",
 	"retrieval_chunks":      "internal/retrieval",
 	"sandboxes":             "internal/sandbox",
+	"session_lineage":       "internal/delegate",
 	"sessions":              "internal/eventlog",
 	"snapshots":             "internal/eventlog",
 	"team_envelopes":        "internal/teams",

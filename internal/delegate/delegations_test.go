@@ -171,8 +171,9 @@ func TestOnChildTerminal_AFanoutChildWithNoResolverIsAnError(t *testing.T) {
 func TestParentContextAndCountForRoot(t *testing.T) {
 	f := newFakeStore(t)
 	root := uuid.New()
-	parent := eventlog.Session{SessionID: uuid.New(), Depth: 1, RootSessionID: root}
+	parent := eventlog.Session{SessionID: uuid.New()}
 	f.sessions[parent.SessionID] = parent
+	f.lineage[parent.SessionID] = delegate.Lineage{Root: root, Depth: 1}
 	pending := delegate.Delegation{ParentSessionID: parent.SessionID, Status: delegate.StatusPending}
 	returned := delegate.Delegation{ParentSessionID: parent.SessionID, Status: delegate.StatusReturned}
 	f.delegations[uuid.New()], f.delegations[uuid.New()] = pending, returned
@@ -185,6 +186,27 @@ func TestParentContextAndCountForRoot(t *testing.T) {
 	open, total, err := d.CountForRoot(context.Background(), tenant, root)
 	if err != nil || open != 1 || total != 2 {
 		t.Errorf("CountForRoot = open %d total %d, %v, want 1 open of 2: the concurrent and per-run bounds count different things", open, total, err)
+	}
+}
+
+// A thread's own top-level session has no lineage record: it is its own root at
+// depth 0, and its direct delegations still count against it.
+func TestParentContextAndCountForRoot_ARootSessionIsItsOwnRoot(t *testing.T) {
+	f := newFakeStore(t)
+	root := eventlog.Session{SessionID: uuid.New()}
+	f.sessions[root.SessionID] = root
+	f.delegations[uuid.New()] = delegate.Delegation{ParentSessionID: root.SessionID, Status: delegate.StatusPending}
+	d := delegate.NewDelegations(f)
+
+	depth, gotRoot, err := d.ParentContext(context.Background(), tenant, root.SessionID)
+	if err != nil || depth != 0 || gotRoot != root.SessionID {
+		t.Errorf("ParentContext = %d, %s, %v, want depth 0 under itself", depth, gotRoot, err)
+	}
+	if open, total, err := d.CountForRoot(context.Background(), tenant, root.SessionID); err != nil || open != 1 || total != 1 {
+		t.Errorf("CountForRoot = open %d total %d, %v, want its own delegation counted", open, total, err)
+	}
+	if _, _, err := d.ParentContext(context.Background(), tenant, uuid.New()); err == nil {
+		t.Error("ParentContext answered for a session that does not exist: it must fail closed, not report a root at depth 0")
 	}
 }
 

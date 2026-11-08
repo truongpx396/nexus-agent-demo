@@ -364,12 +364,15 @@ func mustMarshal(t *testing.T, v any) json.RawMessage {
 func mustCreateChildSession(t *testing.T, r *oversightRig, childID, parentID uuid.UUID, depth int) {
 	t.Helper()
 	err := r.st.InTenantTx(context.Background(), r.tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		return store.CreateSession(ctx, tx, eventlog.Session{
+		if err := store.CreateSession(ctx, tx, eventlog.Session{
 			SessionID: childID, SessionKey: childID.String(), TenantID: r.tenantID,
 			SurfaceID: "test", UserID: uuid.New(), AgentID: uuid.Nil, AgentVersion: 1,
 			HarnessDigest: []byte("test"), DataLabel: "internal", RouteModelID: "fake",
-			AutonomyLevel: "autonomous", RootSessionID: parentID, Depth: depth, DelegationRole: "delegate",
-		})
+			AutonomyLevel: "autonomous", ParentSessionID: &parentID,
+		}); err != nil {
+			return err
+		}
+		return delegatepg.RecordLineage(ctx, tx, r.tenantID, childID, parentID, depth)
 	})
 	if err != nil {
 		t.Fatalf("create child session: %v", err)

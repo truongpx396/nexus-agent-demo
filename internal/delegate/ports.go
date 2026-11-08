@@ -48,6 +48,13 @@ type Tx interface {
 	// pending (the concurrent bound) and all of them (the per-run bound).
 	CountForRoot(ctx context.Context, rootSessionID uuid.UUID) (open, total int, err error)
 
+	// LineageOf is where sessionID sits in the spawn tree. A session nobody
+	// spawned is its own root at depth 0 and has no record.
+	LineageOf(ctx context.Context, sessionID uuid.UUID) (Lineage, error)
+
+	// RecordLineage places a freshly spawned session in the tree.
+	RecordLineage(ctx context.Context, tenantID, sessionID uuid.UUID, l Lineage) error
+
 	// SetDelegationResult resolves a delegation to status with its result and
 	// reason.
 	SetDelegationResult(ctx context.Context, delegationID uuid.UUID, status Status, result json.RawMessage, reason string) error

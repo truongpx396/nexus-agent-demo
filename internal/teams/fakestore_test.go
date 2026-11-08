@@ -24,6 +24,7 @@ type fakeStore struct {
 
 	sessions  map[uuid.UUID]eventlog.Session
 	members   map[uuid.UUID]uuid.UUID // member session -> its team: the roster, which is teams' own table
+	depths    map[uuid.UUID]int       // spawn-tree depth by session (internal/delegate's table); absent means a root at depth 0
 	teams     map[uuid.UUID]teams.Team
 	cards     map[uuid.UUID]teams.Card
 	envelopes map[uuid.UUID]*envelope
@@ -45,7 +46,7 @@ type appended struct {
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		sessions: map[uuid.UUID]eventlog.Session{}, members: map[uuid.UUID]uuid.UUID{}, teams: map[uuid.UUID]teams.Team{},
+		sessions: map[uuid.UUID]eventlog.Session{}, members: map[uuid.UUID]uuid.UUID{}, depths: map[uuid.UUID]int{}, teams: map[uuid.UUID]teams.Team{},
 		cards: map[uuid.UUID]teams.Card{}, envelopes: map[uuid.UUID]*envelope{},
 	}
 }
@@ -192,6 +193,13 @@ func (t *fakeTx) ListActiveMemberSessionIDs(_ context.Context, teamID uuid.UUID)
 		}
 	}
 	return out, nil
+}
+func (t *fakeTx) LineageOf(_ context.Context, id uuid.UUID) (uuid.UUID, int, error) {
+	return id, t.f.depths[id], nil
+}
+func (t *fakeTx) RecordLineage(_ context.Context, _, id, _ uuid.UUID, depth int) error {
+	t.f.depths[id] = depth
+	return nil
 }
 func (t *fakeTx) AddMember(_ context.Context, _, teamID, sessionID uuid.UUID) error {
 	t.f.members[sessionID] = teamID

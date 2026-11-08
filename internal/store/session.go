@@ -23,14 +23,6 @@ func CreateSession(ctx context.Context, tx pgx.Tx, s eventlog.Session) error {
 	if err != nil {
 		return fmt.Errorf("marshal fork_overrides: %w", err)
 	}
-	root := s.RootSessionID
-	if root == uuid.Nil {
-		root = s.SessionID // a fresh, non-delegated run is its own root (README §4 schema comment)
-	}
-	delegationRole := s.DelegationRole
-	if delegationRole == "" {
-		delegationRole = "root"
-	}
 	autonomy := s.AutonomyLevel
 	if autonomy == "" {
 		autonomy = "supervised"
@@ -41,14 +33,14 @@ func CreateSession(ctx context.Context, tx pgx.Tx, s eventlog.Session) error {
 			session_id, session_key, tenant_id, surface_id, user_id,
 			agent_id, agent_version, harness_digest,
 			data_label, route_model_id, route_reason,
-			autonomy_level, root_session_id, depth, delegation_role,
+			autonomy_level, parent_session_id,
 			forked_from_session_id, fork_seq, fork_overrides,
 			plan_id, plan_version, conversational
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
 		s.SessionID, s.SessionKey, s.TenantID, s.SurfaceID, s.UserID,
 		s.AgentID, s.AgentVersion, s.HarnessDigest,
 		s.DataLabel, s.RouteModelID, reason,
-		autonomy, root, s.Depth, delegationRole,
+		autonomy, s.ParentSessionID,
 		s.ForkedFromSessionID, s.ForkSeq, overrides,
 		s.PlanID, s.PlanVersion, s.Conversational,
 	)
@@ -69,7 +61,7 @@ var ErrSessionNotFound = errors.New("session not found")
 const sessionColumns = `session_id, session_key, tenant_id, surface_id, user_id,
 	agent_id, agent_version, harness_digest,
 	data_label, route_model_id, route_reason,
-	autonomy_level, root_session_id, depth, delegation_role,
+	autonomy_level, parent_session_id,
 	status, terminal_reason,
 	forked_from_session_id, fork_seq, fork_overrides,
 	plan_id, plan_version, created_at, conversational, updated_at`
@@ -82,7 +74,7 @@ func scanSession(row interface{ Scan(dest ...any) error }) (eventlog.Session, er
 		&s.SessionID, &s.SessionKey, &s.TenantID, &s.SurfaceID, &s.UserID,
 		&s.AgentID, &s.AgentVersion, &s.HarnessDigest,
 		&s.DataLabel, &s.RouteModelID, &reason,
-		&s.AutonomyLevel, &s.RootSessionID, &s.Depth, &s.DelegationRole,
+		&s.AutonomyLevel, &s.ParentSessionID,
 		&s.Status, &s.TerminalReason,
 		&s.ForkedFromSessionID, &s.ForkSeq, &overrides,
 		&s.PlanID, &s.PlanVersion, &s.CreatedAt, &s.Conversational, &s.UpdatedAt,
@@ -138,16 +130,15 @@ func GetSessionByKey(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, session
 	return s, true, nil
 }
 
-// ListSessionsForUser returns userID's own root sessions (delegation_role =
-// 'root' -- a delegated/team-member session isn't its own top-level thread;
-// it's reached through its parent's own event log via child_session_id),
-// newest first. RLS-scoped like every read in this package. Used by the web
+// ListSessionsForUser returns userID's own top-level sessions (no parent -- a
+// delegated or team-member session isn't its own thread; it's reached through
+// its parent's own event log via child_session_id), newest first. RLS-scoped like every read in this package. Used by the web
 // UI's session sidebar (internal/surfaces/rest's GET /v1/sessions) -- there
 // is otherwise no "list runs" capability, only GetSession's lookup-by-id.
 func ListSessionsForUser(ctx context.Context, tx pgx.Tx, userID uuid.UUID, limit int) ([]eventlog.Session, error) {
 	rows, err := tx.Query(ctx, `SELECT `+sessionColumns+`
 		FROM sessions
-		WHERE user_id = $1 AND delegation_role = 'root'
+		WHERE user_id = $1 AND parent_session_id IS NULL
 		ORDER BY created_at DESC
 		LIMIT $2`, userID, limit)
 	if err != nil {

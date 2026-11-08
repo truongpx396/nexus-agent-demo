@@ -14,6 +14,7 @@ package integration
 
 import (
 	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
+	delegatepg "github.com/truongpx396/nexus-agent-demo/internal/delegate/postgres"
 	runctlpg "github.com/truongpx396/nexus-agent-demo/internal/runctl/postgres"
 	teamspg "github.com/truongpx396/nexus-agent-demo/internal/teams/postgres"
 
@@ -53,7 +54,7 @@ func buildTeamsRig(t *testing.T, r *oversightRig, prov provider.Provider) (*team
 	approvals := oversight.NewApprovals(oversightpg.New(r.st, r.keys, r.chain))
 	ctl := &runctl.Control{Store: runctlpg.New(r.st, r.keys, r.chain), Approvals: approvals, Kernel: k, System: "test", MaxTurns: 10}
 
-	svc := teams.NewService(teamspg.New(r.st, r.keys, r.chain))
+	svc := teams.NewService(teamspg.New(r.st, r.keys, r.chain, teamspg.Lineage{Of: delegatepg.LineageOf, Record: delegatepg.RecordLineage}))
 	svc.Wire(teams.Config{Prices: costpg.New(r.st), Kernel: k, Canceler: ctl, System: "test", MaxTurns: 10})
 	return svc, k
 }
@@ -322,7 +323,7 @@ func TestCreateTeam_SpawnsMembersAndCompletesWhenBoardEmptyAndMembersTerminal(t 
 
 	var memberCount int
 	if err := r.st.InTenantTx(context.Background(), r.tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `SELECT count(*) FROM team_members m JOIN sessions s ON s.session_id = m.session_id WHERE m.team_id = $1 AND s.delegation_role = 'team_member'`, teamID).Scan(&memberCount)
+		return tx.QueryRow(ctx, `SELECT count(*) FROM team_members m JOIN sessions s ON s.session_id = m.session_id WHERE m.team_id = $1 AND s.parent_session_id IS NOT NULL`, teamID).Scan(&memberCount)
 	}); err != nil {
 		t.Fatalf("count members: %v", err)
 	}
@@ -366,12 +367,15 @@ func TestCreateTeam_DeniesNestedTeamCreation(t *testing.T) {
 	// A session already at teams.MaxDepth (1) — the same depth a team
 	// member itself would be created at.
 	if err := r.st.InTenantTx(context.Background(), r.tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		return store.CreateSession(ctx, tx, eventlog.Session{
+		if err := store.CreateSession(ctx, tx, eventlog.Session{
 			SessionID: memberID, SessionKey: memberID.String(), TenantID: r.tenantID,
 			SurfaceID: "test", UserID: userID, AgentID: uuid.Nil, AgentVersion: 1,
 			HarnessDigest: []byte("test"), DataLabel: "internal", RouteModelID: "fake",
-			AutonomyLevel: "autonomous", RootSessionID: rootID, Depth: teams.MaxDepth, DelegationRole: "team_member",
-		})
+			AutonomyLevel: "autonomous", ParentSessionID: &rootID,
+		}); err != nil {
+			return err
+		}
+		return delegatepg.RecordLineage(ctx, tx, r.tenantID, memberID, rootID, teams.MaxDepth)
 	}); err != nil {
 		t.Fatalf("create depth-bound session: %v", err)
 	}

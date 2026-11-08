@@ -40,6 +40,14 @@ type Tx interface {
 	// do. It returns the coordinator session the team_ended event belongs to.
 	EndTeamIfActive(ctx context.Context, teamID uuid.UUID, status Status, reason string) (coordinatorSessionID uuid.UUID, ok bool, err error)
 
+	// LineageOf is where sessionID sits in the spawn tree: the root session it
+	// descends from and how many spawns deep it is (a session nobody spawned is
+	// its own root at depth 0). RecordLineage places a member the team just
+	// created. The tree is internal/delegate's, shared so that a team member is
+	// bounded the way a delegate is.
+	LineageOf(ctx context.Context, sessionID uuid.UUID) (root uuid.UUID, depth int, err error)
+	RecordLineage(ctx context.Context, tenantID, sessionID, root uuid.UUID, depth int) error
+
 	// AddMember records sessionID as a member of teamID. The roster is the
 	// team's own table, not a column on the session: a session does not know it
 	// is on a team, and this is the only place that is written.

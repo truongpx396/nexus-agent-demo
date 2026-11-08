@@ -8,9 +8,9 @@ import (
 )
 
 // Session is the subset of the sessions table (migration 0002) Phase 2
-// reads and writes. Columns this layer never touches (fork_*, plan_*,
-// delegation_role, priority, region, ...) keep their schema defaults —
-// they're seams for the phases that own them, not dead weight to model here.
+// reads and writes. Columns this layer never touches (audience_ref,
+// execution_class, priority, region, ...) keep their schema defaults —
+// they're seams for what owns them, not dead weight to model here.
 //
 // Status and TerminalReason are marked PROJECTION in the schema comment, but
 // Phase 2 writes them directly (UpdateSessionStatus, in the same transaction
@@ -35,11 +35,16 @@ type Session struct {
 	RouteModelID   string
 	RouteReason    map[string]string
 	AutonomyLevel  string
-	RootSessionID  uuid.UUID
-	Depth          int
-	DelegationRole string
 	Status         string
 	TerminalReason *string
+
+	// ParentSessionID is the session that spawned this one: nil for a thread's
+	// own top-level session, set by whoever creates a session on another's behalf
+	// (a delegation, a team member). It is the one fact about the spawn tree the
+	// aggregate keeps, because "which sessions are top-level threads" is a
+	// question about sessions; how deep a session sits and which root it descends
+	// from are the spawning features' (internal/delegate's session_lineage).
+	ParentSessionID *uuid.UUID
 
 	// PlanID/PlanVersion pin which orchestration_plans row (README §8,
 	// Phase 8) this session's own event log is a run of — nil/nil for every

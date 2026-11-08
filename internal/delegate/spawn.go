@@ -94,8 +94,8 @@ func (d *Delegations) Wire(cfg Config) *Delegations {
 	return d
 }
 
-// Spawn creates a child session (README task 8.9: depth = parent.Depth+1,
-// root_session_id inherited, delegation_role="delegate"), copies the
+// Spawn creates a child session (README task 8.9: one level deeper than its
+// parent, the parent's root inherited — recorded as its Lineage), copies the
 // parent's current taint state into it at creation (task 8.11's "starts as
 // a copy of the parent's at spawn"), records a pending delegations row, and
 // starts the child's own kernel.Run in the background — Spawn itself never
@@ -113,6 +113,7 @@ func (d *Delegations) Spawn(ctx context.Context, req SpawnRequest) (uuid.UUID, e
 	}
 
 	var parent eventlog.Session
+	var parentLineage Lineage
 	var childID = uuid.New()
 	var dek crypto.DEK
 	err := d.Store.InTenant(ctx, req.TenantID, func(ctx context.Context, tx Tx) error {
@@ -121,27 +122,32 @@ func (d *Delegations) Spawn(ctx context.Context, req SpawnRequest) (uuid.UUID, e
 		if err != nil {
 			return err
 		}
+		if parentLineage, err = tx.LineageOf(ctx, req.ParentSessionID); err != nil {
+			return err
+		}
 		dek, err = tx.NewDEK(ctx, req.TenantID)
 		if err != nil {
 			return err
 		}
+		parentID := req.ParentSessionID
 		if err := tx.CreateSession(ctx, eventlog.Session{
-			SessionID:      childID,
-			SessionKey:     childID.String(),
-			TenantID:       req.TenantID,
-			SurfaceID:      "delegate",
-			UserID:         parent.UserID,
-			AgentID:        uuid.Nil,
-			AgentVersion:   1,
-			HarnessDigest:  parent.HarnessDigest,
-			DataLabel:      parent.DataLabel,
-			RouteModelID:   parent.RouteModelID,
-			RouteReason:    parent.RouteReason,
-			AutonomyLevel:  parent.AutonomyLevel,
-			RootSessionID:  parent.RootSessionID,
-			Depth:          parent.Depth + 1,
-			DelegationRole: "delegate",
+			SessionID:       childID,
+			SessionKey:      childID.String(),
+			TenantID:        req.TenantID,
+			SurfaceID:       "delegate",
+			UserID:          parent.UserID,
+			AgentID:         uuid.Nil,
+			AgentVersion:    1,
+			HarnessDigest:   parent.HarnessDigest,
+			DataLabel:       parent.DataLabel,
+			RouteModelID:    parent.RouteModelID,
+			RouteReason:     parent.RouteReason,
+			AutonomyLevel:   parent.AutonomyLevel,
+			ParentSessionID: &parentID,
 		}); err != nil {
+			return err
+		}
+		if err := tx.RecordLineage(ctx, req.TenantID, childID, parentLineage.Child()); err != nil {
 			return err
 		}
 		if _, err := tx.InsertDelegation(ctx, Delegation{
