@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-02
 
-**Status**: Draft (proposed). Nothing here is implemented. Open decisions are marked `[NEEDS CLARIFICATION]`.
+**Status**: Draft (proposed). User stories 1 to 5 are not implemented; story 6 (pipeline hardening and the goroutine-leak check) is. Open decisions are marked `[NEEDS CLARIFICATION]`.
 
 **Input**: The constitution's *Delivery, Scale & Technology Constraints*, *Development Workflow & Quality Gates* and two principles (IV, VII) that the code does not yet meet. `/speckit-converge` found them against `8e02491` (backlog tasks T239–T243 in [spec 001](../001-agent-platform/tasks.md)); each "Current state" was re-checked on 2026-11-02. Requirement ids `FR-401` and up belong to this spec.
 
@@ -83,6 +83,21 @@ Where [spec 003](../003-trust-surface-conformance/spec.md) is about what the run
 
 [NEEDS CLARIFICATION: which features count (tool calling, a context-window size, vision, extended reasoning) and where a model's capabilities are declared (the price book, or a model registry beside it).]
 
+### User Story 6 - The pipeline cannot hang, drift or leak goroutines unnoticed (Priority: P2)
+
+**Current state**: before this story, no CI job had a time limit (a testcontainers start that never returned would run to GitHub's 6-hour cap), the `uses:` lines named mutable tags, a `go.mod` that was not tidy was found by whoever next ran `go mod tidy`, tests ran only in source order, a goroutine a test left running failed nothing, and Dependabot opened one PR per dependency. Whether `main` *requires* any of the CI checks is a repository setting, not something a file here can change, and it is not set (T016).
+
+**Why this priority**: a job that can hang for six hours, a check nothing requires and a leak no test notices are the ways a pipeline reports green while something is wrong. The first measurements were cheap: 72 of 72 test packages run clean under `-race -shuffle=on` with goleak once two test-side leaks are closed, in under a minute.
+
+**Independent Test**: `tests/contract/goleak_test.go` fails for a package that starts a goroutine, has tests and has no goleak `TestMain`; `go test -race -shuffle=on ./...` and `go test -race -tags=integration ./...` pass.
+
+**Acceptance Scenarios**:
+
+1. **Given** a package that starts a goroutine in non-test code and has tests, **When** none of its tests' `TestMain` calls goleak, **Then** `go test ./tests/contract` fails and names the package and the one-line fix.
+2. **Given** a test that leaves a goroutine running, **When** the package's tests otherwise pass, **Then** the package fails and prints the goroutine's stack.
+3. **Given** a CI job that stalls, **When** it reaches its `timeout-minutes`, **Then** it is cancelled; each limit is at least 2.5 times that job's longest healthy run and never under five minutes.
+4. **Given** a `go.mod` or `go.sum` that `go mod tidy` would change, **When** CI runs, **Then** the `build` job fails.
+
 ## Requirements *(mandatory)*
 
 - **FR-401**: Backup, restore, RPO and RTO MUST be defined for the event log and audit chain, and a restore MUST be rehearsed and recorded (US1).
@@ -90,3 +105,5 @@ Where [spec 003](../003-trust-surface-conformance/spec.md) is about what the run
 - **FR-403**: A release build MUST produce an SBOM and signed artifacts (US3).
 - **FR-404**: Every release gate MUST report quality-per-dollar and completions-per-million-tokens alongside quality (US4).
 - **FR-405**: The router MUST apply a capability floor for feature demand, and record it in the routing reason (US5).
+- **FR-406**: Every CI job MUST have a timeout sized from measured healthy runs; workflows MUST declare least-privilege permissions and pin each action to a commit; unit tests MUST run shuffled; a `go.mod` or `go.sum` that is not tidy MUST fail the build (US6).
+- **FR-407**: A package that starts a goroutine in non-test code MUST run goleak after its tests, enforced by a contract test with no standing exemptions (US6).

@@ -2,17 +2,44 @@
 # dependency/supply-chain scanning existed at all — this is the other half
 # of that fix (govulncheck in .github/workflows/ci.yml is the scanning job;
 # this is what keeps the tree from drifting stale between scans).
+#
+# Two things keep the weekly noise and the supply-chain exposure down:
+#  - `groups`: minor and patch bumps arrive as ONE PR per ecosystem (one CI cycle,
+#    one review) instead of one per dependency. A major bump stays its own PR, since
+#    it is the one that needs reading.
+#  - `cooldown`: a release has to be a week old before a version-update PR is opened
+#    for it, so one that is yanked or found malicious in its first days is not
+#    proposed. (GitHub's Dependabot *security* updates are a separate repository
+#    setting and ignore the cooldown.)
+# The github-actions entry is also what keeps the commit-SHA pins in
+# .github/workflows/*.yml from rotting: a pin never updates itself, and it would
+# otherwise freeze at today's versions and miss fixes in the actions themselves.
 version: 2
 updates:
   - package-ecosystem: "gomod"
     directory: "/"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      go-minor-patch:
+        update-types: ["minor", "patch"]
   - package-ecosystem: "npm"
     directory: "/web"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      npm-minor-patch:
+        update-types: ["minor", "patch"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns: ["*"]
