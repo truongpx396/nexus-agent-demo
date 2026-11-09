@@ -240,8 +240,9 @@ func TestCreateTeam_RefusesWhatItMustBeforeSpawningAnything(t *testing.T) {
 
 	// A session already at the depth bound — including any team member, which is
 	// created one level down — cannot create a team (task 9.10).
-	deep := eventlog.Session{SessionID: uuid.New(), Depth: teams.MaxDepth}
+	deep := eventlog.Session{SessionID: uuid.New()}
 	f.sessions[deep.SessionID] = deep
+	f.depths[deep.SessionID] = teams.MaxDepth
 	_, err := svc.CreateTeam(context.Background(), teams.CreateTeamRequest{
 		TenantID: tenant, CreatorSessionID: deep.SessionID, Members: []teams.MemberSpec{{AgentID: "a", Task: "t"}},
 		Ceiling: cost.Money{Micros: 1000, Currency: "USD"},

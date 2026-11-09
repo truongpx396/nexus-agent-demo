@@ -647,7 +647,8 @@ Also enforced: the three `cmd/*` binaries may not import each other; `cmd/nexusd
 `internal/audit/signerkey` (the private key); a non-test Go file may not exceed 500 lines.
 
 **What is shared, and what is a known exception.** The *shared kernel* is deliberate and named: the session/event
-aggregate (`internal/eventlog` and the `sessions`/`events` tables, which every feature table references), the
+aggregate (`internal/eventlog` and the `sessions`/`events` tables, which every feature table refers to by session id,
+with no foreign key), the
 envelope (`crypto`), the receipt vocabulary (`audit`), the provider port, and the persistence kit above. The event
 taxonomy is one closed list in `internal/eventlog`, because the kernel itself authors events from most features'
 vocabularies and replays all of them, so feature-owned types would force `kernel` -> feature imports. What is
@@ -658,11 +659,21 @@ container adapter), with its reason in `tests/contract/boundaries_test.go`, and 
 platform's own tool catalog, where the shell and web tools are the process and HTTP adapters the pipeline calls.
 
 The `go/packages` walk is also what keeps the "physical split later is a deployment change" claim honest for the
-control-plane/data-plane seam. Splitting a *feature* out would still mean untangling its `sessions` references: the
-foreign keys, and the few `sessions` columns features stamp on the aggregate (`autonomy_level`, `team_id`, the
-delegation lineage). Rule 5 makes that coupling explicit and bounded (each accessor is listed with its reason); it does
-not remove it, because moving those columns into feature-owned tables is a data-model change this repository has no
-reason to make while it is one deployable.
+control-plane/data-plane seam, and the schema half of it is checked against a real database. A feature is
+extractable without touching the session aggregate: no feature table has a foreign key into `sessions` (a feature
+stores the session id and nothing checks it exists), and what a feature used to stamp on a session lives in the
+feature's own table: `team_members` (teams), `session_lineage` (delegate, which teams shares through an injected
+writer), `session_forks` (runctl) and `plan_sessions` (plan). A session nobody spawned has no lineage row, so creating
+a thread's first session needs no knowledge of delegation; the aggregate keeps only `parent_session_id`, because "which
+sessions are top-level threads" is a question about sessions. `tests/integration/session_migration_test.go` brings a
+database to the old shape, migrates it forward and fails if `sessions` has a column outside an exact list or any
+table but `events` has a foreign key to it.
+
+Two things stay on the aggregate on purpose. `autonomy_level` and `conversational` are `kernel.RunConfig` fields,
+pinned at creation and read by every feature that resumes a run (oversight, plan, delegate, runctl), so moving them
+into one feature's table would make four others depend on it. And `sessions` is still the one table several
+features read: rule 5 lists each accessor with its reason (the persistence kit, `runctl` as the lifecycle controller,
+the operator's tenant lookup, the read model), and a new one fails until it is added in the diff.
 
 ### Core schema (the part that cannot be retrofitted)
 
@@ -696,19 +707,19 @@ CREATE TABLE sessions (
   surface_id text NOT NULL, user_id uuid NOT NULL, audience_ref text,
   agent_id uuid NOT NULL, agent_version int NOT NULL,        -- pinned at run start
   harness_digest bytea NOT NULL,                             -- pins ALL behavior-bearing config
-  forked_from_session_id uuid, fork_seq bigint, fork_overrides jsonb,
   data_label text NOT NULL, route_model_id text NOT NULL, route_reason jsonb NOT NULL,
   execution_class text NOT NULL, priority int NOT NULL, region text NOT NULL,
-  parent_session_id uuid, root_session_id uuid NOT NULL, depth int NOT NULL DEFAULT 0,
-  delegation_role text NOT NULL DEFAULT 'root',
-  plan_id uuid, plan_version int,
+  parent_session_id uuid,            -- who spawned it; NULL for a thread's own session
   taint_state jsonb NOT NULL,        -- PROJECTION
   status text NOT NULL,              -- PROJECTION
   autonomy_level text NOT NULL,      -- pinned, ratcheting
+  conversational boolean NOT NULL DEFAULT false,
   terminal_reason text,              -- PROJECTION
   active_ms bigint NOT NULL DEFAULT 0, suspended_ms bigint NOT NULL DEFAULT 0,
-  created_at timestamptz NOT NULL DEFAULT now()
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
 );
+-- Not on this table: a fork's provenance (session_forks), a session's depth and root in the spawn tree
+-- (session_lineage), a team roster (team_members), a plan pin (plan_sessions). Each is the owning feature's.
 ```
 
 Plus, all with `tenant_id` + RLS: `checkpoints`, `snapshots`, `idempotency_claims`,
@@ -719,7 +730,7 @@ Plus, all with `tenant_id` + RLS: `checkpoints`, `snapshots`, `idempotency_claim
 `surfaces`, `surface_identities`, `delivery_records`, `delegations`,
 `orchestration_plans`, `content_access_grants`.
 
-33 tenant tables today (`nexusd migrate` asserts RLS on every one). The original has ~50; the dropped set is billing, FX, connectors, integration
+37 tenant tables today (`nexusd migrate` asserts RLS on every one). The original has ~50; the dropped set is billing, FX, connectors, integration
 adapters, the eval entities (which live in `evals/` as files here, not rows), and — as of
 `migrations/0024_retire_queue_jobs.sql` — the job queue itself, now a Redis Streams
 consumer group (`internal/queue/redis/streams.go`) instead of a Postgres table.

@@ -33,9 +33,9 @@ type Executor struct {
 }
 
 // Start begins a fresh plan run against sessionID (already created by the
-// caller, with PlanID/PlanVersion pinned — README task 8.4's own note on
-// why: an in-flight run must keep executing the EXACT version it started
-// on). seal is the DEK-bound SealFunc the session's own creator minted
+// caller). It pins the plan version to the session in the same transaction as the
+// first event — README task 8.4's own note on why: an in-flight run must keep
+// executing the EXACT version it started on — so no caller has to remember to. seal is the DEK-bound SealFunc the session's own creator minted
 // (mirroring internal/surfaces/rest's own handleCreateRun) — every OTHER
 // appendEvent call this package makes resolves the active key by looking at
 // the session's own most recent event (deps.activeKeyID, the same
@@ -48,6 +48,9 @@ type Executor struct {
 // blocks waiting for either.
 func (e *Executor) Start(ctx context.Context, tenantID, sessionID uuid.UUID, p Plan, seal kernel.SealFunc) error {
 	if err := e.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
+		if err := tx.PinSession(ctx, tenantID, sessionID, p.PlanID, p.Version); err != nil {
+			return err
+		}
 		if _, err := tx.AppendFirst(ctx, tenantID, sessionID, seal, eventlog.EventPlanStarted, planStartedPayload{PlanID: p.PlanID.String(), Version: p.Version}); err != nil {
 			return err
 		}
@@ -177,8 +180,8 @@ func gateResultVar(s Step) string {
 	}
 }
 
-// load rehydrates a plan session's spec (from sessions.plan_id/plan_version
-// — the EXACT version pinned at start, task 8.4) and replays its own event
+// load rehydrates a plan session's spec (from the plan version pinned at start —
+// the EXACT version, task 8.4) and replays its own event
 // log into a state.
 //
 // One honest scope note: an "agent" step's OWN in-line tool approval and a
@@ -190,12 +193,16 @@ func gateResultVar(s Step) string {
 // approval id; each entry point trusts its caller to have driven the RIGHT
 // one already.
 func (e *Executor) load(ctx context.Context, tenantID, sessionID uuid.UUID) (Plan, state, error) {
-	var sess eventlog.Session
+	var planID uuid.UUID
+	var version int
+	var pinned bool
 	var history []eventlog.Event
 	if err := e.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
+		if _, err := tx.GetSession(ctx, sessionID); err != nil {
+			return err
+		}
 		var err error
-		sess, err = tx.GetSession(ctx, sessionID)
-		if err != nil {
+		if planID, version, pinned, err = tx.PinnedPlan(ctx, sessionID); err != nil {
 			return err
 		}
 		history, err = tx.ListEvents(ctx, sessionID)
@@ -203,11 +210,11 @@ func (e *Executor) load(ctx context.Context, tenantID, sessionID uuid.UUID) (Pla
 	}); err != nil {
 		return Plan{}, state{}, err
 	}
-	if sess.PlanID == nil || sess.PlanVersion == nil {
+	if !pinned {
 		return Plan{}, state{}, fmt.Errorf("plan: session %s is not a plan-driven session", sessionID)
 	}
 	lc := &Lifecycle{Store: e.Store}
-	p, _, err := lc.Get(ctx, tenantID, *sess.PlanID, *sess.PlanVersion)
+	p, _, err := lc.Get(ctx, tenantID, planID, version)
 	if err != nil {
 		return Plan{}, state{}, err
 	}

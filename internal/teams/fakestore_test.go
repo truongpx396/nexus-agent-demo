@@ -23,6 +23,8 @@ type fakeStore struct {
 	mu sync.Mutex
 
 	sessions  map[uuid.UUID]eventlog.Session
+	members   map[uuid.UUID]uuid.UUID // member session -> its team: the roster, which is teams' own table
+	depths    map[uuid.UUID]int       // spawn-tree depth by session (internal/delegate's table); absent means a root at depth 0
 	teams     map[uuid.UUID]teams.Team
 	cards     map[uuid.UUID]teams.Card
 	envelopes map[uuid.UUID]*envelope
@@ -44,7 +46,7 @@ type appended struct {
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		sessions: map[uuid.UUID]eventlog.Session{}, teams: map[uuid.UUID]teams.Team{},
+		sessions: map[uuid.UUID]eventlog.Session{}, members: map[uuid.UUID]uuid.UUID{}, depths: map[uuid.UUID]int{}, teams: map[uuid.UUID]teams.Team{},
 		cards: map[uuid.UUID]teams.Card{}, envelopes: map[uuid.UUID]*envelope{},
 	}
 }
@@ -56,6 +58,10 @@ func (f *fakeStore) InTenant(ctx context.Context, _ uuid.UUID, fn func(ctx conte
 	defer f.mu.Unlock()
 	sessions, tms, cards, events := map[uuid.UUID]eventlog.Session{}, map[uuid.UUID]teams.Team{}, map[uuid.UUID]teams.Card{}, append([]appended(nil), f.events...)
 	envs := map[uuid.UUID]envelope{}
+	roster := map[uuid.UUID]uuid.UUID{}
+	for k, v := range f.members {
+		roster[k] = v
+	}
 	for k, v := range f.sessions {
 		sessions[k] = v
 	}
@@ -69,7 +75,7 @@ func (f *fakeStore) InTenant(ctx context.Context, _ uuid.UUID, fn func(ctx conte
 		envs[k] = *v
 	}
 	if err := fn(ctx, &fakeTx{f: f}); err != nil {
-		f.sessions, f.teams, f.cards, f.events = sessions, tms, cards, events
+		f.sessions, f.members, f.teams, f.cards, f.events = sessions, roster, tms, cards, events
 		f.envelopes = map[uuid.UUID]*envelope{}
 		for k, v := range envs {
 			v := v
@@ -97,9 +103,9 @@ func (f *fakeStore) seedTeam(n int, memberStatus string) (teams.Team, []eventlog
 	f.teams[t.TeamID] = t
 	var members []eventlog.Session
 	for i := 0; i < n; i++ {
-		tid := t.TeamID
-		m := eventlog.Session{SessionID: uuid.New(), Status: memberStatus, TeamID: &tid}
+		m := eventlog.Session{SessionID: uuid.New(), Status: memberStatus}
 		f.sessions[m.SessionID] = m
+		f.members[m.SessionID] = t.TeamID
 		members = append(members, m)
 	}
 	return t, members
@@ -169,27 +175,35 @@ func (t *fakeTx) EndTeamIfActive(_ context.Context, id uuid.UUID, status teams.S
 	return tm.CoordinatorSessionID, true, nil
 }
 func (t *fakeTx) BoardAndMemberCounts(_ context.Context, teamID uuid.UUID) (int, int, error) {
-	open, active := 0, 0
+	open := 0
+	var active []uuid.UUID
 	for _, c := range t.f.cards {
 		if c.TeamID == teamID && (c.Status == teams.CardOpen || c.Status == teams.CardClaimed || c.Status == teams.CardInProgress) {
 			open++
 		}
 	}
-	for _, s := range t.f.sessions {
-		if s.TeamID != nil && *s.TeamID == teamID && s.Status != eventlog.SessionStatusCompleted && s.Status != eventlog.SessionStatusFailed {
-			active++
-		}
-	}
-	return open, active, nil
+	active, _ = t.ListActiveMemberSessionIDs(context.Background(), teamID)
+	return open, len(active), nil
 }
 func (t *fakeTx) ListActiveMemberSessionIDs(_ context.Context, teamID uuid.UUID) ([]uuid.UUID, error) {
 	var out []uuid.UUID
-	for _, s := range t.f.sessions {
-		if s.TeamID != nil && *s.TeamID == teamID && s.Status != eventlog.SessionStatusCompleted && s.Status != eventlog.SessionStatusFailed {
-			out = append(out, s.SessionID)
+	for id, team := range t.f.members {
+		if s := t.f.sessions[id]; team == teamID && s.Status != eventlog.SessionStatusCompleted && s.Status != eventlog.SessionStatusFailed {
+			out = append(out, id)
 		}
 	}
 	return out, nil
+}
+func (t *fakeTx) LineageOf(_ context.Context, id uuid.UUID) (uuid.UUID, int, error) {
+	return id, t.f.depths[id], nil
+}
+func (t *fakeTx) RecordLineage(_ context.Context, _, id, _ uuid.UUID, depth int) error {
+	t.f.depths[id] = depth
+	return nil
+}
+func (t *fakeTx) AddMember(_ context.Context, _, teamID, sessionID uuid.UUID) error {
+	t.f.members[sessionID] = teamID
+	return nil
 }
 func (t *fakeTx) ListStaleActiveTeamIDs(_ context.Context, _ uuid.UUID, olderThan time.Time) ([]uuid.UUID, error) {
 	var out []uuid.UUID
@@ -201,11 +215,8 @@ func (t *fakeTx) ListStaleActiveTeamIDs(_ context.Context, _ uuid.UUID, olderTha
 	return out, nil
 }
 func (t *fakeTx) TeamIDForSession(_ context.Context, id uuid.UUID) (uuid.UUID, bool, error) {
-	s, ok := t.f.sessions[id]
-	if !ok || s.TeamID == nil {
-		return uuid.Nil, false, nil
-	}
-	return *s.TeamID, true, nil
+	team, ok := t.f.members[id]
+	return team, ok, nil
 }
 
 func (t *fakeTx) InsertCard(_ context.Context, tenantID, teamID uuid.UUID, title, body string, writtenBy uuid.UUID, taint [3]bool, scan teams.ScanStatus, findings []string) (teams.Card, error) {

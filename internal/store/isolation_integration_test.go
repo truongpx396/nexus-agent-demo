@@ -146,8 +146,8 @@ func insertSession(ctx context.Context, s *Store, tenantID, sessionID uuid.UUID)
 		_, err := tx.Exec(ctx, `
 			INSERT INTO sessions (
 				session_id, session_key, tenant_id, surface_id, user_id,
-				agent_id, agent_version, harness_digest, root_session_id
-			) VALUES ($1, $2, $3, 'test', $4, $4, 1, '\x00', $1)`,
+				agent_id, agent_version, harness_digest
+			) VALUES ($1, $2, $3, 'test', $4, $4, 1, '\x00')`,
 			sessionID, sessionID.String(), tenantID, uuid.Nil,
 		)
 		return err

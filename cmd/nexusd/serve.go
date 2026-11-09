@@ -213,7 +213,7 @@ func serve(ctx context.Context) error {
 	gate := newCostGate(st, redisClient)
 
 	delegations := delegate.NewDelegations(delegatepg.New(st, keyStore, chain))
-	teamsSvc := teams.NewService(teamspg.New(st, keyStore, chain))
+	teamsSvc := teams.NewService(teamspg.New(st, keyStore, chain, teamspg.Lineage{Of: delegatepg.LineageOf, Record: delegatepg.RecordLineage}))
 	pipeline, catalog, catalogManifestDigest, admittedSkillBundles, mcpPort := newToolPipeline(st, cfgStore, keyStore, chain, delegations, teamsSvc, vault, gate)
 	loadedTools := make([]string, len(catalog))
 	for i, c := range catalog {

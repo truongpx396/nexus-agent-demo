@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-06
 
-**Status**: Implemented. Two data-model and tooling follow-ups stay open on purpose (see [tasks.md](tasks.md#open-follow-ups)).
+**Status**: Implemented. One tooling follow-up stays open on purpose (see [tasks.md](tasks.md#open-follow-ups)).
 
 **Input**: An architecture review of the codebase against three claims: that it is a **modular monolith**, **packaged by feature**, with **hexagonal** ports and adapters. [Spec 002](../002-post-baseline-increments/spec.md) (Phase 19) made the *persistence* seam real. The review found it true there and not yet true elsewhere: the core still linked an HTTP client, a child-process runner, the OpenTelemetry SDK and a profiler; the composition root held use cases and a Postgres adapter; one package (`internal/store`) held the SQL of five unrelated features; and nothing stopped one feature's adapter reaching into another's.
 
@@ -129,7 +129,24 @@ This is a refactor with almost no change in behaviour (the two exceptions are na
 - **FR-011**: `connectors` MUST speak OAuth2 only through its `Authorizer` port, with the protocol library linked by `connectors/oauth2` alone. A skill script MUST run only through the run's sandbox and MUST be refused where there is none.
 - **FR-012**: The event log's suspend and delegate hooks MUST NOT take a transaction. Every event type MUST name an owning package, and a log MUST refuse to append a type outside the taxonomy.
 - **FR-013**: The web app MUST be packaged by feature, mirroring the backend, and the integration tests MUST be named for the feature they exercise, not the build phase that introduced them.
+- **FR-014**: A feature table MUST NOT have a foreign key into `sessions` (only `events` and `sessions` itself may), and `sessions` MUST have exactly the columns in `aggregateColumns` (`tests/integration/session_migration_test.go`). What a feature records about a session is a table of the feature's own, keyed by `session_id`: `team_members` (teams), `session_lineage` (delegate, written for teams through an injected function), `session_forks` (runctl), `plan_sessions` (plan). `sessions` keeps `parent_session_id`, the one generic fact about the spawn tree, and the run configuration the kernel itself consumes (`autonomy_level`, `conversational`).
+- **FR-015**: No file name, Go identifier or Go string literal MAY contain "phase" (`tests/contract/naming_test.go`); the digest defaults every run starts under are `harness.DefaultSystemPromptVersion` and `harness.DefaultPromptMode`. The `Phase N` comment citations are exempt: they are the traceability convention `specs_test.go` checks.
 - **FR-008**: The shared kernel (the session/event aggregate, `crypto`, `audit`, the provider port, the persistence kit) and the read model (`reporting/postgres`) MUST be declared in the README as deliberate, not left implicit.
+
+### User Story 8 - The session aggregate carries only its own columns, and nothing references it (Priority: P1)
+
+**Current state (before)**: `sessions` was the one table every feature touched. Every feature table had a foreign key to it (about twenty), and four features stamped their own facts on its rows: `team_id` for teams (with a foreign key from the aggregate to a feature table), `root_session_id`, `depth` and `delegation_role` for delegate and teams, the fork columns for `runctl.Fork`, and `plan_id`/`plan_version` for plan. `parent_session_id` existed but nothing wrote it. Extracting a feature would have meant changing the schema of every session first. Separately, names still carried build phases: `phase6Rig`, `"phase2-v1"`, `"phase2-single-shot"`, four runtime strings that cited "Phase 2/3".
+
+**Why this priority**: it is the last place the claim "a feature can be lifted out" was false, and it was declared as such in the README rather than fixed.
+
+**Independent Test**: `go test -tags=integration ./tests/integration -run 'TestMigrations_Moving|TestSpawn_RecordsLineage|TestFork_Records'` passes; the migration test brings a database to the old shape, migrates it forward and fails if `sessions` has a column outside an exact list or any table but `events` has a foreign key to it. `go test ./tests/contract -run 'TestNoBuildStageNames'` passes.
+
+**Acceptance Scenarios**:
+
+1. **Given** a database at the old schema holding a root session, a delegated child, a team member, a fork and a plan-pinned run, **When** migrations 0026 to 0029 run, **Then** each fact is in its feature's table, the sessions list's old filter and its new one pick the same rows, and `sessions` has none of the moved columns.
+2. **Given** a session nobody spawned, **When** a delegation counts the delegations under it, **Then** its own delegations are counted even though it has no lineage record (it is its own root at depth 0).
+3. **Given** `Executor.Start` for a plan, **When** it appends the first event, **Then** it pins the plan version to the session in the same transaction, so no caller names the plan on the session it creates.
+4. **Given** a file name, a Go identifier or a Go string literal containing "phase", **When** the contract tests run, **Then** they fail; a `Phase N` comment is not checked.
 
 ### Key Entities
 
@@ -138,6 +155,8 @@ This is a refactor with almost no change in behaviour (the two exceptions are na
 - **Binding**: a feature's driving adapter, `<feature>/rest` (HTTP, mounted on the kit in `internal/surfaces/rest`) or `<feature>/tool` (the model). Imports its feature directly; governed by `allowedFeatureImports` and the no-storage rules rather than the adapter rule.
 - **Table owner**: the one feature whose package tree may write SQL naming a table (`tests/contract/ownership_test.go`).
 - **Persistence kit**: `internal/store`, `audit/postgres`, `crypto/postgres`, `eventlog/sealed`. The one way every feature's adapter reaches its tenant-scoped, sealed, receipted transaction.
+- **Session aggregate**: the `sessions` table and `eventlog.Session`: a session's identity, routing, run configuration, status projection and who spawned it. It carries nothing a single feature stamps, and no feature table has a foreign key into it.
+- **Spawn tree**: which session spawned which, how deep, under which root. Only `parent_session_id` is on the aggregate; depth and root are delegate's `session_lineage`, with no row for a session nobody spawned.
 - **Settled observer**: a feature that cares what became of a session it does not run (`runctl.SettledObserver`).
 
 ## Success Criteria *(mandatory)*
@@ -146,8 +165,10 @@ This is a refactor with almost no change in behaviour (the two exceptions are na
 - **SC-002**: `go build ./... && go vet ./... && golangci-lint run --build-tags=integration ./... && go test -race -tags=integration ./...` passes, and no test asserts anything different. What the moves force are import paths, constructor arguments, and the setup of three tests: the pipeline's rewrite-hook test drives a fake `hooks.Handler` instead of shelling out to `/bin/sh`, the Phase 7 outbox test opens its delivery through the ledger instead of a `store` function, and the inbound-dedup test moved with its code.
 - **SC-003**: Each of the new contract rules fails when a violation is injected, and passes when it is removed.
 - **SC-004**: `cd web && npx tsc -b && npm run lint && npm run build` passes on the feature layout, and `go test -race -tags=integration ./...` passes with the integration tests renamed and their function names unchanged.
+- **SC-005**: The migration test passes on a database brought to the old shape and migrated forward, and fails for an injected extra column, for a foreign key left behind, and for a `sessions` query added back to `delegate` or `teams` (`TestTableOwnership_SQLStaysInTheOwner`).
 
 ## Assumptions
 
 - Nothing is deployed, so each move is a straight refactor with no data migration and no compatibility shim (see Phase 19 in spec 002).
-- `sessions` and `events` are the shared aggregate root: every feature table has a foreign key to `sessions`, and a few features stamp their own columns on it, so they cannot be dissolved into one feature without changing the schema. This spec declares that and bounds it (FR-009 lists every accessor); it does not change it (T037).
+- `sessions` and `events` are the shared aggregate root. The first two passes declared that every feature table had a foreign key to `sessions` and a few features stamped columns on it, and bounded the coupling (FR-009 lists every accessor). The third pass removed it (FR-014). Two columns stay on purpose: `autonomy_level` and `conversational` are `kernel.RunConfig` fields, pinned at creation and read by oversight, plan, delegate and runctl when they resume a run; moving them into one feature's table would make four others depend on it.
+- The migrations behind FR-014 (0026 to 0029) are not expand/contract (`.claude/rules/migrations.md`): each creates, backfills and drops in one transaction, because nothing is deployed. Once something is, a change of this kind has to be split across releases.

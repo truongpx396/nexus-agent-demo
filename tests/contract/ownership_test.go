@@ -45,13 +45,17 @@ var tableOwners = map[string]string{
 	"mcp_servers":           "internal/surfaces/mcp",
 	"messaging_channels":    "internal/surfaces",
 	"oauth_connections":     "internal/connectors",
+	"plan_sessions":         "internal/plan",
 	"orchestration_plans":   "internal/plan",
 	"price_book":            "internal/cost",
 	"retrieval_chunks":      "internal/retrieval",
 	"sandboxes":             "internal/sandbox",
+	"session_forks":         "internal/runctl",
+	"session_lineage":       "internal/delegate",
 	"sessions":              "internal/eventlog",
 	"snapshots":             "internal/eventlog",
 	"team_envelopes":        "internal/teams",
+	"team_members":          "internal/teams",
 	"teams":                 "internal/teams",
 	"tenant_configs":        "internal/config",
 	"tenants":               "internal/tenancy",
@@ -62,12 +66,18 @@ var tableOwners = map[string]string{
 // has several accessors; each is named here with the reason, and a new one fails
 // until it is added in the diff. The persistence kit (internal/store) is the
 // aggregate's own storage.
+//
+// What a feature stamps on a session is not the aggregate's: a team's roster, a
+// session's place in the spawn tree, a fork's provenance and a plan's pin are
+// tables their own features own, and no feature table has a foreign key into
+// sessions (tests/integration/session_migration_test.go checks both against the
+// real schema). That is why delegate and teams, which used to read the stamped
+// columns, are no longer accessors: they reach a session only through the
+// aggregate's own port.
 var kernelTables = map[string]map[string]string{
 	"sessions": {
 		"internal/store":     "the aggregate's own storage: create, read, list and set the status of a session",
-		"internal/runctl":    "cancel, steer, resume, fork and the idle sweep move a session between statuses, and orphan recovery lists the running ones",
-		"internal/delegate":  "a delegation resolves the parent session it hangs off",
-		"internal/teams":     "a team's roster is the sessions whose team_id names it",
+		"internal/runctl":    "the session lifecycle controller: cancel, steer, resume and the idle sweep move a session between statuses, orphan recovery lists the running ones, and tightening autonomy changes the permission posture every run is configured with",
 		"internal/tenancy":   "the operator's lookup of which tenant owns a session",
 		"internal/reporting": "the read model",
 	},

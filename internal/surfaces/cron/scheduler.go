@@ -115,9 +115,9 @@ func (s *Scheduler) fire(ctx context.Context, tenantID uuid.UUID, d Schedule) {
 	route := provider.Route(provider.DataLabelInternal, provider.DifficultySimple)
 	sessionID := uuid.New()
 	digest := harness.Digest(harness.Config{
-		SystemPromptVersion:   "phase2-v1",
+		SystemPromptVersion:   harness.DefaultSystemPromptVersion,
 		CatalogManifestDigest: s.CatalogManifestDigest,
-		PromptMode:            "phase2-single-shot",
+		PromptMode:            harness.DefaultPromptMode,
 	})
 	autonomy := d.AutonomyLevel
 	if autonomy == "" {

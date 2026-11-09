@@ -1,4 +1,4 @@
-// Package postgres is the Postgres adapter for internal/teams: the teams, board
+// Package postgres is the Postgres adapter for internal/teams: the teams, team_members, board
 // cards and team_envelopes tables, with the session, key and event writes a
 // team's creation, board activity and ending make in the same transaction. The
 // rules — the depth bound, when a team is complete, what ending a team
@@ -25,28 +25,33 @@ import (
 
 // Store implements teams.Store over Postgres.
 type Store struct {
-	st     *store.Store
-	sealer *sealed.Sealer
+	st      *store.Store
+	sealer  *sealed.Sealer
+	lineage Lineage
 }
 
 var _ teams.Store = (*Store)(nil)
 
 // New returns a Store. keys seals each event under the session's own key and
 // mints a member's key; chain may be nil, in which case events are appended
-// without a signed receipt (a minimal wiring for tests).
-func New(st *store.Store, keys *cryptopg.KeyStore, chain *auditpg.Chain) *Store {
-	return &Store{st: st, sealer: sealed.NewSealer(keys, chain)}
+// without a signed receipt (a minimal wiring for tests). lineage is how a member
+// is placed in, and a creator's depth read from, the spawn tree.
+func New(st *store.Store, keys *cryptopg.KeyStore, chain *auditpg.Chain, lineage Lineage) *Store {
+	return &Store{st: st, sealer: sealed.NewSealer(keys, chain), lineage: lineage}
 }
 
 // InTenant implements teams.Store.
 func (s *Store) InTenant(ctx context.Context, tenantID uuid.UUID, fn func(ctx context.Context, tx teams.Tx) error) error {
 	return s.sealer.InTenant(ctx, s.st, tenantID, func(ctx context.Context, u *sealed.Unit) error {
-		return fn(ctx, &txn{Unit: u})
+		return fn(ctx, &txn{Unit: u, lineage: s.lineage})
 	})
 }
 
 // txn is the teams.Tx over one pgx transaction.
-type txn struct{ *sealed.Unit }
+type txn struct {
+	*sealed.Unit
+	lineage Lineage
+}
 
 var _ teams.Tx = (*txn)(nil)
 
@@ -141,51 +146,6 @@ func (t *txn) EndTeamIfActive(ctx context.Context, teamID uuid.UUID, status team
 		return uuid.Nil, false, fmt.Errorf("teams: end team %s: %w", teamID, err)
 	}
 	return coordinatorSessionID, true, nil
-}
-
-// boardAndMemberCounts is task 9.9's own completion predicate, read fresh
-// every time rather than cached: how many cards are still open/claimed, and
-// how many of the roster's own sessions have not yet reached a terminal
-// status.
-func (t *txn) BoardAndMemberCounts(ctx context.Context, teamID uuid.UUID) (openOrClaimed, activeMembers int, err error) {
-	err = t.Tx().QueryRow(ctx, `
-		SELECT count(*) FROM board_cards WHERE team_id = $1 AND status IN ('open', 'claimed')`,
-		teamID,
-	).Scan(&openOrClaimed)
-	if err != nil {
-		return 0, 0, fmt.Errorf("teams: count open/claimed cards for team %s: %w", teamID, err)
-	}
-	err = t.Tx().QueryRow(ctx, `
-		SELECT count(*) FROM sessions WHERE team_id = $1 AND status NOT IN ('completed', 'failed')`,
-		teamID,
-	).Scan(&activeMembers)
-	if err != nil {
-		return 0, 0, fmt.Errorf("teams: count active members for team %s: %w", teamID, err)
-	}
-	return openOrClaimed, activeMembers, nil
-}
-
-// listActiveMemberSessionIDs is endTeam's own reaping query (task 9.9,
-// reusing 8.14's own reaping discipline): every one of this team's member
-// sessions that has not yet reached a terminal status.
-func (t *txn) ListActiveMemberSessionIDs(ctx context.Context, teamID uuid.UUID) ([]uuid.UUID, error) {
-	rows, err := t.Tx().Query(ctx, `
-		SELECT session_id FROM sessions WHERE team_id = $1 AND status NOT IN ('completed', 'failed')`,
-		teamID,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("teams: list active members for team %s: %w", teamID, err)
-	}
-	defer rows.Close()
-	var out []uuid.UUID
-	for rows.Next() {
-		var id uuid.UUID
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("teams: scan active member: %w", err)
-		}
-		out = append(out, id)
-	}
-	return out, rows.Err()
 }
 
 // listStaleActiveTeamIDs is the wall-clock backstop's own query (task 9.9):
@@ -351,25 +311,6 @@ func (t *txn) UpdateCardStatus(ctx context.Context, teamID, cardID, claimantSess
 	}
 	c, err := scanCard(t.Tx().QueryRow(ctx, cardSelectSQL+` WHERE card_id = $1`, cardID))
 	return c, true, err
-}
-
-// teamIDForSession resolves sessions.team_id — the ONLY way a board tool
-// ever learns which team it may touch (never trusted from a tool's own
-// input), so a session can act on nothing but its own team's board by
-// construction.
-func (t *txn) TeamIDForSession(ctx context.Context, sessionID uuid.UUID) (teamID uuid.UUID, ok bool, err error) {
-	var id *uuid.UUID
-	err = t.Tx().QueryRow(ctx, `SELECT team_id FROM sessions WHERE session_id = $1`, sessionID).Scan(&id)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return uuid.Nil, false, nil
-		}
-		return uuid.Nil, false, fmt.Errorf("teams: resolve team for session %s: %w", sessionID, err)
-	}
-	if id == nil {
-		return uuid.Nil, false, nil
-	}
-	return *id, true, nil
 }
 
 // createEnvelope reserves a team's whole-roster ceiling BEFORE the first

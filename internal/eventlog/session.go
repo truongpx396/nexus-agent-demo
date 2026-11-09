@@ -8,9 +8,9 @@ import (
 )
 
 // Session is the subset of the sessions table (migration 0002) Phase 2
-// reads and writes. Columns this layer never touches (fork_*, plan_*,
-// delegation_role, priority, region, ...) keep their schema defaults —
-// they're seams for the phases that own them, not dead weight to model here.
+// reads and writes. Columns this layer never touches (audience_ref,
+// execution_class, priority, region, ...) keep their schema defaults —
+// they're seams for what owns them, not dead weight to model here.
 //
 // Status and TerminalReason are marked PROJECTION in the schema comment, but
 // Phase 2 writes them directly (UpdateSessionStatus, in the same transaction
@@ -35,36 +35,16 @@ type Session struct {
 	RouteModelID   string
 	RouteReason    map[string]string
 	AutonomyLevel  string
-	RootSessionID  uuid.UUID
-	Depth          int
-	DelegationRole string
 	Status         string
 	TerminalReason *string
 
-	// PlanID/PlanVersion pin which orchestration_plans row (README §8,
-	// Phase 8) this session's own event log is a run of — nil/nil for every
-	// ordinary, non-plan-driven session. Pinned at session creation, exactly
-	// like HarnessDigest, so a later plan edit can never retroactively
-	// change what an in-flight run is executing (internal/plan/lifecycle.go
-	// task 8.4's "in-flight runs finish on their version").
-	PlanID      *uuid.UUID
-	PlanVersion *int
-
-	// ForkedFromSessionID/ForkSeq/ForkOverrides are the fork lineage columns
-	// migrations/0002_sessions.sql seamed in at Phase 1, populated
-	// meaningfully starting Phase 6 (README task 6.11,
-	// internal/runctl.Fork). Nil/zero for every non-forked session — which
-	// is every session before this phase.
-	ForkedFromSessionID *uuid.UUID
-	ForkSeq             *int64
-	ForkOverrides       map[string]string
-
-	// TeamID is the peer-team seam (README §9, Phase 9): nil for every
-	// non-team session (every session before this phase, and every root/
-	// delegation session after it). Set once at creation for a
-	// delegation_role="team_member" session and never updated afterward —
-	// the roster is fixed at team creation (internal/teams task 9.1).
-	TeamID *uuid.UUID
+	// ParentSessionID is the session that spawned this one: nil for a thread's
+	// own top-level session, set by whoever creates a session on another's behalf
+	// (a delegation, a team member). It is the one fact about the spawn tree the
+	// aggregate keeps, because "which sessions are top-level threads" is a
+	// question about sessions; how deep a session sits and which root it descends
+	// from are the spawning features' (internal/delegate's session_lineage).
+	ParentSessionID *uuid.UUID
 
 	// CreatedAt is read-only (the column's own DEFAULT now() -- CreateSession
 	// never sets it). Added for ListSessionsForUser's own sort/display need;
