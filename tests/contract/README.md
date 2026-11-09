@@ -24,3 +24,14 @@ to `internal/provider.Provider.Stream` and requires a `Reserve` call
 earlier in the same enclosing function. Like `boundaries_test.go`, it fails
 loudly (`checked == 0`) rather than silently if it ever stops finding a
 real call site to check.
+
+`goleak_test.go` pins the goroutine-leak rule mechanically: every package whose
+non-test code starts a goroutine (a `go` statement, found by parsing, not by
+grepping) and that has tests must declare a `TestMain` that calls into
+`go.uber.org/goleak`, so a test that leaves a goroutine running fails its
+package. A `TestMain` that never touches goleak does not count, and a package
+with no tests has nothing to attach one to. Like the checks above it fails
+loudly (`checked == 0`) and carries a fixture test proving each way of missing
+the check is seen. `leakCheckExempt` is empty on purpose: the fix is a one-line
+`leak_test.go`, and for a leaking test a `t.Cleanup` that cancels the context or
+closes the client.

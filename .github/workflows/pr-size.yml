@@ -17,10 +17,11 @@ concurrency:
 jobs:
   pr-size:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       # Full history: the script diffs against the merge base with the base
       # branch, which a shallow clone cannot compute.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       # The limit (1000 changed lines) and the file exclusions live in

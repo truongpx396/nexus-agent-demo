@@ -5,24 +5,51 @@ on:
     branches: [main]
   pull_request:
 
+# Least privilege: nothing in this workflow writes to the repository or the API.
+permissions:
+  contents: read
+
+# A newer push to a PR supersedes the run in flight (integration and the eval
+# gate are the expensive jobs). A push to main is never cancelled: every
+# commit on main keeps its own result.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Every job has a `timeout-minutes`: without one a stalled job (a testcontainers
+# start that never returns, a hung connection) runs to GitHub's 6-hour cap. Each
+# limit is at least 2.5x the longest healthy run of its job across the last 60
+# runs of this workflow (integration 419s, unit 137s, lint 107s, images 94s,
+# build 71s, web 73s, govulncheck 47s, eval-gate 28s) and never under 5 minutes.
+# Re-measure before tightening one. The `uses:` lines are pinned to a commit
+# (a moved tag cannot change what CI runs); Dependabot keeps the pins current.
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
       - run: go build ./...
+      # A dependency edit that left go.mod/go.sum untidy, or a module whose
+      # content no longer matches its recorded hash, fails here rather than in
+      # somebody else's `go mod tidy` diff.
+      - name: go.mod and go.sum are tidy
+        run: go mod tidy -diff
+      - name: downloaded modules match go.sum
+        run: go mod verify
 
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - uses: golangci/golangci-lint-action@v9
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.15.0
           args: --build-tags=integration
@@ -32,22 +59,29 @@ jobs:
   # unscanned — govulncheck is the Go-specific case, three lines to add.
   govulncheck:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
       - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
   unit:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: [build, lint]
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - run: go test -race -cover ./...
+      # -shuffle=on: a test that only passes in source order (shared package
+      # state, a leftover env var) fails here instead of on someone's laptop. A
+      # failing package prints its seed; reproduce with `-shuffle=<seed>`.
+      # Packages that start goroutines also run goleak in a TestMain
+      # (tests/contract/goleak_test.go makes that mandatory).
+      - run: go test -race -shuffle=on -cover ./...
 
   # Uses testcontainers-go (Postgres + PgBouncer) rather than docker-compose
   # services, so the same test that spins up its own transaction-pooling
@@ -59,10 +93,11 @@ jobs:
   # tests/integration — both are picked up the same way.
   integration:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: [build, lint]
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
       - run: go test -race -tags=integration ./...
@@ -75,10 +110,11 @@ jobs:
   # (evals/cmd/runner, evals/testdata/baseline.json).
   eval-gate:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: [unit, integration]
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
       - run: make eval
@@ -94,7 +130,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: docker compose -f deploy/docker-compose.yml --profile app up -d --build
       # A fresh database has no application role or tables, so PgBouncer refuses
       # the app user (and /readyz stays 503) until the migrations have run.
@@ -117,9 +153,10 @@ jobs:
   # build, so this job has no `needs:` on the Go jobs above.
   web:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 20
           cache: npm

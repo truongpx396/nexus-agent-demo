@@ -198,7 +198,11 @@ func TestStreamRequestBody_CachesSystemAndSetsThinking(t *testing.T) {
 	defer srv.Close()
 
 	p := &Provider{APIKey: "k", Model: "claude-sonnet-5", BaseURL: srv.URL}
-	_, err := p.Stream(context.Background(), provider.Prompt{System: "be helpful"}, nil, provider.RunContext{})
+	// The returned stream is never drained here and provider.Stream has no Close,
+	// so cancelling the context is what releases the response body's connection.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	_, err := p.Stream(ctx, provider.Prompt{System: "be helpful"}, nil, provider.RunContext{})
 	if err != nil {
 		t.Fatalf("Stream: %v", err)
 	}

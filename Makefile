@@ -60,7 +60,7 @@ token: build ## mint a dev bearer token (TENANT=name, default acme) for curl/nex
 test: ## unit + property tests (no external services required)
 	go test ./...
 
-lint: ## static analysis (golangci-lint 2.5.0, matches the source repo's pin)
+lint: ## static analysis; CI pins golangci-lint in .github/workflows/ci.yml and also passes --build-tags=integration, which this omits (see CLAUDE.md)
 	golangci-lint run ./...
 
 pr-size: ## changed-line count of this branch vs origin/main (limit 1000, excl. lockfiles/web/dist/baseline.json) -- the same check CI's pr-size workflow enforces; BASE=<ref> to compare against something else, PR_SIZE_LIMIT=<n> to override the limit
