@@ -164,6 +164,10 @@ in-flight effect claim is escalated rather than re-executed. Then fork the run a
    behavior-determining configuration diverged.
 5. **Given** a conversational session awaiting the next message, **When** a message arrives, **Then** the *same*
    session resumes — one audit trail, one ceiling, one taint state — and an abandoned one ends `idle_timeout`.
+6. **Given** a conversational session that suspended for an approval or a delegation, **When** the run resumes
+   (a grant or denial, or the child's return), **Then** it resumes under the configuration the session pinned at
+   creation — the same autonomy level, the same routed model (so the turn is priced and recorded under it) and the
+   same conversational mode — so its next plain reply pauses it for the next message instead of ending it.
 
 ---
 

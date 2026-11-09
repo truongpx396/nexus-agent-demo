@@ -155,7 +155,7 @@ func (d *Delegations) resumeParent(ctx context.Context, tenantID uuid.UUID, pend
 	if sess.Status != eventlog.SessionStatusSuspended {
 		return fmt.Errorf("delegate: parent session %s is %s, not suspended; refusing to resume a delegation it isn't waiting on", pending.ParentSessionID, sess.Status)
 	}
-	cfg := kernel.RunConfig{System: d.cfg.System, Catalog: d.cfg.Catalog, MaxTurns: d.cfg.MaxTurns, AutonomyLevel: sess.AutonomyLevel, ModelID: sess.RouteModelID}
+	cfg := runstate.ConfigFor(sess, kernel.RunConfig{System: d.cfg.System, Catalog: d.cfg.Catalog, MaxTurns: d.cfg.MaxTurns})
 
 	for _, err := range d.cfg.Kernel.ResumeDelegation(ctx, st, cfg, res) {
 		if err != nil {

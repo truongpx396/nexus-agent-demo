@@ -130,6 +130,7 @@ func (s *Service) CreateTeam(ctx context.Context, req CreateTeamRequest) (uuid.U
 func (s *Service) spawnMember(ctx context.Context, tenantID, teamID, envelopeID uuid.UUID, creator eventlog.Session, member MemberSpec) error {
 	memberID := uuid.New()
 	var dek crypto.DEK
+	var memberSess eventlog.Session
 	err := s.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
 		var err error
 		dek, err = tx.NewDEK(ctx, tenantID)
@@ -141,13 +142,14 @@ func (s *Service) spawnMember(ctx context.Context, tenantID, teamID, envelopeID 
 			return err
 		}
 		coordinatorID := creator.SessionID
-		if err := tx.CreateSession(ctx, eventlog.Session{
+		memberSess = eventlog.Session{
 			SessionID: memberID, SessionKey: memberID.String(), TenantID: tenantID,
 			SurfaceID: "team", UserID: creator.UserID, AgentID: uuid.Nil, AgentVersion: 1,
 			HarnessDigest: creator.HarnessDigest, DataLabel: creator.DataLabel,
 			RouteModelID: creator.RouteModelID, RouteReason: creator.RouteReason,
 			AutonomyLevel: creator.AutonomyLevel, ParentSessionID: &coordinatorID,
-		}); err != nil {
+		}
+		if err := tx.CreateSession(ctx, memberSess); err != nil {
 			return err
 		}
 		if err := tx.RecordLineage(ctx, tenantID, memberID, root, depth+1); err != nil {
@@ -167,11 +169,11 @@ func (s *Service) spawnMember(ctx context.Context, tenantID, teamID, envelopeID 
 	clone.Budget = &EnvelopeBudgetGate{Store: s.Store, Prices: s.cfg.Prices, EnvelopeID: envelopeID, TenantID: tenantID, PerCallEstimate: perCall, Currency: currency}
 
 	memberState := &kernel.RunState{TenantID: tenantID, SessionID: memberID, Seal: runstate.Seal(dek, tenantID, memberID)}
-	memberCfg := kernel.RunConfig{
+	// Read back from the session just written (see delegate.Spawn).
+	memberCfg := runstate.ConfigFor(memberSess, kernel.RunConfig{
 		System: s.cfg.System, Catalog: s.cfg.Catalog, LoadedTools: s.cfg.LoadedTools,
-		ModelID: creator.RouteModelID, MaxTurns: s.cfg.MaxTurns,
-		Input: member.Task, AutonomyLevel: creator.AutonomyLevel,
-	}
+		MaxTurns: s.cfg.MaxTurns, Input: member.Task,
+	})
 
 	go func() { //nolint:gosec // deliberately detached: the member run outlives the spawning request
 		bg := context.Background()

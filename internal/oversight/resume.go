@@ -11,6 +11,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
+	"github.com/truongpx396/nexus-agent-demo/internal/runstate"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools/kerneladapter"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
@@ -76,7 +77,7 @@ func (r *Resumer) resume(ctx context.Context, tenantID uuid.UUID, ap Approval, d
 	if err != nil {
 		return errSeq(err)
 	}
-	cfg := kernel.RunConfig{System: r.System, Catalog: r.Catalog, MaxTurns: r.MaxTurns, AutonomyLevel: sess.AutonomyLevel}
+	cfg := runstate.ConfigFor(sess, kernel.RunConfig{System: r.System, Catalog: r.Catalog, MaxTurns: r.MaxTurns})
 
 	res := kernel.PendingResolution{
 		ToolUseEventID: ap.ToolUseEventID, ToolID: ap.ToolID, Input: originalInput,
@@ -95,10 +96,10 @@ func (r *Resumer) resume(ctx context.Context, tenantID uuid.UUID, ap Approval, d
 // (there is no live RunState.Seal to reuse the way a fresh run's
 // handleCreateRun has one in hand — Resume runs entirely out of band, after
 // the original Run call already returned).
-func (r *Resumer) loadRunState(ctx context.Context, tenantID, sessionID uuid.UUID) (*kernel.RunState, SessionInfo, error) {
+func (r *Resumer) loadRunState(ctx context.Context, tenantID, sessionID uuid.UUID) (*kernel.RunState, eventlog.Session, error) {
 	sess, history, err := r.Sessions.Load(ctx, tenantID, sessionID)
 	if err != nil {
-		return nil, SessionInfo{}, err
+		return nil, eventlog.Session{}, err
 	}
 
 	dekCache := map[string]crypto.DEK{}
@@ -119,7 +120,7 @@ func (r *Resumer) loadRunState(ctx context.Context, tenantID, sessionID uuid.UUI
 
 	transcript, toolUseIDs, err := kernel.Rehydrate(ctx, history, decrypt)
 	if err != nil {
-		return nil, SessionInfo{}, err
+		return nil, eventlog.Session{}, err
 	}
 
 	// Restore this session's Rule-of-Two taint state before Kernel.Resume
@@ -128,18 +129,18 @@ func (r *Resumer) loadRunState(ctx context.Context, tenantID, sessionID uuid.UUI
 	// executor itself (internal/runctl/rehydrate.go's own loadRunState
 	// mirrors this exactly for its own resume paths).
 	if engaged, terr := kernel.RehydrateTaint(ctx, history, decrypt); terr != nil {
-		return nil, SessionInfo{}, terr
+		return nil, eventlog.Session{}, terr
 	} else if seeder, ok := r.Kernel.Tools.(kernel.TaintSeeder); ok {
 		seeder.SeedTaint(sessionID, sess.AutonomyLevel, engaged)
 	}
 
 	keyID, err := currentActiveKeyID(history)
 	if err != nil {
-		return nil, SessionInfo{}, err
+		return nil, eventlog.Session{}, err
 	}
 	dek, err := r.Keys.Unwrap(ctx, tenantID, keyID)
 	if err != nil {
-		return nil, SessionInfo{}, err
+		return nil, eventlog.Session{}, err
 	}
 
 	seal := func(plaintext []byte) (sealed, digest []byte, kid string, err error) {

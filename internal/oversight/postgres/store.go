@@ -51,7 +51,7 @@ func (s *Store) InTenant(ctx context.Context, tenantID uuid.UUID, fn func(ctx co
 	})
 }
 
-func (s *Store) Load(ctx context.Context, tenantID, sessionID uuid.UUID) (oversight.SessionInfo, []eventlog.Event, error) {
+func (s *Store) Load(ctx context.Context, tenantID, sessionID uuid.UUID) (eventlog.Session, []eventlog.Event, error) {
 	var (
 		sess    eventlog.Session
 		history []eventlog.Event
@@ -65,9 +65,9 @@ func (s *Store) Load(ctx context.Context, tenantID, sessionID uuid.UUID) (oversi
 		return err
 	})
 	if err != nil {
-		return oversight.SessionInfo{}, nil, err
+		return eventlog.Session{}, nil, err
 	}
-	return oversight.SessionInfo{AutonomyLevel: sess.AutonomyLevel}, history, nil
+	return sess, history, nil
 }
 
 func (s *Store) Unwrap(ctx context.Context, tenantID uuid.UUID, keyID string) (crypto.DEK, error) {

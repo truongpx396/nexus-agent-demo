@@ -102,7 +102,7 @@ var allowedFeatureImports = map[string][]string{
 	"internal/evalgate":           {"evals", "internal/plan"}, // the one bridge from the plan lifecycle to the release gate
 	"internal/ingest":             {"internal/crypto", "internal/tools"},
 	"internal/memory":             {"internal/config", "internal/tools"},
-	"internal/oversight":          {"internal/crypto", "internal/eventlog", "internal/provider", "internal/tools", "kernel"},
+	"internal/oversight":          {"internal/crypto", "internal/eventlog", "internal/provider", "internal/runstate", "internal/tools", "kernel"}, // runstate.ConfigFor: a resumed run takes its pinned config from the session
 	"internal/oversight/rest":     {"internal/oversight", "internal/surfaces/rest"},
 	"internal/permissions":        {"internal/permissions/safety"},
 	"internal/plan":               {"internal/cost", "internal/crypto", "internal/delegate", "internal/eventlog", "internal/oversight", "internal/provider", "internal/runstate", "kernel"},
