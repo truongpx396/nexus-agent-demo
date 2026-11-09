@@ -138,7 +138,8 @@ func TestOversightResume_KeepsTheSessionsPinnedRunConfig(t *testing.T) {
 
 // TestDelegateResume_KeepsTheSessionsPinnedRunConfig: a conversational parent
 // delegates, the child returns, and delegate resumes the parent. Its final reply
-// pauses the session for the next message rather than ending it.
+// pauses the session for the next message rather than ending it, and every turn,
+// the spawned child's included, runs under the model the session was routed to.
 func TestDelegateResume_KeepsTheSessionsPinnedRunConfig(t *testing.T) {
 	r := setupOversightRig(t)
 	prov := fake.New(
@@ -161,12 +162,17 @@ func TestDelegateResume_KeepsTheSessionsPinnedRunConfig(t *testing.T) {
 	// The child is spawned in the background and its return resumes the parent; a
 	// conversational parent ends up awaiting the next message, not completed.
 	waitForStatus(t, r, parentID, eventlog.SessionStatusAwaitingInput)
-	for i, m := range budget.seen() {
-		// Turn 1 is the parent's first turn, turn 2 the child's, turn 3 the parent's
-		// resumed turn; the child is not held to the parent's model, so only
-		// the parent's two turns are checked.
-		if i != 1 && m != routedModel {
-			t.Errorf("parent turn %d metered under %q, want %q", i+1, m, routedModel)
+	// Three turns ran: the parent's first, the spawned child's, and the parent's
+	// resumed turn. The child takes its config from the session row Spawn wrote
+	// (runstate.ConfigFor), and that row copies the parent's route, so all three are
+	// priced under the routed model.
+	if seen := budget.seen(); len(seen) != 3 {
+		t.Errorf("turns metered = %q, want three (parent, child, resumed parent)", seen)
+	} else {
+		for i, m := range seen {
+			if m != routedModel {
+				t.Errorf("turn %d metered under %q, want %q", i+1, m, routedModel)
+			}
 		}
 	}
 }

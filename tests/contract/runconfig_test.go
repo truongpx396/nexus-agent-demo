@@ -11,37 +11,35 @@ import (
 	"testing"
 )
 
-// resumingFeatures are the packages that continue a run from outside a live
+// runningFeatures are the packages that drive a session's run from outside a live
 // kernel.Run call: runctl after a crash or an idle pause, oversight after an
-// approval, delegate when a child returns, plan between steps.
-var resumingFeatures = []string{"internal/oversight", "internal/runctl", "internal/delegate", "internal/plan"}
+// approval, delegate when a child returns or is spawned, plan between steps, teams
+// when a member starts.
+var runningFeatures = []string{"internal/oversight", "internal/runctl", "internal/delegate", "internal/plan", "internal/teams"}
 
 // pinnedRunConfigFields are the kernel.RunConfig fields a session fixes at
-// creation, which a resumed run must read from the session row
-// (runstate.ConfigFor sets them; internal/runstate/config_test.go keeps this list
-// and that function in step with the struct).
+// creation, which a run must read from the session row (runstate.ConfigFor sets
+// them; internal/runstate/config_test.go keeps this list and that function in step
+// with the struct).
 var pinnedRunConfigFields = map[string]bool{"AutonomyLevel": true, "ModelID": true, "Conversational": true}
 
-// runConfigLiteralExempt lists the files in those packages that may still set a
-// pinned field in a kernel.RunConfig literal, each with why.
-var runConfigLiteralExempt = map[string]string{
-	"internal/delegate/spawn.go": "builds the config of the child session it creates in the same call, from the parent it was just copied from; there is no stored row to read yet",
-}
-
-// TestResumingFeaturesDoNotPinRunConfigByHand pins the rule that a feature that
-// resumes a run takes the fields its session pinned from runstate.ConfigFor. A
-// literal may still carry what the service itself holds (System, Catalog,
-// MaxTurns) as ConfigFor's base, but not AutonomyLevel, ModelID or Conversational.
-// Each of the four used to set those by hand and each took a different subset, so
-// a conversational chat resumed after an approval ended instead of waiting for the
-// next message. One function means a new pinned field is added once.
-func TestResumingFeaturesDoNotPinRunConfigByHand(t *testing.T) {
+// TestRunningFeaturesDoNotPinRunConfigByHand pins the rule that a feature that
+// drives a session's run takes the fields the session pinned from
+// runstate.ConfigFor, with no exemption. A literal may still carry what the
+// service itself holds (System, Catalog, MaxTurns, and for a fresh run Input and
+// LoadedTools) as ConfigFor's base, but not AutonomyLevel, ModelID or
+// Conversational. The resuming services each used to set those by hand and each
+// took a different subset, so a conversational chat resumed after an approval
+// ended instead of waiting for the next message; the spawning ones wrote every
+// value twice, once to the session row and once to the config. One function means
+// a new pinned field is added once, and a spawned child runs exactly what its row
+// says.
+func TestRunningFeaturesDoNotPinRunConfigByHand(t *testing.T) {
 	root := moduleRoot(t)
 	var offenders []string
-	exemptUsed := map[string]bool{}
 	checked := 0
 
-	for _, pkg := range resumingFeatures {
+	for _, pkg := range runningFeatures {
 		dir := filepath.Join(root, filepath.FromSlash(pkg))
 		entries, err := os.ReadDir(dir)
 		if err != nil {
@@ -79,10 +77,6 @@ func TestResumingFeaturesDoNotPinRunConfigByHand(t *testing.T) {
 					if !ok || !pinnedRunConfigFields[key.Name] {
 						continue
 					}
-					if _, ok := runConfigLiteralExempt[rel]; ok {
-						exemptUsed[rel] = true
-						continue
-					}
 					offenders = append(offenders, rel+" sets "+key.Name)
 				}
 				return true
@@ -91,15 +85,10 @@ func TestResumingFeaturesDoNotPinRunConfigByHand(t *testing.T) {
 	}
 
 	if checked == 0 {
-		t.Fatal("no source files found in the resuming packages; the rule would pass vacuously")
+		t.Fatal("no source files found in the running packages; the rule would pass vacuously")
 	}
 	sort.Strings(offenders)
 	for _, o := range offenders {
 		t.Errorf("%s in a kernel.RunConfig literal: take the session's pinned fields from runstate.ConfigFor(session, base) so none is forgotten", o)
-	}
-	for rel, why := range runConfigLiteralExempt {
-		if !exemptUsed[rel] {
-			t.Errorf("%s is exempt (%s) but no longer sets a pinned field in a kernel.RunConfig literal; remove the entry", rel, why)
-		}
 	}
 }

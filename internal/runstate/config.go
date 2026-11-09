@@ -26,9 +26,12 @@ import (
 // coming back, and this package's test fails when kernel.RunConfig gains a field
 // nobody has decided how to resume.
 //
-// A run that has no session yet (a fresh run, a child spawned in this call) takes
-// these values from its request or its parent instead; fields that only a fresh
-// run reads (Input, LoadedTools, MemorySources) are never set here.
+// A child that delegate or teams spawns calls it too, with the session it has just
+// written, so the row and the config of the run that executes it are one fact
+// rather than two copies. The one run that does not is a fresh one started by a
+// request (cmd/nexusd's kernelRunStarter), which takes the values from that
+// request, the same ones the session was admitted with. Fields only a fresh run
+// reads (Input, LoadedTools, MemorySources) are never set here.
 func ConfigFor(sess eventlog.Session, base kernel.RunConfig) kernel.RunConfig {
 	base.AutonomyLevel = sess.AutonomyLevel
 	base.ModelID = sess.RouteModelID
