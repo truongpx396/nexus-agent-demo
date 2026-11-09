@@ -18,16 +18,21 @@ type Delegations struct {
 // NewDelegations returns Delegations over store.
 func NewDelegations(store Store) *Delegations { return &Delegations{Store: store} }
 
-// ParentContext reads sessionID's depth and root_session_id — everything
+// ParentContext reads sessionID's depth and root session — everything
 // platform/delegate's own CheckPermissions needs to enforce the depth bound
-// (README task 8.12) before it ever asks CountForRoot about the other two.
+// (README task 8.12) before it ever asks CountForRoot about the other two. The
+// session is loaded first so that one that does not exist in the tenant's scope
+// is an error, not a root at depth 0.
 func (d *Delegations) ParentContext(ctx context.Context, tenantID, sessionID uuid.UUID) (depth int, rootSessionID uuid.UUID, err error) {
 	err = d.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
-		sess, gerr := tx.GetSession(ctx, sessionID)
-		if gerr != nil {
+		if _, gerr := tx.GetSession(ctx, sessionID); gerr != nil {
 			return gerr
 		}
-		depth, rootSessionID = sess.Depth, sess.RootSessionID
+		l, lerr := tx.LineageOf(ctx, sessionID)
+		if lerr != nil {
+			return lerr
+		}
+		depth, rootSessionID = l.Depth, l.Root
 		return nil
 	})
 	return depth, rootSessionID, err

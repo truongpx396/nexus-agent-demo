@@ -370,7 +370,7 @@ func newSandboxFactory(workspaceRoot string) func(uuid.UUID) tools.SandboxExec {
 type demoSafetyModel struct{}
 
 func (demoSafetyModel) Classify(context.Context, string, string) (safety.Verdict, string, error) {
-	return safety.VerdictDefer, "no real safety model configured (Phase 3 demo default)", nil
+	return safety.VerdictDefer, "no real safety model configured (demo default)", nil
 }
 
 // newHookDispatcher is the hook layer with every handler kind registered:

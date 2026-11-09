@@ -35,8 +35,8 @@ const (
 // internal/permissions/autonomy.go's own ratchet already follows).
 const (
 	MaxDepth      = 1  // a session at Depth 1 (already a delegate's child) may not itself delegate
-	MaxConcurrent = 3  // open (status=pending) delegations per root_session_id
-	MaxPerRun     = 16 // delegations ever created (any status) per root_session_id
+	MaxConcurrent = 3  // open (status=pending) delegations per root session
+	MaxPerRun     = 16 // delegations ever created (any status) per root session
 )
 
 // Delegation mirrors one delegations row.

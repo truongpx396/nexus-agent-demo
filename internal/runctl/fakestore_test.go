@@ -29,8 +29,15 @@ type fakeStore struct {
 
 	history     map[uuid.UUID][]eventlog.Event // what ListEvents returns, per session
 	checkpoints []runctl.Checkpoint
+	forks       []forkRecord // runctl's own fork provenance, which the session row does not carry
 
 	failAppend error // makes every Append fail
+}
+
+type forkRecord struct {
+	Session, Parent uuid.UUID
+	AtSeq           int64
+	Overrides       map[string]string
 }
 
 type appended struct {
@@ -52,6 +59,7 @@ type snapshot struct {
 	events      []appended
 	minted      int
 	checkpoints []runctl.Checkpoint
+	forks       []forkRecord
 }
 
 func (f *fakeStore) snap() snapshot {
@@ -59,6 +67,7 @@ func (f *fakeStore) snap() snapshot {
 		sessions: map[uuid.UUID]eventlog.Session{}, claims: map[uuid.UUID]runctl.Claim{},
 		events: append([]appended(nil), f.events...), minted: f.minted,
 		checkpoints: append([]runctl.Checkpoint(nil), f.checkpoints...),
+		forks:       append([]forkRecord(nil), f.forks...),
 	}
 	for k, v := range f.sessions {
 		s.sessions[k] = v
@@ -74,7 +83,7 @@ func (f *fakeStore) InTenant(ctx context.Context, _ uuid.UUID, fn func(ctx conte
 	defer f.mu.Unlock()
 	before := f.snap()
 	if err := fn(ctx, &fakeTx{f: f}); err != nil {
-		f.sessions, f.claims, f.events, f.minted, f.checkpoints = before.sessions, before.claims, before.events, before.minted, before.checkpoints
+		f.sessions, f.claims, f.events, f.minted, f.checkpoints, f.forks = before.sessions, before.claims, before.events, before.minted, before.checkpoints, before.forks
 		return err
 	}
 	return nil
@@ -114,6 +123,11 @@ func (t *fakeTx) GetSession(_ context.Context, id uuid.UUID) (eventlog.Session, 
 		return eventlog.Session{}, errNoSession
 	}
 	return s, nil
+}
+
+func (t *fakeTx) RecordFork(_ context.Context, _, sessionID, parentSessionID uuid.UUID, atSeq int64, overrides map[string]string) error {
+	t.f.forks = append(t.f.forks, forkRecord{Session: sessionID, Parent: parentSessionID, AtSeq: atSeq, Overrides: overrides})
+	return nil
 }
 
 func (t *fakeTx) CreateSession(_ context.Context, s eventlog.Session) error {

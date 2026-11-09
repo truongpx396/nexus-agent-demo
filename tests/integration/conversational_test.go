@@ -317,7 +317,7 @@ func TestRunCtl_ResumeConversation_RefusesWhenNotAwaitingInput(t *testing.T) {
 	// loadRunState (this method's own first step) needs a session with at
 	// least one real, decryptable event to rehydrate from -- a completely
 	// fresh, event-free session fails there before the status check this
-	// test wants to exercise ever runs (phase6Rig.seedOneEvent's own doc
+	// test wants to exercise ever runs (reliabilityRig.seedOneEvent's own doc
 	// comment names this same requirement for every other out-of-band
 	// runctl operation). So: run one NON-conversational turn to a real
 	// terminal status first -- valid, decryptable history under a KeyStore

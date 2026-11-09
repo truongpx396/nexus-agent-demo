@@ -81,11 +81,9 @@ erDiagram
 |---|---|
 | Identity | `session_id` PK, `session_key text` (indexed with `tenant_id`; deterministic per-peer key for messaging), `tenant_id`, `surface_id`, `user_id`, `audience_ref` |
 | Pinned config | `agent_id`, `agent_version`, **`harness_digest bytea NOT NULL`** (never changes mid-run) |
-| Fork | `forked_from_session_id` FK self, `fork_seq bigint`, `fork_overrides jsonb` |
 | Routing | `data_label` (default `internal`), `route_model_id`, `route_reason jsonb` |
 | Scheduling | `execution_class` (default `interactive`), `priority int`, `region` |
-| Lineage | `parent_session_id` FK self, `root_session_id NOT NULL`, `depth int` (default 0), `delegation_role` (default `root`; `team_member` for team members) |
-| Plan / team | `plan_id`, `plan_version`, `team_id` FK `teams` (nullable, `0017`) |
+| Spawned by | `parent_session_id` FK self: the session that spawned this one, NULL for a thread's own session (set by delegate and teams; the sessions list shows the rows where it is NULL) |
 | Governance | `autonomy_level text` (default `supervised`; a one-way ratchet) |
 | **PROJECTION** | `status`, `terminal_reason`, `taint_state jsonb`, `active_ms`, `suspended_ms` |
 | Conversational | `conversational boolean` (default false), `updated_at` (idle sweep signal), both `0023` |
@@ -97,8 +95,15 @@ status is `completed` only for reason `completed`, and `failed` for every other 
 **Terminal reasons** (10): `completed`, `max_turns_exceeded`, `cost_exhausted`, `aborted`, `stuck_terminated`,
 `permission_denied`, `context_overflow`, `error`, `refused`, `idle_timeout`.
 
-**Indexes**: `(tenant_id, session_key)`, `(root_session_id)`, partial `(team_id)`, partial `(updated_at) WHERE status =
-'awaiting_input'`.
+**Indexes**: `(tenant_id, session_key)`, partial `(updated_at) WHERE status = 'awaiting_input'`.
+
+**What is not on `sessions`** (spec 005 T037; migrations `0026`–`0029`): what a feature records about a session is the feature's
+own table keyed by `session_id`, with no foreign key into `sessions` (only `events.session_id` and the self-reference
+`parent_session_id` remain). `team_members` (`session_id` PK, `team_id`) is teams'; `session_lineage` (`session_id` PK,
+`root_session_id`, `depth ≥ 1`) is delegate's, shared with teams through an injected writer, and only a spawned session has a row (a
+session with none is its own root at depth 0); `session_forks` (`forked_from_session_id`, `fork_seq`, `overrides jsonb`) is runctl's;
+`plan_sessions` (`plan_id`, `plan_version`, FK to `orchestration_plans`) is plan's, written by `Executor.Start`. `autonomy_level` and
+`conversational` stay: they are `kernel.RunConfig` fields every feature that resumes a run reads.
 
 ### `events` (append-only)
 | Column | Type | Notes |
@@ -188,7 +193,7 @@ they started on.
 **Delegation state machine**: `pending → returned | reaped | bound_exceeded` (the last is non-retryable).
 
 **Team state machine**: `active → completed | aborted | ceiling_exhausted`; ending reaps every still-active member. Members
-are leaves (`delegation_role = 'team_member'`).
+are leaves (their `session_lineage` depth is already at the bound).
 
 **Card state machine**: `open → claimed → in_progress → done | blocked`.
 
@@ -205,11 +210,12 @@ are leaves (`delegation_role = 'team_member'`).
   session; synthetic results are real rows with a reason. (Property-tested over generated histories.)
 - **Cost chain**: a model call writes one `budget_decisions` row, then (after the stream) one `cost_records` row; if usage is
   unreported, `unreported = true` and `minor_units` is the full reserved worst case.
-- **Lineage**: `root_session_id` is set on every row (equal to `session_id` for a root); `depth ≤ 1`.
+- **Lineage**: a spawned session's `session_lineage` row names the root session it descends from; a session with no row is its own root at
+  depth 0; `depth ≤ 1`.
 - **Erasure**: destroying the tenant's key + hard-deleting `derived_artifacts` and `retrieval_chunks` in one transaction; `events`,
   `payload_digest`s and `audit_receipts` remain, and the chain still verifies.
 - **Config pinning**: `sessions.harness_digest` is never updated after insert. `harness.Config` has seven inputs — system-prompt
   version, catalog manifest digest, skill-set digest, **safety policy version**, **approval policy version**, MCP catalog digest
   and prompt mode — but **no non-test caller ever sets the two policy-version fields** (and the REST path hard-codes the
-  system-prompt version string `"phase2-v1"`). So today the digest does not move when safety or approval policy changes, which
+  system-prompt version, `harness.DefaultSystemPromptVersion`). So today the digest does not move when safety or approval policy changes, which
   FR-010 and the constitution require. Tracked in the Convergence backlog; see spec *Known deviations* 5.

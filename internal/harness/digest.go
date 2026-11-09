@@ -12,6 +12,17 @@ import (
 	"fmt"
 )
 
+// The system prompt version and prompt mode every run starts under until a
+// per-tenant prompt store exists. A run (internal/runs), a scheduled run
+// (internal/surfaces/cron) and a fork (internal/runctl) must all build their
+// digest from these, because a fork compares its digest with its parent's to
+// report configuration drift: two copies of the literal that disagreed would
+// report drift where there is none.
+const (
+	DefaultSystemPromptVersion = "v1"
+	DefaultPromptMode          = "single-shot"
+)
+
 // Config is every input the digest is computed over. Fields are added, not
 // repurposed, as later phases introduce more behavior-bearing config (the
 // resolved tool catalog manifest, the skill set, the approval policy

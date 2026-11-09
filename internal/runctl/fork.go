@@ -57,8 +57,7 @@ type ForkResult struct {
 //
 // The child's transcript is NOT a copy of the parent's own events — the
 // parent's events stay exactly where they are, referenced only by the new
-// session's forked_from_session_id/fork_seq columns (migrations/
-// 0002_sessions.sql, seamed since Phase 1) — Fork returns the REHYDRATED
+// session's fork record (session_forks, migration 0028) — Fork returns the REHYDRATED
 // text a caller needs to seed a fresh kernel.RunState.Transcript for the new
 // session's own first turn.
 func (c *Control) Fork(ctx context.Context, tenantID, parentSessionID uuid.UUID, atSeq int64, overrides ForkOverrides) (ForkResult, error) {
@@ -98,12 +97,12 @@ func (c *Control) Fork(ctx context.Context, tenantID, parentSessionID uuid.UUID,
 
 	systemPromptVersion := overrides.SystemPromptVersion
 	if systemPromptVersion == "" {
-		systemPromptVersion = "phase2-v1" // matches internal/runs/launch.go's own hardcoded default — no per-tenant config store exists yet
+		systemPromptVersion = harness.DefaultSystemPromptVersion // the same default a run starts under, or every fork would report drift
 	}
 	childDigest := harness.Digest(harness.Config{
 		SystemPromptVersion:   systemPromptVersion,
 		CatalogManifestDigest: c.CatalogManifestDigest,
-		PromptMode:            "phase2-single-shot",
+		PromptMode:            harness.DefaultPromptMode,
 	})
 	diverged := !bytes.Equal(parentSess.HarnessDigest, childDigest)
 
@@ -119,17 +118,18 @@ func (c *Control) Fork(ctx context.Context, tenantID, parentSessionID uuid.UUID,
 			return err
 		}
 		_ = dek // the new session's DEK is minted so its own events can be sealed once a caller starts running it; Fork itself appends nothing to the child's log
-		return tx.CreateSession(ctx, eventlog.Session{
+		if err := tx.CreateSession(ctx, eventlog.Session{
 			SessionID: newSessionID, SessionKey: newSessionID.String(), TenantID: tenantID,
 			SurfaceID: parentSess.SurfaceID, UserID: parentSess.UserID,
 			AgentID: parentSess.AgentID, AgentVersion: parentSess.AgentVersion,
 			HarnessDigest: childDigest,
 			DataLabel:     parentSess.DataLabel, RouteModelID: modelID,
-			AutonomyLevel:       "read_only",
-			ForkedFromSessionID: &parentSessionID,
-			ForkSeq:             &atSeq,
-			ForkOverrides:       map[string]string{"model_id": overrides.ModelID, "system_prompt_version": overrides.SystemPromptVersion},
-		})
+			AutonomyLevel: "read_only",
+		}); err != nil {
+			return err
+		}
+		return tx.RecordFork(ctx, tenantID, newSessionID, parentSessionID, atSeq,
+			map[string]string{"model_id": overrides.ModelID, "system_prompt_version": overrides.SystemPromptVersion})
 	})
 	if err != nil {
 		return ForkResult{}, fmt.Errorf("runctl: fork: create child session: %w", err)

@@ -62,7 +62,7 @@ func newProvider() (provider.Provider, error) {
 		// rather than a single-shot demo that silently breaks after one
 		// reply.
 		return repeatingFakeProvider{script: fake.Script{Chunks: demoContentChunks(
-			"Hello from the Phase 2 kernel loop demo.",
+			"Hello from the nexus kernel loop demo.",
 		)}}, nil
 	default:
 		return nil, fmt.Errorf("unknown NEXUS_PROVIDER %q (want fake, anthropic, or litellm)", os.Getenv("NEXUS_PROVIDER"))

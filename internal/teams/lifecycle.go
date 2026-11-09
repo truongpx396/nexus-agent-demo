@@ -63,7 +63,11 @@ func (s *Service) CreateTeam(ctx context.Context, req CreateTeamRequest) (uuid.U
 		if err != nil {
 			return err
 		}
-		if creator.Depth+1 > MaxDepth {
+		_, creatorDepth, err := tx.LineageOf(ctx, req.CreatorSessionID)
+		if err != nil {
+			return err
+		}
+		if creatorDepth+1 > MaxDepth {
 			return fmt.Errorf("teams: session %s may not create a team (depth bound exceeded — task 9.10)", req.CreatorSessionID)
 		}
 
@@ -116,7 +120,7 @@ func (s *Service) CreateTeam(ctx context.Context, req CreateTeamRequest) (uuid.U
 }
 
 // spawnMember creates one ordinary member session (task 9.2: an ordinary
-// session, delegation_role="team_member", team_id set) and starts its own
+// session, a roster entry, one spawn deeper than its creator) and starts its own
 // kernel.Run in the background under a CLONED Kernel whose Budget draws
 // from the team's shared envelope instead of the process's real
 // internal/cost.Gate (task 9.8) — every other field (Provider/Tools/Store/
@@ -132,15 +136,24 @@ func (s *Service) spawnMember(ctx context.Context, tenantID, teamID, envelopeID 
 		if err != nil {
 			return err
 		}
-		tid := teamID
-		return tx.CreateSession(ctx, eventlog.Session{
+		root, depth, err := tx.LineageOf(ctx, creator.SessionID)
+		if err != nil {
+			return err
+		}
+		coordinatorID := creator.SessionID
+		if err := tx.CreateSession(ctx, eventlog.Session{
 			SessionID: memberID, SessionKey: memberID.String(), TenantID: tenantID,
 			SurfaceID: "team", UserID: creator.UserID, AgentID: uuid.Nil, AgentVersion: 1,
 			HarnessDigest: creator.HarnessDigest, DataLabel: creator.DataLabel,
 			RouteModelID: creator.RouteModelID, RouteReason: creator.RouteReason,
-			AutonomyLevel: creator.AutonomyLevel, RootSessionID: creator.RootSessionID,
-			Depth: creator.Depth + 1, DelegationRole: "team_member", TeamID: &tid,
-		})
+			AutonomyLevel: creator.AutonomyLevel, ParentSessionID: &coordinatorID,
+		}); err != nil {
+			return err
+		}
+		if err := tx.RecordLineage(ctx, tenantID, memberID, root, depth+1); err != nil {
+			return err
+		}
+		return tx.AddMember(ctx, tenantID, teamID, memberID)
 	})
 	if err != nil {
 		return fmt.Errorf("teams: create member session: %w", err)
@@ -186,15 +199,21 @@ func (s *Service) spawnMember(ctx context.Context, tenantID, teamID, envelopeID 
 // (a later call site will find it).
 func (s *Service) OnMemberTerminal(ctx context.Context, tenantID, memberSessionID uuid.UUID) error {
 	var member eventlog.Session
+	var teamID uuid.UUID
+	var onTeam bool
 	err := s.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
 		var err error
 		member, err = tx.GetSession(ctx, memberSessionID)
+		if err != nil {
+			return err
+		}
+		teamID, onTeam, err = tx.TeamIDForSession(ctx, memberSessionID)
 		return err
 	})
 	if err != nil {
 		return err
 	}
-	if member.TeamID == nil {
+	if !onTeam {
 		return nil
 	}
 	if member.Status != eventlog.SessionStatusCompleted && member.Status != eventlog.SessionStatusFailed {
@@ -206,10 +225,10 @@ func (s *Service) OnMemberTerminal(ctx context.Context, tenantID, memberSessionI
 	// next Reserve call also starts failing: this member's own terminal
 	// reason already told us the shared ceiling is at zero.
 	if member.TerminalReason != nil && *member.TerminalReason == string(kernel.ReasonCostExhausted) {
-		return s.endTeam(ctx, tenantID, *member.TeamID, StatusCeilingExhausted,
+		return s.endTeam(ctx, tenantID, teamID, StatusCeilingExhausted,
 			fmt.Sprintf("member session %s exhausted the shared team budget envelope", memberSessionID))
 	}
-	return s.maybeComplete(ctx, tenantID, *member.TeamID)
+	return s.maybeComplete(ctx, tenantID, teamID)
 }
 
 // maybeComplete is task 9.9's own natural-completion predicate: the board
