@@ -24,6 +24,7 @@ func TestShell_CallSandboxedRoutesThroughDocker(t *testing.T) {
 	if err != nil {
 		t.Skipf("no docker daemon reachable: %v", err)
 	}
+	t.Cleanup(func() { _ = docker.Client.Close() }) // else the daemon connection outlives the test
 	workspace := t.TempDir()
 	sess := sandbox.SessionSandbox{Docker: docker, Config: sandbox.Config{WorkspaceDir: workspace}}
 

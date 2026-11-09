@@ -37,3 +37,12 @@ description: "Task list for delivery and quality gates (proposed)"
 
 - [ ] T009 [US5] Add a capability floor for feature demand to deterministic routing and record it in the routing reason, in `internal/provider/router.go` (was 001 T243)
 - [ ] T010 [US5] Add a table-driven test of the floor in `internal/provider/router_test.go` (was 001 T243)
+
+## Phase 6: User Story 6 - the pipeline cannot hang, drift or leak goroutines unnoticed
+
+- [X] T011 [US6] Give every CI job a `timeout-minutes` sized from the last 60 runs (at least 2.5 times the longest healthy run, never under five minutes), run `ci.yml` with `contents: read`, cancel a PR's superseded run (never a push to `main`), and pin every `uses:` to a commit, in `.github/workflows/ci.yml`, `.github/workflows/govulncheck.yml`, `.github/workflows/pr-size.yml`, `.github/workflows/spec-gate.yml`
+- [X] T012 [US6] Fail `build` on a `go.mod` or `go.sum` that `go mod tidy -diff` would change or a module that `go mod verify` rejects, and run the unit job with `-shuffle=on`, in `.github/workflows/ci.yml`
+- [X] T013 [US6] Group Dependabot's minor and patch bumps into one PR per ecosystem and hold a release for seven days before proposing it, in `.github/dependabot.yml`; make `make lint`'s help name the real pin source instead of a stale version, in `Makefile`
+- [X] T014 [US6] Run goleak after the tests of every package that starts a goroutine and has tests (16 packages, including the kernel and the integration suite), in `kernel/leak_test.go`, `internal/queue/leak_test.go`, `internal/runctl/leak_test.go`, `internal/delegate/leak_test.go`, `internal/teams/leak_test.go`, `tests/integration/leak_test.go`, and one in each of the other ten
+- [X] T015 [US6] Fail the build when such a package has no goleak `TestMain`, with a fixture test that proves the scanner flags each way of missing it and an empty exemption list, in `tests/contract/goleak_test.go`; close the two leaks it found, a stream a test never drained and a Docker client a test never closed, in `internal/provider/anthropic/anthropic_test.go`, `internal/tools/builtin/shell_sandbox_integration_test.go`
+- [ ] T016 [US6] Repository settings that no file can carry: a ruleset on `main` that requires the CI checks (`lint`, `unit`, `integration`, `eval-gate`, `spec-gate`, `pr-size`) and blocks force-push and deletion, and Dependabot security updates turned on
