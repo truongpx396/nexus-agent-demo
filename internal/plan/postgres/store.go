@@ -1,6 +1,6 @@
 // Package postgres is the Postgres adapter for internal/plan: the
-// orchestration_plans table, with the session, key and event writes a plan run
-// makes in the same transaction. The rules — the lifecycle's order, what a
+// orchestration_plans and plan_sessions tables, with the session, key and event
+// writes a plan run makes in the same transaction. The rules — the lifecycle's order, what a
 // transition fires — are plan's own.
 package postgres
 

@@ -5,7 +5,7 @@
 // internal/store/condensation_test.go, and 6.6) plus the queue/lock/stuck/
 // runctl machinery those three artifacts sit alongside. Shares the
 // package's existing helpers (insertTenant, listEventsDirect) but builds
-// its own environment (setupPhase6Env) because, unlike
+// its own environment (setupReliabilityEnv) because, unlike
 // setupPostgresAndPgBouncer, this file keeps an ADMIN pool open (not just
 // used to migrate then closed) — some of its non-queue tests still need
 // RLS-bypassing access, exactly like cmd/nexusd's own listTenantIDs/
@@ -57,13 +57,13 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/migrations"
 )
 
-type phase6Env struct {
+type reliabilityEnv struct {
 	appPool     *pgxpool.Pool
 	adminPool   *pgxpool.Pool
 	redisClient *goredis.Client
 }
 
-func setupPhase6Env(t *testing.T) *phase6Env {
+func setupReliabilityEnv(t *testing.T) *reliabilityEnv {
 	t.Helper()
 	ctx := context.Background()
 
@@ -128,24 +128,24 @@ func setupPhase6Env(t *testing.T) *phase6Env {
 	redisClient := goredis.NewClient(redisOpts)
 	t.Cleanup(func() { _ = redisClient.Close() })
 
-	return &phase6Env{appPool: appPool, adminPool: adminPool, redisClient: redisClient}
+	return &reliabilityEnv{appPool: appPool, adminPool: adminPool, redisClient: redisClient}
 }
 
-// --- shared rig: store/keys/chain/tenant, mirroring phase5's own
+// --- shared rig: store/keys/chain/tenant, mirroring oversight_test.go's own
 // setupOversightRig, duplicated here rather than exported from that file
 // since neither file has any other reason to depend on the other. ---
 
-type phase6Rig struct {
-	env      *phase6Env
+type reliabilityRig struct {
+	env      *reliabilityEnv
 	st       *store.Store
 	keys     *cryptopg.KeyStore
 	chain    *auditpg.Chain
 	tenantID uuid.UUID
 }
 
-func newPhase6Rig(t *testing.T) *phase6Rig {
+func newReliabilityRig(t *testing.T) *reliabilityRig {
 	t.Helper()
-	env := setupPhase6Env(t)
+	env := setupReliabilityEnv(t)
 	ctx := context.Background()
 	st := store.New(env.appPool)
 
@@ -157,13 +157,13 @@ func newPhase6Rig(t *testing.T) *phase6Rig {
 	if err != nil {
 		t.Fatalf("generate KEK: %v", err)
 	}
-	return &phase6Rig{
+	return &reliabilityRig{
 		env: env, st: st, keys: cryptopg.NewKeyStore(kek),
 		chain: auditpg.NewChain(newFakeSigner(t)), tenantID: tenantID,
 	}
 }
 
-func (r *phase6Rig) seal(t *testing.T, sessionID uuid.UUID) (kernel.SealFunc, crypto.DEK) {
+func (r *reliabilityRig) seal(t *testing.T, sessionID uuid.UUID) (kernel.SealFunc, crypto.DEK) {
 	t.Helper()
 	var dek crypto.DEK
 	err := r.st.InTenantTx(context.Background(), r.tenantID, func(ctx context.Context, tx pgx.Tx) error {
@@ -183,7 +183,7 @@ func (r *phase6Rig) seal(t *testing.T, sessionID uuid.UUID) (kernel.SealFunc, cr
 	}, dek
 }
 
-func (r *phase6Rig) createSession(t *testing.T, sessionID, userID uuid.UUID, autonomy string) {
+func (r *reliabilityRig) createSession(t *testing.T, sessionID, userID uuid.UUID, autonomy string) {
 	t.Helper()
 	err := r.st.InTenantTx(context.Background(), r.tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		return store.CreateSession(ctx, tx, eventlog.Session{
@@ -198,7 +198,7 @@ func (r *phase6Rig) createSession(t *testing.T, sessionID, userID uuid.UUID, aut
 	}
 }
 
-func (r *phase6Rig) getSession(t *testing.T, sessionID uuid.UUID) eventlog.Session {
+func (r *reliabilityRig) getSession(t *testing.T, sessionID uuid.UUID) eventlog.Session {
 	t.Helper()
 	var sess eventlog.Session
 	err := r.st.InTenantTx(context.Background(), r.tenantID, func(ctx context.Context, tx pgx.Tx) error {
@@ -221,7 +221,7 @@ func (r *phase6Rig) getSession(t *testing.T, sessionID uuid.UUID) eventlog.Sessi
 // invoked before a session has done at least SOMETHING), but a test that
 // exercises one of these operations against a freshly-created, event-free
 // session needs to seed that one event itself first.
-func (r *phase6Rig) seedOneEvent(t *testing.T, sessionID uuid.UUID, sealFn kernel.SealFunc) {
+func (r *reliabilityRig) seedOneEvent(t *testing.T, sessionID uuid.UUID, sealFn kernel.SealFunc) {
 	t.Helper()
 	sealed, digest, keyID, err := sealFn([]byte(`{"body":"seed"}`))
 	if err != nil {
@@ -239,7 +239,7 @@ func (r *phase6Rig) seedOneEvent(t *testing.T, sessionID uuid.UUID, sealFn kerne
 	}
 }
 
-func (r *phase6Rig) control(k *kernel.Kernel, approvals *oversight.Approvals, inputs *oversight.Inputs) *runctl.Control {
+func (r *reliabilityRig) control(k *kernel.Kernel, approvals *oversight.Approvals, inputs *oversight.Inputs) *runctl.Control {
 	c := &runctl.Control{
 		Store: runctlpg.New(r.st, r.keys, r.chain), Kernel: k,
 		System: "test", MaxTurns: 20,
@@ -324,7 +324,7 @@ func repeatedToolUseScripts(n int, toolName, input string) []fake.Script {
 // --- 6.1/6.2: the queue + session lock ---
 
 func TestQueue_RedisStreamsNeverDoubleLeases(t *testing.T) {
-	rig := newPhase6Rig(t)
+	rig := newReliabilityRig(t)
 	ctx := context.Background()
 	port, err := queueredis.NewStreams(ctx, rig.env.redisClient)
 	if err != nil {
@@ -369,7 +369,7 @@ func TestQueue_RedisStreamsNeverDoubleLeases(t *testing.T) {
 // XAutoClaim, once it has sat idle past leaseFor. Before that, nobody else
 // can touch it.
 func TestQueue_ReclaimsAbandonedLeaseAfterIdleTimeout(t *testing.T) {
-	rig := newPhase6Rig(t)
+	rig := newReliabilityRig(t)
 	ctx := context.Background()
 	port, err := queueredis.NewStreams(ctx, rig.env.redisClient)
 	if err != nil {
@@ -414,7 +414,7 @@ func TestQueue_ReclaimsAbandonedLeaseAfterIdleTimeout(t *testing.T) {
 }
 
 func TestQueue_WorkerCompletesAndFailsRealJobs(t *testing.T) {
-	rig := newPhase6Rig(t)
+	rig := newReliabilityRig(t)
 	ctx := context.Background()
 	port, err := queueredis.NewStreams(ctx, rig.env.redisClient)
 	if err != nil {
@@ -446,7 +446,7 @@ func TestQueue_WorkerCompletesAndFailsRealJobs(t *testing.T) {
 }
 
 func TestSessionLock_SerialPerSessionConcurrentAcrossSessions(t *testing.T) {
-	rig := newPhase6Rig(t)
+	rig := newReliabilityRig(t)
 	ctx := context.Background()
 	lock := queueredis.NewSessionLock(rig.env.redisClient, 5*time.Second)
 
@@ -475,7 +475,7 @@ func TestSessionLock_SerialPerSessionConcurrentAcrossSessions(t *testing.T) {
 }
 
 func TestSessionLock_ReleaseNeverStealsAnotherHoldersLock(t *testing.T) {
-	rig := newPhase6Rig(t)
+	rig := newReliabilityRig(t)
 	ctx := context.Background()
 	lock := queueredis.NewSessionLock(rig.env.redisClient, 5*time.Second)
 
@@ -496,7 +496,7 @@ func TestSessionLock_ReleaseNeverStealsAnotherHoldersLock(t *testing.T) {
 // --- 6.6: write-ahead claims, end to end against real storage ---
 
 func TestClaims_EndToEnd_NeverReExecutesAnAmbiguousEffect(t *testing.T) {
-	rig := newPhase6Rig(t)
+	rig := newReliabilityRig(t)
 	ctx := context.Background()
 	sessionID, userID := uuid.New(), uuid.New()
 	rig.createSession(t, sessionID, userID, "autonomous")
@@ -574,7 +574,7 @@ func TestClaims_EndToEnd_NeverReExecutesAnAmbiguousEffect(t *testing.T) {
 // --- 6.4: Snapshot must be provably disposable ---
 
 func TestSnapshot_DeletingAllSnapshotsChangesNothingButHydrationTime(t *testing.T) {
-	rig := newPhase6Rig(t)
+	rig := newReliabilityRig(t)
 	ctx := context.Background()
 	sessionID, userID := uuid.New(), uuid.New()
 	workspaceRoot := t.TempDir()
@@ -653,7 +653,7 @@ func TestSnapshot_DeletingAllSnapshotsChangesNothingButHydrationTime(t *testing.
 // --- 6.8: stuck detection, wired into a real kernel.Run ---
 
 func TestStuckDetection_SecondCorroboratingTripTerminates(t *testing.T) {
-	rig := newPhase6Rig(t)
+	rig := newReliabilityRig(t)
 	ctx := context.Background()
 	sessionID, userID := uuid.New(), uuid.New()
 	workspaceRoot := t.TempDir()
@@ -695,12 +695,12 @@ func TestStuckDetection_SecondCorroboratingTripTerminates(t *testing.T) {
 // crash-recovery resume the README §6 demo line describes ---
 
 func TestRunctl_Cancel_ReleasesPendingApprovalAndAborts(t *testing.T) {
-	rig := newPhase6Rig(t)
+	rig := newReliabilityRig(t)
 	ctx := context.Background()
 	sessionID, userID := uuid.New(), uuid.New()
 	workspaceRoot := t.TempDir()
 
-	// A mutating tool that always asks — the same shape phase5's own
+	// A mutating tool that always asks — the same shape oversight_test.go's own
 	// newFileWritePipeline uses, duplicated here for the same reason every
 	// other cross-file helper in this package is: no shared export exists
 	// and building one isn't worth a coupling.
@@ -780,7 +780,7 @@ func TestRunctl_Cancel_ReleasesPendingApprovalAndAborts(t *testing.T) {
 }
 
 func TestRunctl_TightenAutonomy_RefusesWidening(t *testing.T) {
-	rig := newPhase6Rig(t)
+	rig := newReliabilityRig(t)
 	ctx := context.Background()
 	sessionID, userID := uuid.New(), uuid.New()
 	rig.createSession(t, sessionID, userID, "autonomous")
@@ -823,7 +823,7 @@ func TestRunctl_TightenAutonomy_RefusesWidening(t *testing.T) {
 // re-executed on resume — Hygiene synthesizes an "interrupted_before_
 // execution" result for it, and the run continues cleanly past that point.
 func TestRunctl_Resume_RecoversAToolUseAKilledWorkerLeftOrphaned(t *testing.T) {
-	rig := newPhase6Rig(t)
+	rig := newReliabilityRig(t)
 	ctx := context.Background()
 	sessionID, userID := uuid.New(), uuid.New()
 	workspaceRoot := t.TempDir()
@@ -902,7 +902,7 @@ func TestRunctl_Resume_RecoversAToolUseAKilledWorkerLeftOrphaned(t *testing.T) {
 }
 
 func TestRunctl_Resume_RefusesWhileAClaimIsUnresolved(t *testing.T) {
-	rig := newPhase6Rig(t)
+	rig := newReliabilityRig(t)
 	ctx := context.Background()
 	sessionID, userID := uuid.New(), uuid.New()
 	rig.createSession(t, sessionID, userID, "autonomous")
@@ -942,7 +942,7 @@ func asErrUnresolvedClaims(err error, target *runctl.ErrUnresolvedClaims) bool {
 }
 
 func TestRunctl_Replay_IsPureAndAgreesWithHydration(t *testing.T) {
-	rig := newPhase6Rig(t)
+	rig := newReliabilityRig(t)
 	ctx := context.Background()
 	sessionID, userID := uuid.New(), uuid.New()
 	workspaceRoot := t.TempDir()

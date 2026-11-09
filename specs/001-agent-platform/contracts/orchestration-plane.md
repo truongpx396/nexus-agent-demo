@@ -120,7 +120,7 @@ UpdateCardStatus(ctx, tenant, team, card, session, CardStatus) (Card, ok bool, e
 OnMemberTerminal / SweepBackstop(ctx, tenant, backstop)        // completion + wall-clock backstop; reaps every still-active member
 ```
 
-- Members are **ordinary sessions** (`delegation_role = 'team_member'`, `team_id` set), reusing the session-key serial lock — no new
+- Members are **ordinary sessions** (a `team_members` row, one level deeper than the creator in `session_lineage`), reusing the session-key serial lock — no new
   locking primitive for the loop. A member is a **leaf**: it cannot `delegate` or create a team (preserves depth ≤ 1).
 - Four tools — `read_board`, `claim_card`, `write_card`, `update_card_status` — are ordinary `Tool`s with all-TRUE taint.
 - **Read-time taint fold** is the one genuinely new mechanism: reading a card folds its `taint_state` into the reader's — the same shape

@@ -1,13 +1,14 @@
 // Package postgres is the Postgres adapter for internal/delegate: the
-// delegations and fanout_envelopes tables, with the session, key and event
+// delegations, fanout_envelopes and session_lineage tables, with the session, key and event
 // writes a spawn or a resolution makes in the same transaction. The rules —
 // the depth and concurrency bounds, when a return is valid — are delegate's own.
 //
-// Bind and CreateEnvelope are transaction-level functions rather than Tx
-// methods because their callers already hold a transaction of their own: the
-// event log's OnDelegate hook (cmd/nexusd) binds inside the append that
-// requests the delegation, and a plan step creates its envelope inside the
-// step's own transaction.
+// Bind, CreateEnvelope, LineageOf and RecordLineage are transaction-level
+// functions rather than Tx methods because their callers already hold a
+// transaction of their own: the event log's OnDelegate hook (cmd/nexusd) binds
+// inside the append that requests the delegation, a plan step creates its
+// envelope inside the step's own transaction, and a team spawns its members
+// inside its own.
 package postgres
 
 import (
@@ -171,16 +172,28 @@ func (t *txn) ListFanout(ctx context.Context, fanoutID uuid.UUID) ([]delegate.De
 	return out, rows.Err()
 }
 
+// CountForRoot counts the delegations made anywhere under a root session. A
+// parent with no lineage record is a root itself, so its own delegations are the
+// ones whose parent is the root; COALESCE reads both cases as one.
 func (t *txn) CountForRoot(ctx context.Context, rootSessionID uuid.UUID) (open, total int, err error) {
 	err = t.Tx().QueryRow(ctx, `
 		SELECT
 			count(*) FILTER (WHERE d.status = 'pending'),
 			count(*)
 		FROM delegations d
-		JOIN sessions s ON s.session_id = d.parent_session_id
-		WHERE s.root_session_id = $1`, rootSessionID,
+		LEFT JOIN session_lineage l ON l.session_id = d.parent_session_id
+		WHERE COALESCE(l.root_session_id, d.parent_session_id) = $1`, rootSessionID,
 	).Scan(&open, &total)
 	return open, total, err
+}
+
+func (t *txn) LineageOf(ctx context.Context, sessionID uuid.UUID) (delegate.Lineage, error) {
+	root, depth, err := LineageOf(ctx, t.Tx(), sessionID)
+	return delegate.Lineage{Root: root, Depth: depth}, err
+}
+
+func (t *txn) RecordLineage(ctx context.Context, tenantID, sessionID uuid.UUID, l delegate.Lineage) error {
+	return RecordLineage(ctx, t.Tx(), tenantID, sessionID, l.Root, l.Depth)
 }
 
 func (t *txn) SetDelegationResult(ctx context.Context, delegationID uuid.UUID, status delegate.Status, result json.RawMessage, reason string) error {

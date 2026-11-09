@@ -24,6 +24,7 @@ type fakeStore struct {
 	mu sync.Mutex
 
 	sessions    map[uuid.UUID]eventlog.Session
+	lineage     map[uuid.UUID]delegate.Lineage // the spawn tree: only spawned sessions have an entry
 	histories   map[uuid.UUID][]eventlog.Event
 	delegations map[uuid.UUID]delegate.Delegation
 	envelopes   map[uuid.UUID]*envelope
@@ -53,7 +54,7 @@ func newFakeStore(t *testing.T) *fakeStore {
 		t.Fatalf("GenerateDEK: %v", err)
 	}
 	return &fakeStore{
-		sessions: map[uuid.UUID]eventlog.Session{}, histories: map[uuid.UUID][]eventlog.Event{},
+		sessions: map[uuid.UUID]eventlog.Session{}, lineage: map[uuid.UUID]delegate.Lineage{}, histories: map[uuid.UUID][]eventlog.Event{},
 		delegations: map[uuid.UUID]delegate.Delegation{}, envelopes: map[uuid.UUID]*envelope{}, dek: dek,
 	}
 }
@@ -65,6 +66,10 @@ func (f *fakeStore) InTenant(ctx context.Context, _ uuid.UUID, fn func(ctx conte
 	defer f.mu.Unlock()
 	sessions, delegations, events := map[uuid.UUID]eventlog.Session{}, map[uuid.UUID]delegate.Delegation{}, append([]appended(nil), f.events...)
 	envelopes := map[uuid.UUID]envelope{}
+	tree := map[uuid.UUID]delegate.Lineage{}
+	for k, v := range f.lineage {
+		tree[k] = v
+	}
 	for k, v := range f.sessions {
 		sessions[k] = v
 	}
@@ -75,7 +80,7 @@ func (f *fakeStore) InTenant(ctx context.Context, _ uuid.UUID, fn func(ctx conte
 		envelopes[k] = *v
 	}
 	if err := fn(ctx, &fakeTx{f: f}); err != nil {
-		f.sessions, f.delegations, f.events = sessions, delegations, events
+		f.sessions, f.lineage, f.delegations, f.events = sessions, tree, delegations, events
 		f.envelopes = map[uuid.UUID]*envelope{}
 		for k, v := range envelopes {
 			v := v
@@ -183,7 +188,7 @@ func (t *fakeTx) ListFanout(_ context.Context, fanoutID uuid.UUID) ([]delegate.D
 }
 func (t *fakeTx) CountForRoot(_ context.Context, root uuid.UUID) (open, total int, err error) {
 	for _, d := range t.f.delegations {
-		if t.f.sessions[d.ParentSessionID].RootSessionID == root {
+		if l, _ := t.LineageOf(context.Background(), d.ParentSessionID); l.Root == root {
 			total++
 			if d.Status == delegate.StatusPending {
 				open++
@@ -191,6 +196,16 @@ func (t *fakeTx) CountForRoot(_ context.Context, root uuid.UUID) (open, total in
 		}
 	}
 	return open, total, nil
+}
+func (t *fakeTx) LineageOf(_ context.Context, id uuid.UUID) (delegate.Lineage, error) {
+	if l, ok := t.f.lineage[id]; ok {
+		return l, nil
+	}
+	return delegate.Lineage{Root: id}, nil // nobody spawned it: its own root at depth 0
+}
+func (t *fakeTx) RecordLineage(_ context.Context, _, id uuid.UUID, l delegate.Lineage) error {
+	t.f.lineage[id] = l
+	return nil
 }
 func (t *fakeTx) SetDelegationResult(_ context.Context, id uuid.UUID, status delegate.Status, result json.RawMessage, reason string) error {
 	d := t.f.delegations[id]

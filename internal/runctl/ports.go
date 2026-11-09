@@ -68,6 +68,11 @@ type Tx interface {
 	// concurrent callers exactly one gets true.
 	ClaimAwaitingInput(ctx context.Context, sessionID uuid.UUID) (bool, error)
 
+	// RecordFork records that sessionID is a fork of parentSessionID taken at
+	// event atSeq, with what the fork changed. The record is runctl's own: the
+	// session aggregate does not carry fork provenance.
+	RecordFork(ctx context.Context, tenantID, sessionID, parentSessionID uuid.UUID, atSeq int64, overrides map[string]string) error
+
 	// SetAutonomyLevel pins the session's autonomy level.
 	SetAutonomyLevel(ctx context.Context, sessionID uuid.UUID, level string) error
 

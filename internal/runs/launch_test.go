@@ -102,8 +102,8 @@ func TestLaunch_AdmitsASessionThenStartsTheRunUnderIt(t *testing.T) {
 		t.Errorf("admission defaults/route = label %q model %q autonomy %q conversational %v", a.DataLabel, a.RouteModelID, a.Autonomy, a.Conversational)
 	}
 	wantDigest := harness.Digest(harness.Config{
-		SystemPromptVersion: "phase2-v1", CatalogManifestDigest: []byte("catalog-digest"),
-		SkillSetDigest: []byte("skills"), PromptMode: "phase2-single-shot", MCPCatalogDigest: []byte("mcp"),
+		SystemPromptVersion: harness.DefaultSystemPromptVersion, CatalogManifestDigest: []byte("catalog-digest"),
+		SkillSetDigest: []byte("skills"), PromptMode: harness.DefaultPromptMode, MCPCatalogDigest: []byte("mcp"),
 	})
 	if !bytes.Equal(a.HarnessDigest, wantDigest) {
 		t.Errorf("harness digest does not fold in the catalog, skill-set and MCP digests")
