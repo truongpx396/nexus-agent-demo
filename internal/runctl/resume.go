@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
+	"github.com/truongpx396/nexus-agent-demo/internal/runstate"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
 
@@ -84,11 +85,7 @@ func (c *Control) Resume(ctx context.Context, tenantID, sessionID uuid.UUID) ite
 			return
 		}
 
-		cfg := kernel.RunConfig{
-			System: c.System, Catalog: c.Catalog, MaxTurns: c.MaxTurns,
-			AutonomyLevel: sess.AutonomyLevel, ModelID: sess.RouteModelID,
-			Conversational: sess.Conversational,
-		}
+		cfg := runstate.ConfigFor(sess, kernel.RunConfig{System: c.System, Catalog: c.Catalog, MaxTurns: c.MaxTurns})
 		for ev, err := range c.Kernel.Continue(ctx, st, cfg) {
 			if !yield(ev, err) {
 				return

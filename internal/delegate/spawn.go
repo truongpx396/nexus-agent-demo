@@ -112,7 +112,7 @@ func (d *Delegations) Spawn(ctx context.Context, req SpawnRequest) (uuid.UUID, e
 		return uuid.Nil, fmt.Errorf("delegate: Spawn called before Wire")
 	}
 
-	var parent eventlog.Session
+	var parent, child eventlog.Session
 	var parentLineage Lineage
 	var childID = uuid.New()
 	var dek crypto.DEK
@@ -130,7 +130,7 @@ func (d *Delegations) Spawn(ctx context.Context, req SpawnRequest) (uuid.UUID, e
 			return err
 		}
 		parentID := req.ParentSessionID
-		if err := tx.CreateSession(ctx, eventlog.Session{
+		child = eventlog.Session{
 			SessionID:       childID,
 			SessionKey:      childID.String(),
 			TenantID:        req.TenantID,
@@ -144,7 +144,8 @@ func (d *Delegations) Spawn(ctx context.Context, req SpawnRequest) (uuid.UUID, e
 			RouteReason:     parent.RouteReason,
 			AutonomyLevel:   parent.AutonomyLevel,
 			ParentSessionID: &parentID,
-		}); err != nil {
+		}
+		if err := tx.CreateSession(ctx, child); err != nil {
 			return err
 		}
 		if err := tx.RecordLineage(ctx, req.TenantID, childID, parentLineage.Child()); err != nil {
@@ -171,11 +172,12 @@ func (d *Delegations) Spawn(ctx context.Context, req SpawnRequest) (uuid.UUID, e
 	}
 
 	childState := &kernel.RunState{TenantID: req.TenantID, SessionID: childID, Seal: runstate.Seal(dek, req.TenantID, childID)}
-	childCfg := kernel.RunConfig{
+	// The config is read back from the session just written, so the row and the
+	// run that executes it cannot disagree about what was pinned.
+	childCfg := runstate.ConfigFor(child, kernel.RunConfig{
 		System: d.cfg.System, Catalog: d.cfg.Catalog, LoadedTools: d.cfg.LoadedTools,
-		ModelID: parent.RouteModelID, MaxTurns: d.cfg.MaxTurns,
-		Input: req.Task, AutonomyLevel: parent.AutonomyLevel,
-	}
+		MaxTurns: d.cfg.MaxTurns, Input: req.Task,
+	})
 
 	// A delegate_fanout child (README task 8.13) runs under a CLONED
 	// Kernel whose Budget is this cohort's shared EnvelopeBudgetGate instead

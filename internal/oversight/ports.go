@@ -52,15 +52,13 @@ type Store interface {
 	InTenant(ctx context.Context, tenantID uuid.UUID, fn func(ctx context.Context, tx Tx) error) error
 }
 
-// SessionInfo is the part of a session the Resumer needs to rebuild a run.
-type SessionInfo struct {
-	AutonomyLevel string
-}
-
 // Sessions loads what a suspended run is rebuilt from: its session and its
-// full, still-sealed history.
+// full, still-sealed history. It returns the session itself, not a projection of
+// it: the Resumer takes the configuration the session pinned from it
+// (runstate.ConfigFor), and a projection that names only some of those fields is
+// how a resumed run came to drop the rest.
 type Sessions interface {
-	Load(ctx context.Context, tenantID, sessionID uuid.UUID) (SessionInfo, []eventlog.Event, error)
+	Load(ctx context.Context, tenantID, sessionID uuid.UUID) (eventlog.Session, []eventlog.Event, error)
 }
 
 // KeyOpener unwraps a tenant's data key, so the history can be decrypted and
