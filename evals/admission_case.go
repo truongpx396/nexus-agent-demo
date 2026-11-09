@@ -3,7 +3,9 @@ package evals
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/google/uuid"
 
@@ -172,12 +174,7 @@ func (r *capabilityIgnoredRecorder) CapabilityIgnored(_ context.Context, _, _ uu
 }
 
 func (r *capabilityIgnoredRecorder) contains(key string) bool {
-	for _, v := range r.capabilityIgnored {
-		if v == key {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(r.capabilityIgnored, key)
 }
 
 // admissionStubTool is a minimal tools.Tool for populating a Registry in
@@ -201,5 +198,5 @@ func (admissionStubTool) ValidateInput(context.Context, json.RawMessage, tools.R
 	return nil
 }
 func (admissionStubTool) Call(context.Context, json.RawMessage, tools.RunContext) (tools.Result, error) {
-	return tools.Result{}, fmt.Errorf("evals fixture stub: Call is never exercised by these cases")
+	return tools.Result{}, errors.New("evals fixture stub: Call is never exercised by these cases")
 }

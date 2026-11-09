@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -60,7 +61,7 @@ func LatestSnapshot(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) (Snapsh
 	var s Snapshot
 	err := row.Scan(&s.SnapshotID, &s.TenantID, &s.SessionID, &s.AtSeq, &s.Status, &s.TerminalReason, &s.CreatedAt)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return Snapshot{}, false, nil
 		}
 		return Snapshot{}, false, fmt.Errorf("latest snapshot for session %s: %w", sessionID, err)

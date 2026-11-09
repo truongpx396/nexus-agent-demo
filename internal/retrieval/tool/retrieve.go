@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -86,10 +87,10 @@ func (Retrieve) ValidateInput(_ context.Context, in json.RawMessage, _ tools.Run
 		return fmt.Errorf("invalid input: %w", err)
 	}
 	if req.Query == "" {
-		return fmt.Errorf("query is required")
+		return errors.New("query is required")
 	}
 	if req.TopK < 0 {
-		return fmt.Errorf("top_k must not be negative")
+		return errors.New("top_k must not be negative")
 	}
 	return nil
 }

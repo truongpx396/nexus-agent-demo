@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"sync"
 	"time"
 
@@ -59,18 +60,10 @@ func (f *fakeStore) InTenant(ctx context.Context, _ uuid.UUID, fn func(ctx conte
 	sessions, tms, cards, events := map[uuid.UUID]eventlog.Session{}, map[uuid.UUID]teams.Team{}, map[uuid.UUID]teams.Card{}, append([]appended(nil), f.events...)
 	envs := map[uuid.UUID]envelope{}
 	roster := map[uuid.UUID]uuid.UUID{}
-	for k, v := range f.members {
-		roster[k] = v
-	}
-	for k, v := range f.sessions {
-		sessions[k] = v
-	}
-	for k, v := range f.teams {
-		tms[k] = v
-	}
-	for k, v := range f.cards {
-		cards[k] = v
-	}
+	maps.Copy(roster, f.members)
+	maps.Copy(sessions, f.sessions)
+	maps.Copy(tms, f.teams)
+	maps.Copy(cards, f.cards)
 	for k, v := range f.envelopes {
 		envs[k] = *v
 	}
@@ -78,7 +71,6 @@ func (f *fakeStore) InTenant(ctx context.Context, _ uuid.UUID, fn func(ctx conte
 		f.sessions, f.members, f.teams, f.cards, f.events = sessions, roster, tms, cards, events
 		f.envelopes = map[uuid.UUID]*envelope{}
 		for k, v := range envs {
-			v := v
 			f.envelopes[k] = &v
 		}
 		return err
@@ -102,7 +94,7 @@ func (f *fakeStore) seedTeam(n int, memberStatus string) (teams.Team, []eventlog
 	t := teams.Team{TeamID: uuid.New(), CoordinatorSessionID: coord.SessionID, Status: teams.StatusActive}
 	f.teams[t.TeamID] = t
 	var members []eventlog.Session
-	for i := 0; i < n; i++ {
+	for range n {
 		m := eventlog.Session{SessionID: uuid.New(), Status: memberStatus}
 		f.sessions[m.SessionID] = m
 		f.members[m.SessionID] = t.TeamID

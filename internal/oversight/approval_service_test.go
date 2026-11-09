@@ -77,9 +77,9 @@ func TestADecisionOnAnApprovalThatIsAlreadyDecidedIsRefused(t *testing.T) {
 	}
 
 	_, err := a.Deny(ctx, tenant, pending.ApprovalID, "mallory", "changed my mind")
-	var notPending oversight.ErrApprovalNotPending
+	var notPending oversight.ApprovalNotPendingError
 	if !errors.As(err, &notPending) || notPending.Status != oversight.ApprovalGranted {
-		t.Fatalf("second decision = %v, want ErrApprovalNotPending with status granted", err)
+		t.Fatalf("second decision = %v, want ApprovalNotPendingError with status granted", err)
 	}
 	if f.approvals[pending.ApprovalID].Status != oversight.ApprovalGranted {
 		t.Error("the second decision overwrote the first")
@@ -154,9 +154,9 @@ func TestAnApprovalPastItsTTLIsRefusedAndTheExpiryIsKept(t *testing.T) {
 			pending := f.seedApproval(session, past)
 
 			err := decide(a, pending.ApprovalID)
-			var notPending oversight.ErrApprovalNotPending
+			var notPending oversight.ApprovalNotPendingError
 			if !errors.As(err, &notPending) || notPending.Status != oversight.ApprovalExpired {
-				t.Fatalf("decision after expiry = %v, want ErrApprovalNotPending with status expired", err)
+				t.Fatalf("decision after expiry = %v, want ApprovalNotPendingError with status expired", err)
 			}
 			// The refusal must not roll the expiry back: the approval is expired
 			// in the table, no longer listed as pending, and the log says so.

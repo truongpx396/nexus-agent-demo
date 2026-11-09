@@ -30,12 +30,10 @@ const (
 // ClassifyTrigger classifies an error returned by Provider.Stream or a
 // Stream's Next.
 func ClassifyTrigger(err error) TriggerClass {
-	var overflow *ContextOverflowError
-	if errors.As(err, &overflow) {
+	if _, ok := errors.AsType[*ContextOverflowError](err); ok {
 		return TriggerContextOverflow
 	}
-	var throttle *ThrottleError
-	if errors.As(err, &throttle) {
+	if _, ok := errors.AsType[*ThrottleError](err); ok {
 		return TriggerRetryable
 	}
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, io.ErrUnexpectedEOF) {

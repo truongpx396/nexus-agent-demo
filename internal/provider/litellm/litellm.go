@@ -389,7 +389,7 @@ func (s *stream) Next(ctx context.Context) (provider.Chunk, bool, error) {
 // once instead of one block at a time (the Chat Completions API has no
 // per-call stop signal).
 func (s *stream) flushToolCalls() {
-	for i := 0; i < len(s.toolCalls); i++ {
+	for i := range len(s.toolCalls) {
 		tb, ok := s.toolCalls[i]
 		if !ok {
 			continue

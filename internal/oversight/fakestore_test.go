@@ -3,6 +3,7 @@ package oversight_test
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sync"
 	"time"
 
@@ -58,12 +59,8 @@ func (f *fakeStore) snap() snapshot {
 		approvals: map[uuid.UUID]oversight.Approval{}, inputs: map[uuid.UUID]oversight.InputRequest{},
 		order: append([]uuid.UUID(nil), f.order...), events: append([]appended(nil), f.events...),
 	}
-	for k, v := range f.approvals {
-		s.approvals[k] = v
-	}
-	for k, v := range f.inputs {
-		s.inputs[k] = v
-	}
+	maps.Copy(s.approvals, f.approvals)
+	maps.Copy(s.inputs, f.inputs)
 	return s
 }
 

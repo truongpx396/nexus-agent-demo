@@ -1,7 +1,9 @@
 package plan
 
 import (
+	"errors"
 	"fmt"
+	"slices"
 	"sort"
 )
 
@@ -16,16 +18,16 @@ const maxPredicateDepth = 8
 // (lifecycle.go's own Validate transition) are what persist the outcome.
 func Validate(p Plan) error {
 	if p.StartStep == "" {
-		return fmt.Errorf("plan: start_step is required")
+		return errors.New("plan: start_step is required")
 	}
 	if len(p.Steps) == 0 {
-		return fmt.Errorf("plan: at least one step is required")
+		return errors.New("plan: at least one step is required")
 	}
 
 	seen := map[string]Step{}
 	for _, s := range p.Steps {
 		if s.ID == "" {
-			return fmt.Errorf("plan: a step has an empty id")
+			return errors.New("plan: a step has an empty id")
 		}
 		if _, dup := seen[s.ID]; dup {
 			return fmt.Errorf("plan: duplicate step id %q", s.ID)
@@ -70,7 +72,7 @@ func Validate(p Plan) error {
 	if _, ok, err := parseCeiling(p.CostEnvelope.Ceiling); err != nil {
 		return fmt.Errorf("plan: cost_envelope.ceiling: %w", err)
 	} else if !ok && p.hasDelegateFanout() {
-		return fmt.Errorf("plan: a plan with a delegate_fanout step must declare a cost_envelope.ceiling (README task 8.13 — reserved before the first child starts)")
+		return errors.New("plan: a plan with a delegate_fanout step must declare a cost_envelope.ceiling (README task 8.13 — reserved before the first child starts)")
 	}
 	return nil
 }
@@ -111,10 +113,10 @@ func validateStepShape(s Step) error {
 			return fmt.Errorf("kind %q requires a delegate_fanout config", s.Kind)
 		}
 		if s.DelegateFanout.ChildCount <= 0 {
-			return fmt.Errorf("delegate_fanout.child_count must be positive")
+			return errors.New("delegate_fanout.child_count must be positive")
 		}
 		if len(s.DelegateFanout.ScopeGrant) == 0 {
-			return fmt.Errorf("delegate_fanout.scope_grant must name at least one tool")
+			return errors.New("delegate_fanout.scope_grant must name at least one tool")
 		}
 		if _, _, err := parseCeiling(s.DelegateFanout.PerChildCeiling); err != nil {
 			return fmt.Errorf("delegate_fanout.per_child_ceiling: %w", err)
@@ -129,7 +131,7 @@ func validateStepShape(s Step) error {
 			// enumeration fails validation" — an EMPTY enumeration is the
 			// degenerate case of "outside the enumeration is everything,"
 			// so it fails here rather than silently admitting nothing.
-			return fmt.Errorf("preauth must enumerate at least one {tool_id, digest} entry — an unbounded or empty preauth fails validation")
+			return errors.New("preauth must enumerate at least one {tool_id, digest} entry — an unbounded or empty preauth fails validation")
 		}
 	case StepInputRequest:
 		if s.InputRequest == nil || s.InputRequest.Question == "" {
@@ -139,7 +141,7 @@ func validateStepShape(s Step) error {
 		// no fields to check
 	case StepLoop:
 		if s.Loop == nil || s.Loop.MaxIterations <= 0 {
-			return fmt.Errorf("loop steps must declare a positive max_iterations (README task 8.3: bounded loops)")
+			return errors.New("loop steps must declare a positive max_iterations (README task 8.3: bounded loops)")
 		}
 	default:
 		return fmt.Errorf("unrecognized step kind %q", s.Kind)
@@ -153,7 +155,7 @@ func validateStepShape(s Step) error {
 func validateTransitions(s Step) error {
 	for i, t := range s.Transitions {
 		if t.When == nil && i != len(s.Transitions)-1 {
-			return fmt.Errorf("the unconditional transition (nil when) must be listed last")
+			return errors.New("the unconditional transition (nil when) must be listed last")
 		}
 	}
 	return nil
@@ -162,13 +164,11 @@ func validateTransitions(s Step) error {
 func predicateDepth(p Predicate) int {
 	switch p.Op { //nolint:exhaustive // every leaf op (eq/ne/lt/gt/in) shares the same depth-1 default; only and/or recurse
 	case OpAnd, OpOr:
-		max := 0
-		for _, sub := range append(append([]Predicate{}, p.And...), p.Or...) {
-			if d := predicateDepth(sub); d > max {
-				max = d
-			}
+		deepest := 0
+		for _, sub := range slices.Concat(p.And, p.Or) {
+			deepest = max(deepest, predicateDepth(sub))
 		}
-		return max + 1
+		return deepest + 1
 	default:
 		return 1
 	}

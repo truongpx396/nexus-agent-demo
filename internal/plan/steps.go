@@ -3,6 +3,7 @@ package plan
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -81,7 +82,7 @@ func (e *Executor) continueAgentStep(ctx context.Context, tenantID, sessionID uu
 func (e *Executor) runDelegateFanout(ctx context.Context, tenantID, sessionID uuid.UUID, step Step) (Context, bool, error) {
 	cfg := step.DelegateFanout
 	if e.Delegations == nil {
-		return nil, false, fmt.Errorf("plan: delegations not wired")
+		return nil, false, errors.New("plan: delegations not wired")
 	}
 	perChild, _, err := parseCeiling(cfg.PerChildCeiling)
 	if err != nil {
@@ -99,7 +100,7 @@ func (e *Executor) runDelegateFanout(ctx context.Context, tenantID, sessionID uu
 	}
 
 	fanoutID := uuid.New()
-	for i := 0; i < cfg.ChildCount; i++ {
+	for i := range cfg.ChildCount {
 		if _, err := e.Delegations.Spawn(ctx, delegate.SpawnRequest{
 			TenantID: tenantID, ParentSessionID: sessionID,
 			AgentID: cfg.AgentID, Task: cfg.Task, ScopeGrant: cfg.ScopeGrant,
@@ -123,7 +124,7 @@ func (e *Executor) runDelegateFanout(ctx context.Context, tenantID, sessionID uu
 // through.
 func (e *Executor) runApprovalGate(ctx context.Context, tenantID, sessionID, anchorEventID uuid.UUID, step Step) (Context, bool, error) {
 	if e.Approvals == nil {
-		return nil, false, fmt.Errorf("plan: approvals not wired")
+		return nil, false, errors.New("plan: approvals not wired")
 	}
 	toolID := "plan/" + step.ID
 	input, _ := json.Marshal(map[string]string{"question": step.ApprovalGate.Question})
@@ -146,7 +147,7 @@ func (e *Executor) runApprovalGate(ctx context.Context, tenantID, sessionID, anc
 // here is always a closed, finite list.
 func (e *Executor) runPreauth(ctx context.Context, tenantID, sessionID, anchorEventID uuid.UUID, step Step) (Context, bool, error) {
 	if e.Approvals == nil {
-		return nil, false, fmt.Errorf("plan: approvals not wired")
+		return nil, false, errors.New("plan: approvals not wired")
 	}
 	toolID := "plan/" + step.ID
 	input, _ := json.Marshal(step.Preauth.Entries)
@@ -167,7 +168,7 @@ func (e *Executor) runPreauth(ctx context.Context, tenantID, sessionID, anchorEv
 // (internal/oversight/input.go's own task 5.9 rule), reused verbatim here.
 func (e *Executor) runInputRequest(ctx context.Context, tenantID, sessionID uuid.UUID, step Step) (Context, bool, error) {
 	if e.Inputs == nil {
-		return nil, false, fmt.Errorf("plan: inputs not wired")
+		return nil, false, errors.New("plan: inputs not wired")
 	}
 	if _, err := e.Inputs.RequestInput(ctx, oversight.RequestInputParams{
 		TenantID: tenantID, SessionID: sessionID,

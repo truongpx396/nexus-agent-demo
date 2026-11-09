@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,6 +34,11 @@ const (
 	// the sweep at startup has to skip that session as if it were live; this
 	// one, a TTL later, finds the lock gone and recovers it.
 	orphanRecheckAfter = sessionLockTTL + 5*time.Second
+
+	// queueWorkerCount is how many workers this process runs to drain the job
+	// queue; each takes one job at a time, so it is also this process's ceiling
+	// on concurrently driven runs.
+	queueWorkerCount = 2
 )
 
 // adminDSN is the administrative connection string, for the few operations
@@ -49,22 +55,28 @@ func tenantDirectory() tenancypg.Directory { return tenancypg.Directory{DSN: adm
 // startPeriodic runs fn every interval until the returned stop is called. It is
 // the one ticker loop the platform's scheduled passes share; what a pass does,
 // and for which tenants, is the owning package's business (tenancy.ForEach
-// visits them), so this file only decides when.
+// visits them), so this file only decides when. stop cancels the context fn
+// runs under, waits for a pass already in flight to return, and is safe to call
+// more than once.
 func startPeriodic(ctx context.Context, interval time.Duration, fn func(context.Context)) (stop func()) {
-	ticker := time.NewTicker(interval)
-	done := make(chan struct{})
-	go func() {
+	ctx, cancel := context.WithCancel(ctx)
+	var loop sync.WaitGroup
+	loop.Go(func() {
+		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
 			select {
-			case <-done:
+			case <-ctx.Done():
 				return
 			case <-ticker.C:
 				fn(ctx)
 			}
 		}
-	}()
-	return func() { close(done) }
+	})
+	return func() {
+		cancel()
+		loop.Wait()
+	}
 }
 
 // startAnchorLoop runs the scheduled verifier task 5.3 asks for: every
@@ -143,16 +155,17 @@ func startQueueWorkers(ctx context.Context, redisClient *redis.Client, port queu
 	workerCtx, cancel := context.WithCancel(ctx)
 	runctl.StartRecovery(workerCtx, func(ctx context.Context) ([]runctl.Orphan, error) { return runctlpg.ListRunning(ctx, adminPool) }, lock, port, orphanRecheckAfter)
 
-	numWorkers := 2
-	for i := 0; i < numWorkers; i++ {
+	var workers sync.WaitGroup
+	for i := range queueWorkerCount {
 		w := queue.NewWorker(queue.WorkerConfig{
 			Port: port, Lock: lock, Runner: runner, RenewEvery: sessionLockTTL / 3,
 			Owner: fmt.Sprintf("nexusd-worker-%d-%d", os.Getpid(), i),
 		})
-		go w.Run(workerCtx)
+		workers.Go(func() { w.Run(workerCtx) })
 	}
 	return func() {
 		cancel()
+		workers.Wait() // a worker mid-job finishes unwinding before the pool it leases through closes
 		adminPool.Close()
 	}
 }

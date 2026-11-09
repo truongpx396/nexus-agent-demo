@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -60,7 +61,7 @@ func latestCheckpoint(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) (runc
 		&providerRequestID, &delegations, &c.HarnessDigest, &c.CreatedAt,
 	)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return runctl.Checkpoint{}, false, nil
 		}
 		return runctl.Checkpoint{}, false, fmt.Errorf("latest checkpoint for session %s: %w", sessionID, err)

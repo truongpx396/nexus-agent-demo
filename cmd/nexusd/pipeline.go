@@ -128,8 +128,8 @@ func newToolPipeline(st *store.Store, cfgStore config.Loader, keyStore *cryptopg
 			AllowedHosts: webFetchAllowlist,
 		})
 	}
-	var toolRefs []string
-	var catalog []provider.ToolSchema
+	toolRefs := make([]string, 0, len(builtinTools)+len(scriptTools))
+	catalog := make([]provider.ToolSchema, 0, len(builtinTools)+len(scriptTools))
 	for _, t := range builtinTools {
 		if err := reg.Register(t); err != nil {
 			fatalf("register tool %s: %v", t.ID(), err)

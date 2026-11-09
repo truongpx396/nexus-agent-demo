@@ -1,7 +1,7 @@
 package rest
 
 import (
-	"fmt"
+	"errors"
 	"net/http"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/capability"
@@ -31,7 +31,7 @@ var Descriptor = capability.Descriptor{
 func ResolvePrincipal(r *http.Request) (capability.Principal, error) {
 	tenantID, userID, ok := principalFromContext(r.Context())
 	if !ok {
-		return capability.Principal{}, fmt.Errorf("no verified principal on request context")
+		return capability.Principal{}, errors.New("no verified principal on request context")
 	}
 	return capability.Principal{Kind: capability.PrincipalUser, TenantID: tenantID, UserID: userID}, nil
 }

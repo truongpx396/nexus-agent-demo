@@ -9,6 +9,7 @@ package tool
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -193,7 +194,7 @@ func (ClaimCard) ValidateInput(_ context.Context, in json.RawMessage, _ tools.Ru
 		return fmt.Errorf("invalid input: %w", err)
 	}
 	if req.CardID == "" {
-		return fmt.Errorf("card_id is required")
+		return errors.New("card_id is required")
 	}
 	if _, err := uuid.Parse(req.CardID); err != nil {
 		return fmt.Errorf("card_id is not a valid uuid: %w", err)
@@ -272,7 +273,7 @@ func (WriteCard) ValidateInput(_ context.Context, in json.RawMessage, _ tools.Ru
 		return fmt.Errorf("invalid input: %w", err)
 	}
 	if req.Title == "" {
-		return fmt.Errorf("title is required")
+		return errors.New("title is required")
 	}
 	return nil
 }
@@ -344,13 +345,13 @@ func (UpdateCardStatus) ValidateInput(_ context.Context, in json.RawMessage, _ t
 		return fmt.Errorf("invalid input: %w", err)
 	}
 	if req.CardID == "" {
-		return fmt.Errorf("card_id is required")
+		return errors.New("card_id is required")
 	}
 	if _, err := uuid.Parse(req.CardID); err != nil {
 		return fmt.Errorf("card_id is not a valid uuid: %w", err)
 	}
 	if !allowedCardStatusUpdates[req.Status] {
-		return fmt.Errorf("status must be one of in_progress, done, blocked")
+		return errors.New("status must be one of in_progress, done, blocked")
 	}
 	return nil
 }

@@ -188,7 +188,7 @@ func TestWorker_CircuitBreakerOpensAfterRepeatedIdenticalFailures(t *testing.T) 
 
 	// Three identical failures trip the breaker (internal/reliability's own
 	// threshold-3 default and this test's explicit registry).
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		job, _ := port.Enqueue(context.Background(), Job{TenantID: uuid.New(), SessionID: uuid.New(), SessionKey: sessionKey, Kind: KindResume, AvailableAt: time.Now()})
 		w.pollOnce(context.Background())
 		_ = job

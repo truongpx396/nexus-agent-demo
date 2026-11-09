@@ -2,6 +2,7 @@ package teams
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -48,10 +49,10 @@ type CreateTeamRequest struct {
 // forget to check.
 func (s *Service) CreateTeam(ctx context.Context, req CreateTeamRequest) (uuid.UUID, error) {
 	if s.cfg.Kernel == nil {
-		return uuid.Nil, fmt.Errorf("teams: CreateTeam called before Wire")
+		return uuid.Nil, errors.New("teams: CreateTeam called before Wire")
 	}
 	if len(req.Members) == 0 {
-		return uuid.Nil, fmt.Errorf("teams: roster must name at least one member")
+		return uuid.Nil, errors.New("teams: roster must name at least one member")
 	}
 
 	var creator eventlog.Session
@@ -112,7 +113,7 @@ func (s *Service) CreateTeam(ctx context.Context, req CreateTeamRequest) (uuid.U
 	}
 
 	for _, m := range req.Members {
-		if err := s.spawnMember(context.Background(), req.TenantID, teamID, envelopeID, creator, m); err != nil {
+		if err := s.spawnMember(context.WithoutCancel(ctx), req.TenantID, teamID, envelopeID, creator, m); err != nil {
 			log.Error().Err(err).Any("team_id", teamID).Any("agent_id", m.AgentID).Msg("teams: spawn member failed")
 		}
 	}

@@ -75,7 +75,7 @@ func embedOne(text string) provider.Embedding {
 		block = sha256.Sum256(block[:])
 	}
 	var sumSquares float64
-	for i := 0; i < EmbeddingDimensions; i++ {
+	for i := range EmbeddingDimensions {
 		bits := binary.BigEndian.Uint32(buf[i*bytesPerDim : (i+1)*bytesPerDim])
 		// Map the full uint32 range onto [-1, 1] before normalizing, so no
 		// dimension is degenerately biased toward one sign.

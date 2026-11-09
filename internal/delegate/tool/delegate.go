@@ -9,6 +9,7 @@ package tool
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -82,10 +83,10 @@ func (d Delegate) ValidateInput(_ context.Context, in json.RawMessage, _ tools.R
 		return fmt.Errorf("invalid input: %w", err)
 	}
 	if req.AgentID == "" || req.Task == "" {
-		return fmt.Errorf("agent_id and task are required")
+		return errors.New("agent_id and task are required")
 	}
 	if len(req.ScopeGrant) == 0 {
-		return fmt.Errorf("scope_grant must name at least one tool ref")
+		return errors.New("scope_grant must name at least one tool ref")
 	}
 	return nil
 }

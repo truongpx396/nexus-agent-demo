@@ -12,7 +12,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
 
-// ErrUnresolvedClaims is returned by Resume when sessionID has one or more
+// UnresolvedClaimsError is returned by Resume when sessionID has one or more
 // in_flight claims — task 6.6's own guarantee, enforced one layer up from
 // internal/tools/pipeline.go's own per-call refusal: rather than let the
 // turn loop re-dispatch into an ambiguous external effect and rely SOLELY
@@ -20,12 +20,12 @@ import (
 // until every claim is resolved (internal/runctl.ResolveClaim) — belt and
 // suspenders, the same layering internal/permissions' own chain uses
 // throughout (README.md §4's own "ALWAYS evaluated" layers).
-type ErrUnresolvedClaims struct {
+type UnresolvedClaimsError struct {
 	SessionID uuid.UUID
 	ClaimIDs  []uuid.UUID
 }
 
-func (e ErrUnresolvedClaims) Error() string {
+func (e UnresolvedClaimsError) Error() string {
 	return fmt.Sprintf("runctl: session %s has %d unresolved claim(s); resolve them (ResolveClaim) before resuming", e.SessionID, len(e.ClaimIDs))
 }
 
@@ -56,7 +56,7 @@ func (c *Control) Resume(ctx context.Context, tenantID, sessionID uuid.UUID) ite
 			return
 		}
 		if len(claimIDs) > 0 {
-			yield(eventlog.Event{}, ErrUnresolvedClaims{SessionID: sessionID, ClaimIDs: claimIDs})
+			yield(eventlog.Event{}, UnresolvedClaimsError{SessionID: sessionID, ClaimIDs: claimIDs})
 			return
 		}
 

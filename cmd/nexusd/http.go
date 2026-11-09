@@ -32,12 +32,12 @@ const metricsStaleClaimAfter = 15 * time.Minute
 // nexus_telemetry_attr_drop_rate always reports 0 from this endpoint
 // specifically — the same "not measured here, never measured zero"
 // documented limitation.
-
 func handleMetrics(reports reporting.Reports) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tenantIDs, err := tenantDirectory().ListTenantIDs(r.Context())
 		if err != nil {
-			http.Error(w, "list tenants: "+err.Error(), http.StatusInternalServerError)
+			log.Error().Err(err).Msg("nexusd: /metrics: list tenants")
+			http.Error(w, "list tenants: internal error", http.StatusInternalServerError)
 			return
 		}
 
@@ -159,19 +159,23 @@ func handleReadyz(pool *pgxpool.Pool, redisClient *redis.Client, signer *audit.S
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		if err := pool.Ping(ctx); err != nil {
-			http.Error(w, "postgres not reachable: "+err.Error(), http.StatusServiceUnavailable)
+			log.Warn().Err(err).Msg("nexusd: /readyz: postgres not reachable")
+			http.Error(w, "postgres not reachable", http.StatusServiceUnavailable)
 			return
 		}
 		if err := redisClient.Ping(ctx).Err(); err != nil {
-			http.Error(w, "redis not reachable: "+err.Error(), http.StatusServiceUnavailable)
+			log.Warn().Err(err).Msg("nexusd: /readyz: redis not reachable")
+			http.Error(w, "redis not reachable", http.StatusServiceUnavailable)
 			return
 		}
 		if err := queueredis.CheckReady(ctx, redisClient); err != nil {
-			http.Error(w, "queue not ready: "+err.Error(), http.StatusServiceUnavailable)
+			log.Warn().Err(err).Msg("nexusd: /readyz: queue not ready")
+			http.Error(w, "queue not ready", http.StatusServiceUnavailable)
 			return
 		}
 		if _, _, err := signer.PublicKey(ctx); err != nil {
-			http.Error(w, "signerd not reachable: "+err.Error(), http.StatusServiceUnavailable)
+			log.Warn().Err(err).Msg("nexusd: /readyz: signerd not reachable")
+			http.Error(w, "signerd not reachable", http.StatusServiceUnavailable)
 			return
 		}
 		w.WriteHeader(http.StatusOK)

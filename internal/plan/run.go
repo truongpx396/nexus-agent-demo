@@ -3,6 +3,7 @@ package plan
 import (
 	"context"
 	"fmt"
+	"maps"
 
 	"github.com/google/uuid"
 
@@ -91,9 +92,7 @@ func (e *Executor) exitStepAndTransition(ctx context.Context, tenantID, sessionI
 	}); err != nil {
 		return "", err
 	}
-	for k, v := range bindings {
-		st.Vars[k] = v
-	}
+	maps.Copy(st.Vars, bindings)
 
 	next, pred, err := evaluateTransitions(step.Transitions, st.Vars)
 	if err != nil {

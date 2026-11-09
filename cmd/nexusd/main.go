@@ -16,7 +16,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/dotenv"
@@ -90,7 +92,10 @@ func main() {
 	}
 	obs.InitLogger("nexusd")
 
-	ctx := context.Background()
+	// Ctrl-C or SIGTERM cancels a long subcommand (migrate, ingest, verify-chain)
+	// cleanly instead of killing it mid-statement; serve installs its own.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	args := os.Args[1:]
 	var filtered []string
@@ -142,7 +147,9 @@ func main() {
 	case "serve":
 		runServe()
 	default:
-		runServe()
+		// A mistyped subcommand must not boot a server as a side effect.
+		fmt.Fprintf(os.Stderr, "nexusd: unknown command %q (commands: serve, migrate, seed, verify-chain, dashboard, go-live, erase, ingest, token)\n", filtered[0])
+		os.Exit(2)
 	}
 }
 

@@ -3,7 +3,9 @@ package builtin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/google/uuid"
 
@@ -91,7 +93,7 @@ func (ActivateSkill) ValidateInput(_ context.Context, in json.RawMessage, _ tool
 		return fmt.Errorf("invalid input: %w", err)
 	}
 	if req.SkillID == "" {
-		return fmt.Errorf("skill_id is required")
+		return errors.New("skill_id is required")
 	}
 	return nil
 }
@@ -165,12 +167,7 @@ func (a ActivateSkill) isHeld(declID string) bool {
 }
 
 func containsString(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(list, s)
 }
 
 func fileNames(files []skills.BundleFile) []string {
@@ -222,7 +219,7 @@ func (ReadSkillFile) ValidateInput(_ context.Context, in json.RawMessage, _ tool
 		return fmt.Errorf("invalid input: %w", err)
 	}
 	if req.SkillID == "" || req.Path == "" {
-		return fmt.Errorf("skill_id and path are required")
+		return errors.New("skill_id and path are required")
 	}
 	return nil
 }

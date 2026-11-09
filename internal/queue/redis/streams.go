@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"strconv"
 	"strings"
 	"time"
@@ -81,8 +82,8 @@ func CheckReady(ctx context.Context, client *goredis.Client) error {
 // jobFields is the entry shape written to the stream/dead-letter stream —
 // ids and control fields only, never plaintext, the same discipline
 // queue_jobs.payload's own retired doc comment described.
-func jobFields(job queue.Job) map[string]interface{} {
-	return map[string]interface{}{
+func jobFields(job queue.Job) map[string]any {
+	return map[string]any{
 		"job_id":      job.JobID.String(),
 		"tenant_id":   job.TenantID.String(),
 		"session_id":  job.SessionID.String(),
@@ -92,7 +93,7 @@ func jobFields(job queue.Job) map[string]interface{} {
 	}
 }
 
-func parseJobFields(values map[string]interface{}) (queue.Job, error) {
+func parseJobFields(values map[string]any) (queue.Job, error) {
 	str := func(k string) string {
 		v, _ := values[k].(string)
 		return v
@@ -201,7 +202,7 @@ func (r *Streams) claim(ctx context.Context, owner string, msg goredis.XMessage)
 	job, err := parseJobFields(msg.Values)
 	if err != nil {
 		if dlErr := r.discardUnparseable(ctx, msg, err); dlErr != nil {
-			return queue.Job{}, fmt.Errorf("parse claimed entry %s: %w (and could not dead-letter it: %v)", msg.ID, err, dlErr)
+			return queue.Job{}, fmt.Errorf("parse claimed entry %s: %w (and could not dead-letter it: %w)", msg.ID, err, dlErr)
 		}
 		return queue.Job{}, fmt.Errorf("parse claimed entry %s (dead-lettered): %w", msg.ID, err)
 	}
@@ -234,10 +235,10 @@ func (r *Streams) claim(ctx context.Context, owner string, msg goredis.XMessage)
 // removes it (result 1, not 0) is allowed to XAdd it back — the other sees
 // 0 and skips, no Lua script needed for that ordering to be race-free.
 func (r *Streams) promoteDelayed(ctx context.Context) error {
-	max := strconv.FormatInt(time.Now().UnixMilli(), 10)
+	dueBy := strconv.FormatInt(time.Now().UnixMilli(), 10)
 	// ZRANGE ... BYSCORE (Redis 6.2+, the deployment and tests run redis:7)
 	// replaces the deprecated ZRANGEBYSCORE; same range, same LIMIT 0 N.
-	due, err := r.client.ZRangeArgs(ctx, goredis.ZRangeArgs{Key: delayedKey, Start: "-inf", Stop: max, ByScore: true, Count: promoteBatch}).Result()
+	due, err := r.client.ZRangeArgs(ctx, goredis.ZRangeArgs{Key: delayedKey, Start: "-inf", Stop: dueBy, ByScore: true, Count: promoteBatch}).Result()
 	if err != nil {
 		return fmt.Errorf("list due delayed jobs: %w", err)
 	}
@@ -320,10 +321,8 @@ func (r *Streams) retire(ctx context.Context, jobID uuid.UUID, entryID string) e
 // stream (ids and control fields only, same as any job entry) for an
 // operator to inspect.
 func (r *Streams) discardUnparseable(ctx context.Context, msg goredis.XMessage, cause error) error {
-	dead := make(map[string]interface{}, len(msg.Values)+2)
-	for k, v := range msg.Values {
-		dead[k] = v
-	}
+	dead := make(map[string]any, len(msg.Values)+2)
+	maps.Copy(dead, msg.Values)
 	dead["entry_id"] = msg.ID
 	dead["last_error"] = "unparseable entry: " + cause.Error()
 

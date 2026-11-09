@@ -3,6 +3,7 @@ package builtin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 
@@ -48,7 +49,7 @@ func (FileRead) ValidateInput(_ context.Context, in json.RawMessage, _ tools.Run
 		return fmt.Errorf("invalid input: %w", err)
 	}
 	if req.Path == "" {
-		return fmt.Errorf("path is required")
+		return errors.New("path is required")
 	}
 	return nil
 }

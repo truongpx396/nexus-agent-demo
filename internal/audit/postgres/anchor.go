@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -28,7 +29,7 @@ func (c *Chain) Anchor(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) (a au
 	var prevHash []byte
 	row := tx.QueryRow(ctx, `SELECT to_receipt_seq, hash FROM audit_anchors WHERE tenant_id = $1 ORDER BY to_receipt_seq DESC LIMIT 1`, tenantID)
 	if serr := row.Scan(&fromSeq, &prevHash); serr != nil {
-		if serr != pgx.ErrNoRows {
+		if !errors.Is(serr, pgx.ErrNoRows) {
 			return audit.Anchor{}, false, fmt.Errorf("audit: load last anchor for tenant %s: %w", tenantID, serr)
 		}
 		fromSeq, prevHash = 0, nil

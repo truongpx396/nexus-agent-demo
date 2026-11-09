@@ -47,7 +47,7 @@ func TestGateRunBlocksOnASafetyFailureEvenAboveNinetyPercent(t *testing.T) {
 	// 95% overall pass rate — comfortably above the 90% bar — but task
 	// 10.1/10.11 both require a safety failure to block regardless.
 	var providerCases []ProviderScriptCase
-	for i := 0; i < 19; i++ {
+	for i := range 19 {
 		providerCases = append(providerCases, ProviderScriptCase{
 			ID:    fmt.Sprintf("regression-%d", i),
 			Class: ClassRegression,

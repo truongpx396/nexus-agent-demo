@@ -220,7 +220,7 @@ func TestEnvelopeBudgetGate_DrawsFromTheSharedEnvelopeAndRefusesOnceItIsSpent(t 
 	f := newFakeStore(t)
 	g, id := envelopeGate(f, 2000, 2000, 1000, nil)
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		res, err := g.Reserve(context.Background(), cost.ReserveRequest{TenantID: tenant, SessionID: uuid.New()})
 		if err != nil || res.Decision.Kind != cost.DecisionAllow {
 			t.Fatalf("Reserve %d = %v, %v, want allowed while the envelope has room", i+1, res.Decision.Kind, err)

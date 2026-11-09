@@ -34,7 +34,7 @@ func (h *Handler) handleListSessions(w http.ResponseWriter, r *http.Request) {
 
 	runList, err := h.Reader.ListRuns(r.Context(), tenantID, userID, listSessionsLimit)
 	if err != nil {
-		http.Error(w, "list sessions: "+err.Error(), http.StatusInternalServerError)
+		restkit.ServerError(w, r, "list sessions", err)
 		return
 	}
 

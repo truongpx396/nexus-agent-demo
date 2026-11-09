@@ -12,14 +12,13 @@ import (
 // future edit that adds e.g. a "Widen" or "SetLevel" method fails this test
 // the moment it's added, without needing to know what the method does.
 func TestNoWideningMethodExists(t *testing.T) {
-	typ := reflect.TypeOf(&Autonomy{})
+	typ := reflect.TypeFor[*Autonomy]()
 	allowed := map[string]bool{
 		"Level":   true, // read-only
 		"Tighten": true, // the ratchet's only mutator, and it refuses to widen (see below)
 		"Resolve": true, // read-only: produces a LayerOutcome, never mutates
 	}
-	for i := 0; i < typ.NumMethod(); i++ {
-		m := typ.Method(i)
+	for m := range typ.Methods() {
 		if !allowed[m.Name] {
 			t.Errorf("Autonomy exports method %q — every exported method must be in `allowed` and reviewed for whether it could widen autonomy", m.Name)
 		}

@@ -131,7 +131,7 @@ type Config struct { Name; Event; Kind; Matcher string; If *Expr; Timeout; Updat
 Around `Tool.Call` for every non-read-only effect: `Claims.Open(tenant, session, toolID, digest) → (claimID, ClaimOutcome)` writes
 `in_flight` **before the effect leaves the process**; a `completed` claim short-circuits a repeat; `Complete(…, failed, reason)` closes
 it. On resume an `in_flight` claim is resolved by **probe or human** (`Control.ResolveClaim`), never by re-execution, never by silent
-discard; `ErrUnresolvedClaims` blocks a resume that would otherwise skip one.
+discard; `UnresolvedClaimsError` blocks a resume that would otherwise skip one.
 
 ## 7. Egress and sandbox (FR-061, FR-062)
 

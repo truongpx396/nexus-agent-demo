@@ -2,7 +2,7 @@ package eventlog
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 )
 
 // owners says which feature defines each event type: the package whose
@@ -101,10 +101,10 @@ var owners = map[EventType]string{
 	EventErasure:              "internal/crypto",
 }
 
-// ErrUnknownType is returned by an append of a type that is not in the taxonomy.
-type ErrUnknownType struct{ Type EventType }
+// UnknownTypeError is returned by an append of a type that is not in the taxonomy.
+type UnknownTypeError struct{ Type EventType }
 
-func (e ErrUnknownType) Error() string {
+func (e UnknownTypeError) Error() string {
 	return fmt.Sprintf("eventlog: event type %q is not in the taxonomy (add it to event.go and taxonomy.go)", string(e.Type))
 }
 
@@ -125,6 +125,6 @@ func Types() []EventType {
 	for t := range owners {
 		out = append(out, t)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	slices.Sort(out)
 	return out
 }

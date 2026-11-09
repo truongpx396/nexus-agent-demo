@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"sync"
 	"testing"
 	"time"
@@ -67,15 +68,9 @@ func (f *fakeStore) InTenant(ctx context.Context, _ uuid.UUID, fn func(ctx conte
 	sessions, delegations, events := map[uuid.UUID]eventlog.Session{}, map[uuid.UUID]delegate.Delegation{}, append([]appended(nil), f.events...)
 	envelopes := map[uuid.UUID]envelope{}
 	tree := map[uuid.UUID]delegate.Lineage{}
-	for k, v := range f.lineage {
-		tree[k] = v
-	}
-	for k, v := range f.sessions {
-		sessions[k] = v
-	}
-	for k, v := range f.delegations {
-		delegations[k] = v
-	}
+	maps.Copy(tree, f.lineage)
+	maps.Copy(sessions, f.sessions)
+	maps.Copy(delegations, f.delegations)
 	for k, v := range f.envelopes {
 		envelopes[k] = *v
 	}
@@ -83,7 +78,6 @@ func (f *fakeStore) InTenant(ctx context.Context, _ uuid.UUID, fn func(ctx conte
 		f.sessions, f.lineage, f.delegations, f.events = sessions, tree, delegations, events
 		f.envelopes = map[uuid.UUID]*envelope{}
 		for k, v := range envelopes {
-			v := v
 			f.envelopes[k] = &v
 		}
 		return err

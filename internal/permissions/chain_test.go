@@ -14,16 +14,16 @@ import (
 // chain_test.go uses to prove layer 6 ran (or didn't) without inspecting
 // Chain internals.
 type countingModel struct {
-	calls   int32
+	calls   atomic.Int32
 	verdict safety.Verdict
 }
 
 func (m *countingModel) Classify(context.Context, string, string) (safety.Verdict, string, error) {
-	atomic.AddInt32(&m.calls, 1)
+	m.calls.Add(1)
 	return m.verdict, "counting model", nil
 }
 
-func (m *countingModel) count() int { return int(atomic.LoadInt32(&m.calls)) }
+func (m *countingModel) count() int { return int(m.calls.Load()) }
 
 // alwaysDeferSafety is a Chain config helper: no rules, a model leg that
 // always defers, so layer 6 never independently objects — used by every

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 
@@ -92,7 +93,7 @@ func runVerifyChain(ctx context.Context, args []string) error {
 		}
 	}
 	if anyBroken {
-		return fmt.Errorf("audit chain verification found a break or gap")
+		return errors.New("audit chain verification found a break or gap")
 	}
 	return nil
 }

@@ -1,6 +1,9 @@
 package plan
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+)
 
 // ValueKind is a Value's type tag — comparisons across kinds are a
 // validation error, never a silent coercion (README task 8.2: "typed field
@@ -137,10 +140,8 @@ func (p Predicate) Eval(ctx Context) (bool, error) {
 		case OpGt:
 			return p.Value.less(v)
 		case OpIn:
-			for _, cand := range p.Values {
-				if v.Equal(cand) {
-					return true, nil
-				}
+			if slices.ContainsFunc(p.Values, v.Equal) {
+				return true, nil
 			}
 			return false, nil
 		}

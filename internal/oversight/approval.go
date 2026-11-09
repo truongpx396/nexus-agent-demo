@@ -102,16 +102,16 @@ func (a *Approvals) Get(ctx context.Context, tenantID, approvalID uuid.UUID) (Ap
 	return ap, err
 }
 
-// ErrApprovalNotPending is returned by Grant/GrantModified/Deny when the
+// ApprovalNotPendingError is returned by Grant/GrantModified/Deny when the
 // approval has already left the pending state (already decided, already
 // expired, already invalidated) — a second decision on the same approval
 // must never silently overwrite the first.
-type ErrApprovalNotPending struct {
+type ApprovalNotPendingError struct {
 	ApprovalID uuid.UUID
 	Status     ApprovalStatus
 }
 
-func (e ErrApprovalNotPending) Error() string {
+func (e ApprovalNotPendingError) Error() string {
 	return fmt.Sprintf("oversight: approval %s is %s, not pending", e.ApprovalID, e.Status)
 }
 
@@ -139,7 +139,7 @@ func (a *Approvals) decide(ctx context.Context, tenantID, approvalID uuid.UUID, 
 			return expireApproval(ctx, tx, tenantID, &ap)
 		}
 		if ap.Status != ApprovalPending {
-			return ErrApprovalNotPending{ApprovalID: approvalID, Status: ap.Status}
+			return ApprovalNotPendingError{ApprovalID: approvalID, Status: ap.Status}
 		}
 		return fn(ctx, tx, &ap)
 	})
@@ -147,7 +147,7 @@ func (a *Approvals) decide(ctx context.Context, tenantID, approvalID uuid.UUID, 
 		return Approval{}, err
 	}
 	if lapsed {
-		return Approval{}, ErrApprovalNotPending{ApprovalID: approvalID, Status: ApprovalExpired}
+		return Approval{}, ApprovalNotPendingError{ApprovalID: approvalID, Status: ApprovalExpired}
 	}
 	return ap, nil
 }

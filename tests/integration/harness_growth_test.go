@@ -15,12 +15,13 @@
 package integration
 
 import (
+	"errors"
+
 	runctlpg "github.com/truongpx396/nexus-agent-demo/internal/runctl/postgres"
 
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -231,11 +232,11 @@ type flakySender struct {
 func (s *flakySender) Send(context.Context, string, string, []byte) error {
 	s.calls++
 	if s.alwaysFail {
-		return fmt.Errorf("simulated permanent failure")
+		return errors.New("simulated permanent failure")
 	}
 	if s.failuresRemaining > 0 {
 		s.failuresRemaining--
-		return fmt.Errorf("simulated transient failure")
+		return errors.New("simulated transient failure")
 	}
 	return nil
 }
@@ -251,7 +252,7 @@ func TestOutbox_RetriesThenDeliversAndStaysIdempotent(t *testing.T) {
 	ob := &surfaces.Outbox{Ledger: surfpg.NewLedger(rig.st, rig.keys, rig.chain)}
 	sender := &flakySender{failuresRemaining: 2}
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		if err := ob.Deliver(ctx, rig.tenantID, sessionID, 1, "rest", "operator", []byte("hi"), sender); err != nil {
 			t.Fatalf("Deliver attempt %d: %v", i+1, err)
 		}
@@ -296,7 +297,7 @@ func TestOutbox_FailsPermanentlyAfterCapAndNeverSendsAgain(t *testing.T) {
 	ob := &surfaces.Outbox{Ledger: surfpg.NewLedger(rig.st, rig.keys, rig.chain)}
 	sender := &flakySender{alwaysFail: true}
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if err := ob.Deliver(ctx, rig.tenantID, sessionID, 1, "rest", "operator", []byte("hi"), sender); err != nil {
 			t.Fatalf("Deliver attempt %d: %v", i+1, err)
 		}
@@ -437,7 +438,7 @@ func postRunViaREST(t *testing.T, httpSrv *httptest.Server, token, input string)
 
 func extractRunID(t *testing.T, output string) uuid.UUID {
 	t.Helper()
-	for _, line := range strings.Split(output, "\n") {
+	for line := range strings.SplitSeq(output, "\n") {
 		if id, ok := strings.CutPrefix(line, "run_id: "); ok {
 			return uuid.MustParse(strings.TrimSpace(id))
 		}

@@ -66,7 +66,7 @@ func (l *Ledger) Open(ctx context.Context, tenantID, sessionID uuid.UUID, seq in
 	if err != nil {
 		return surfaces.Delivery{}, err
 	}
-	return surfaces.Delivery{ID: d.DeliveryID, Status: surfaces.DeliveryStatus(d.Status), AttemptCount: d.AttemptCount}, nil
+	return surfaces.Delivery{ID: d.DeliveryID, Status: d.Status, AttemptCount: d.AttemptCount}, nil
 }
 
 func (l *Ledger) Record(ctx context.Context, tenantID, sessionID, deliveryID uuid.UUID, status surfaces.DeliveryStatus, reason string) error {

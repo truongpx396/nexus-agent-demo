@@ -168,8 +168,8 @@ func TestClassifyTrigger(t *testing.T) {
 	}
 }
 
-var errUnknown = &customErr{"unknown failure"}
+var errUnknown = &customError{"unknown failure"}
 
-type customErr struct{ msg string }
+type customError struct{ msg string }
 
-func (e *customErr) Error() string { return e.msg }
+func (e *customError) Error() string { return e.msg }

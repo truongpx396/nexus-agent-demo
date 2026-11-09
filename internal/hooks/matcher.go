@@ -1,6 +1,9 @@
 package hooks
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // matchesTool reports whether pattern selects toolID/namespace. "*" or ""
 // matches everything; "ns/*" matches every tool in namespace ns; anything
@@ -52,12 +55,7 @@ func (e Expr) Eval(fields map[string]string) bool {
 	case e.Eq != nil:
 		return fields[e.Eq.Field] == e.Eq.Value
 	case e.In != nil:
-		for _, v := range e.In.Values {
-			if fields[e.In.Field] == v {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(e.In.Values, fields[e.In.Field])
 	case e.Not != nil:
 		return !e.Not.Eval(fields)
 	case len(e.And) > 0:

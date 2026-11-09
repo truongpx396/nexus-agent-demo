@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -158,12 +159,7 @@ func touchedPaths(orig, updated json.RawMessage) ([]string, error) {
 }
 
 func pathAllowed(path string, allowlist []string) bool {
-	for _, a := range allowlist {
-		if a == path {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(allowlist, path)
 }
 
 // enforcePathAllowlist is the "path allowlist that re-binds the digest"

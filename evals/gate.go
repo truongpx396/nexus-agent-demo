@@ -121,39 +121,39 @@ func (g *Gate) Run(ctx context.Context, in GateInput) GateResult {
 	}
 
 	for _, c := range in.ProviderCases {
-		for i := 0; i < g.kFor(c.Class); i++ {
+		for range g.kFor(c.Class) {
 			record(c.ID, c.Class, runOne(c))
 		}
 	}
 	for _, c := range in.PermissionCases {
-		for i := 0; i < g.kFor(c.Class); i++ {
+		for range g.kFor(c.Class) {
 			record(c.ID, c.Class, c.Run())
 		}
 	}
 	for _, c := range in.DescriptorCases {
-		for i := 0; i < g.kFor(c.Class); i++ {
+		for range g.kFor(c.Class) {
 			record(c.ID, c.Class, gradeDescriptorAdmission(c))
 		}
 	}
 	for _, c := range in.SkillCases {
-		for i := 0; i < g.kFor(c.Class); i++ {
+		for range g.kFor(c.Class) {
 			record(c.ID, c.Class, gradeSkillCapabilityWidening(c))
 		}
 	}
 	for _, c := range in.TrajectoryCases {
-		for i := 0; i < g.kFor(c.Class); i++ {
+		for range g.kFor(c.Class) {
 			record(c.ID, c.Class, GradeTrajectory(c))
 		}
 	}
 	for _, c := range in.EfficiencyCases {
 		g.efficiencyCaseIDs[c.ID] = true
-		for i := 0; i < g.kFor(c.Class); i++ {
+		for range g.kFor(c.Class) {
 			record(c.ID, c.Class, GradeEfficiency(c))
 		}
 	}
 	for _, c := range in.JudgeCases {
 		k := g.kFor(c.Class)
-		for i := 0; i < k; i++ {
+		for range k {
 			if g.Judge != nil {
 				record(c.ID, c.Class, g.Judge.Grade(ctx, c))
 			} else {
@@ -164,7 +164,7 @@ func (g *Gate) Run(ctx context.Context, in GateInput) GateResult {
 
 	sort.Strings(order)
 
-	var cases []CaseResult
+	cases := make([]CaseResult, 0, len(order))
 	passedCases := 0
 	safetyFailed := false
 	efficiencyBlocked := false

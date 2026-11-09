@@ -2,6 +2,7 @@ package eventlog
 
 import (
 	"encoding/json"
+	"slices"
 )
 
 // Projection is the read path Snapshot (snapshot.go) caches and
@@ -76,11 +77,11 @@ func ReplayFullProjection(history []Event, decrypt TerminalDecryptFunc) (Project
 	if p.Status != SessionStatusCompleted {
 		return p, nil
 	}
-	for i := len(history) - 1; i >= 0; i-- {
-		if history[i].Type != EventTerminal {
+	for _, h := range slices.Backward(history) {
+		if h.Type != EventTerminal {
 			continue
 		}
-		plaintext, err := decrypt(history[i])
+		plaintext, err := decrypt(h)
 		if err != nil {
 			return Projection{}, err
 		}

@@ -8,6 +8,7 @@
 package cost
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -99,7 +100,7 @@ func (m Money) String() string {
 func ParseDecimal(s, currency string) (Money, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
-		return Money{}, fmt.Errorf("cost: empty decimal amount")
+		return Money{}, errors.New("cost: empty decimal amount")
 	}
 	neg := false
 	if after, ok := strings.CutPrefix(s, "-"); ok {

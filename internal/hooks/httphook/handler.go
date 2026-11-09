@@ -87,7 +87,7 @@ func (h Handler) Run(ctx context.Context, cfg hooks.Config, hctx hooks.Context) 
 	if err != nil {
 		return hooks.Outcome{}, fmt.Errorf("marshal http hook request: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(payload)) //nolint:gosec // cfg.URL is operator-authored hook config; the SSRF guard above bounds what it may resolve to
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(payload)) // cfg.URL is operator-authored hook config; the SSRF guard above bounds what it may resolve to
 	if err != nil {
 		return hooks.Outcome{}, fmt.Errorf("build http hook request: %w", err)
 	}

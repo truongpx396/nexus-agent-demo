@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"maps"
 	"time"
 )
 
@@ -78,12 +79,8 @@ type stdoutSpan struct {
 
 func (s *stdoutSpan) End(attrs Attrs) {
 	merged := make(Attrs, len(s.attrs)+len(attrs))
-	for k, v := range s.attrs {
-		merged[k] = v
-	}
-	for k, v := range attrs {
-		merged[k] = v
-	}
+	maps.Copy(merged, s.attrs)
+	maps.Copy(merged, attrs)
 	span := spanLine{
 		Name:       s.name,
 		Attrs:      FilterTracked(merged, s.e.Drops),

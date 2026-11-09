@@ -11,6 +11,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -42,7 +43,7 @@ func headHash(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) ([]byte, erro
 		sessionID,
 	).Scan(&hash)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("audit: load chain head for session %s: %w", sessionID, err)

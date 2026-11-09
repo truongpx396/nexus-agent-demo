@@ -54,7 +54,7 @@ func TestSplitText_EmptyInput(t *testing.T) {
 
 func TestSplitText_ManyParagraphsPackIntoMultipleChunks(t *testing.T) {
 	var paras []string
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		paras = append(paras, strings.Repeat("word ", 20))
 	}
 	text := strings.Join(paras, "\n\n")

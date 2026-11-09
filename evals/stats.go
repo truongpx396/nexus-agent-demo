@@ -79,7 +79,7 @@ func RunKTrials(k int, run func(trial int) Trial) []Trial {
 		k = 1
 	}
 	trials := make([]Trial, k)
-	for i := 0; i < k; i++ {
+	for i := range k {
 		trials[i] = run(i)
 	}
 	return trials

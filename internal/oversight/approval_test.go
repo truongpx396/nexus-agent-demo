@@ -1,6 +1,7 @@
 package oversight
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -18,7 +19,7 @@ import (
 // attempted on an already-decided approval.
 func TestErrApprovalNotPending_Error(t *testing.T) {
 	id := uuid.New()
-	err := ErrApprovalNotPending{ApprovalID: id, Status: ApprovalGranted}
+	err := ApprovalNotPendingError{ApprovalID: id, Status: ApprovalGranted}
 	msg := err.Error()
 	for _, want := range []string{id.String(), string(ApprovalGranted), "not pending"} {
 		if !strings.Contains(msg, want) {
@@ -85,7 +86,7 @@ func TestErrSeq(t *testing.T) {
 	var count int
 	for _, err := range seq {
 		count++
-		if err != sentinel {
+		if !errors.Is(err, sentinel) {
 			t.Errorf("yielded error = %v, want %v", err, sentinel)
 		}
 	}

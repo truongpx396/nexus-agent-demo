@@ -71,9 +71,9 @@ func Run(t *testing.T, s Subject) {
 
 	t.Run("Append refuses an event type outside the taxonomy and consumes no sequence number", func(t *testing.T) {
 		tenantID, sessionID := s.NewSession(t)
-		var unknown eventlog.ErrUnknownType
+		var unknown eventlog.UnknownTypeError
 		if _, err := s.Log.Append(ctx, event(tenantID, sessionID, "not_a_real_event", "p")); !errors.As(err, &unknown) || unknown.Type != "not_a_real_event" {
-			t.Fatalf("Append of an unknown type = %v, want ErrUnknownType naming it", err)
+			t.Fatalf("Append of an unknown type = %v, want UnknownTypeError naming it", err)
 		}
 		got, err := s.Log.Append(ctx, event(tenantID, sessionID, eventlog.EventUserMessage, "p"))
 		if err != nil {

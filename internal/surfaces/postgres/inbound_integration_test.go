@@ -88,7 +88,7 @@ func TestClaimInboundDelivery_FirstCallerClaimsLaterCallersDoNot(t *testing.T) {
 	}
 
 	var results []bool
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		var claimed bool
 		if err := s.InTenantTx(context.Background(), tenantID, func(ctx context.Context, tx pgx.Tx) error {
 			var err error
@@ -135,7 +135,7 @@ func TestClaimInboundDelivery_EmptyDeliveryIDNeverDedupes(t *testing.T) {
 		t.Fatalf("insert tenant: %v", err)
 	}
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		var claimed bool
 		if err := s.InTenantTx(context.Background(), tenantID, func(ctx context.Context, tx pgx.Tx) error {
 			var err error
@@ -169,10 +169,8 @@ func TestClaimInboundDelivery_ConcurrentCallersExactlyOneWins(t *testing.T) {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	claims := 0
-	for i := 0; i < racers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range racers {
+		wg.Go(func() {
 			var claimed bool
 			if err := s.InTenantTx(context.Background(), tenantID, func(ctx context.Context, tx pgx.Tx) error {
 				var err error
@@ -187,7 +185,7 @@ func TestClaimInboundDelivery_ConcurrentCallersExactlyOneWins(t *testing.T) {
 				claims++
 				mu.Unlock()
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	if claims != 1 {

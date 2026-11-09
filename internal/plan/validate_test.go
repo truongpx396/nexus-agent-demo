@@ -149,7 +149,7 @@ func TestValidate_AcceptsBoundedPreauth(t *testing.T) {
 func TestValidate_RejectsPredicateNestedTooDeep(t *testing.T) {
 	p := simplePlan()
 	pred := Predicate{Op: OpEq, Field: "x", Value: BoolValue(true)}
-	for i := 0; i < maxPredicateDepth+2; i++ {
+	for range maxPredicateDepth + 2 {
 		pred = Predicate{Op: OpAnd, And: []Predicate{pred}}
 	}
 	p.Steps[0].Transitions = []Transition{{To: "b", When: &pred}}

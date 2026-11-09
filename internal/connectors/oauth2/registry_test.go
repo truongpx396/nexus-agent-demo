@@ -68,7 +68,7 @@ func TestRegistry_ExchangeAndRefreshSpeakToTheTokenEndpoint(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": access, "token_type": "Bearer", "refresh_token": "refresh-1", "expires_in": 3600})
 	}))
 	defer srv.Close()
-	reg := NewRegistry(Provider{Name: "acme", ClientID: "c", ClientSecret: "s", Endpoint: xoauth2.Endpoint{AuthURL: "https://acme.example/authorize", TokenURL: srv.URL}}) //nolint:gosec // fixture, no credential
+	reg := NewRegistry(Provider{Name: "acme", ClientID: "c", ClientSecret: "s", Endpoint: xoauth2.Endpoint{AuthURL: "https://acme.example/authorize", TokenURL: srv.URL}}) // fixture, no credential
 
 	tok, err := reg.Exchange(context.Background(), "acme", "the-code")
 	if err != nil {

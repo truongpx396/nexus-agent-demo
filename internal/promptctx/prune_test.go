@@ -31,7 +31,7 @@ func TestPrune_NeverTouchesLastKeepLastMessages(t *testing.T) {
 			t.Errorf("message %d within KeepLast was modified: got %q", i, out[i].PlainText())
 		}
 	}
-	for i := 0; i < 7; i++ {
+	for i := range 7 {
 		if out[i].PlainText() == transcript[i].PlainText() {
 			t.Errorf("message %d beyond KeepLast was NOT pruned", i)
 		}
@@ -81,7 +81,7 @@ func TestPrune_HardClearDropsThePreviewSoftTrimKeeps(t *testing.T) {
 // implementation above.
 func TestPrune_NeverMutatesInput(t *testing.T) {
 	seed := uint64(20260830)
-	for trial := 0; trial < 300; trial++ {
+	for trial := range 300 {
 		rng := rand.New(rand.NewPCG(seed, uint64(trial))) //nolint:gosec // a property-test generator, not a security decision
 		n := rng.IntN(30)
 		transcript := make([]provider.Message, n)

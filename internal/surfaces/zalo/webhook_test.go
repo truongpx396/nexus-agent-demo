@@ -6,8 +6,10 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -203,4 +205,20 @@ func (f *fakeLauncher) Launch(_ context.Context, req runs.LaunchRequest) (runs.L
 	ch := make(chan runs.Event)
 	close(ch)
 	return runs.Launched{SessionID: uuid.New(), Events: ch}, nil
+}
+
+func TestHandleWebhook_AChannelLookupFailureDoesNotLeakTheCause(t *testing.T) {
+	cause := errors.New("dial tcp 10.0.0.7:5432: connection refused")
+	s := &Server{Channels: fakeChannels{err: cause}}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/webhooks/zalo/"+uuid.NewString(), bytes.NewReader(nil))
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+	if body := rec.Body.String(); strings.Contains(body, "10.0.0.7") || strings.Contains(body, "refused") {
+		t.Fatalf("the response body %q carries the infrastructure error, which an unauthenticated caller can read", body)
+	}
 }

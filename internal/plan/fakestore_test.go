@@ -3,6 +3,7 @@ package plan_test
 import (
 	"context"
 	"errors"
+	"maps"
 	"sync"
 
 	"github.com/google/uuid"
@@ -63,18 +64,13 @@ func (f *fakeStore) InTenant(ctx context.Context, _ uuid.UUID, fn func(ctx conte
 		plans[k] = *v
 	}
 	sessions := map[uuid.UUID]eventlog.Session{}
-	for k, v := range f.sessions {
-		sessions[k] = v
-	}
+	maps.Copy(sessions, f.sessions)
 	pins := map[uuid.UUID]planKey{}
-	for k, v := range f.pins {
-		pins[k] = v
-	}
+	maps.Copy(pins, f.pins)
 	events := append([]appended(nil), f.events...)
 	if err := fn(ctx, &fakeTx{f: f}); err != nil {
 		f.plans = map[planKey]*planRow{}
 		for k, v := range plans {
-			v := v
 			f.plans[k] = &v
 		}
 		f.sessions, f.pins, f.events = sessions, pins, events

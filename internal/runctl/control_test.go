@@ -240,9 +240,9 @@ func TestResume_RefusesWhileAClaimIsUnresolved(t *testing.T) {
 		got = err
 		break
 	}
-	var unresolved runctl.ErrUnresolvedClaims
+	var unresolved runctl.UnresolvedClaimsError
 	if !errors.As(got, &unresolved) || len(unresolved.ClaimIDs) != 1 {
-		t.Fatalf("Resume = %v, want ErrUnresolvedClaims naming the in-flight claim: re-entering the loop could repeat an external effect", got)
+		t.Fatalf("Resume = %v, want UnresolvedClaimsError naming the in-flight claim: re-entering the loop could repeat an external effect", got)
 	}
 }
 

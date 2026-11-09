@@ -3,7 +3,7 @@ package kernel
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"strconv"
 	"strings"
 
@@ -21,13 +21,13 @@ import (
 // appended event is durably committed (EventLog.Append)
 // before it is yielded, so a caller forwarding these events (e.g. over SSE)
 // never shows a client something that isn't already in the log.
-func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yield func(eventlog.Event, error) bool, startTurn int) {
+func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yield func(eventlog.Event, error) bool) {
 	maxTurns := cfg.MaxTurns
 	if maxTurns <= 0 {
 		maxTurns = defaultMaxTurns
 	}
 
-	for turn := startTurn; ; turn++ {
+	for turn := 1; ; turn++ {
 		if turn > maxTurns {
 			k.terminate(ctx, st, yield, TerminalMaxTurnsExceeded(maxTurns))
 			return
@@ -102,11 +102,7 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 		}
 
 		if ok, covered := promptctx.ShouldCondense(view, k.CondenseThresholdBytes); ok {
-			summary, degraded, condenseReservation, err := k.condense(ctx, st, cfg, view[:covered])
-			if err != nil {
-				yield(eventlog.Event{}, err)
-				return
-			}
+			summary, degraded, condenseReservation := k.condense(ctx, st, cfg, view[:covered])
 			cbev, err := k.appendBudgetDecision(ctx, st, condenseReservation)
 			if err != nil {
 				yield(eventlog.Event{}, err)
@@ -282,7 +278,7 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 		}
 
 		if done == provider.DoneMaxOutput {
-			k.terminate(ctx, st, yield, TerminalError(fmt.Errorf("provider truncated output at max_output without a natural stop")))
+			k.terminate(ctx, st, yield, TerminalError(errors.New("provider truncated output at max_output without a natural stop")))
 			return
 		}
 		if done == provider.DoneRefusal {

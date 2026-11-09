@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"time"
@@ -29,7 +30,7 @@ func runToken(_ context.Context, args []string) error {
 		return err
 	}
 	if *tenantName == "" {
-		return fmt.Errorf("--tenant is required")
+		return errors.New("--tenant is required")
 	}
 	tenantID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("nexus-agent-demo/tenant/"+*tenantName))
 

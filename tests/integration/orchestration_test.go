@@ -336,7 +336,7 @@ func TestDelegate_BoundsFailClosed_ThroughTheRealChain(t *testing.T) {
 	t.Run("concurrent", func(t *testing.T) {
 		parentID, userID := uuid.New(), uuid.New()
 		r.createSession(t, parentID, userID, "autonomous")
-		for i := 0; i < delegate.MaxConcurrent; i++ {
+		for range delegate.MaxConcurrent {
 			mustCreatePendingDelegation(t, r, d, parentID)
 		}
 		got := pipeline.Execute(context.Background(), tools.Invocation{
@@ -526,7 +526,7 @@ func TestSpawn_ChildrenNestUnderParentTraceSpan(t *testing.T) {
 	parentCtx, parentSpan := tracer.tracer.Start(context.Background(), "test.fanout_step")
 
 	var childIDs []uuid.UUID
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		childID, err := d.Spawn(parentCtx, delegate.SpawnRequest{
 			TenantID: r.tenantID, ParentSessionID: parentID,
 			AgentID: "worker", Task: "do work", ScopeGrant: []string{"platform/delegate@v1"},

@@ -45,7 +45,7 @@ func (s *Store) Load(ctx context.Context, tenantID uuid.UUID) (Snapshot, error) 
 		if e.mtime.Before(cutoff) {
 			continue // past retention — never injected, but left on disk for an operator to inspect/purge
 		}
-		content, err := os.ReadFile(e.path) //nolint:gosec // e.path is built from this tenant's own memory dir, never request input
+		content, err := os.ReadFile(e.path) // e.path is built from this tenant's own memory dir, never request input
 		if err != nil {
 			return Snapshot{}, fmt.Errorf("memory: read %s: %w", e.path, err)
 		}

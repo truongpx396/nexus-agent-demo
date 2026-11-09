@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"sync"
 	"time"
 
@@ -69,12 +71,8 @@ func (f *fakeStore) snap() snapshot {
 		checkpoints: append([]runctl.Checkpoint(nil), f.checkpoints...),
 		forks:       append([]forkRecord(nil), f.forks...),
 	}
-	for k, v := range f.sessions {
-		s.sessions[k] = v
-	}
-	for k, v := range f.claims {
-		s.claims[k] = v
-	}
+	maps.Copy(s.sessions, f.sessions)
+	maps.Copy(s.claims, f.claims)
 	return s
 }
 
@@ -214,9 +212,9 @@ func (t *fakeTx) SaveCheckpoint(_ context.Context, c runctl.Checkpoint) (runctl.
 }
 
 func (t *fakeTx) LatestCheckpoint(_ context.Context, id uuid.UUID) (runctl.Checkpoint, bool, error) {
-	for i := len(t.f.checkpoints) - 1; i >= 0; i-- {
-		if t.f.checkpoints[i].SessionID == id {
-			return t.f.checkpoints[i], true, nil
+	for _, v := range slices.Backward(t.f.checkpoints) {
+		if v.SessionID == id {
+			return v, true, nil
 		}
 	}
 	return runctl.Checkpoint{}, false, nil

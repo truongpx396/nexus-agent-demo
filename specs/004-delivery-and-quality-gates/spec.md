@@ -98,6 +98,21 @@ Where [spec 003](../003-trust-surface-conformance/spec.md) is about what the run
 3. **Given** a CI job that stalls, **When** it reaches its `timeout-minutes`, **Then** it is cancelled; each limit is at least 2.5 times that job's longest healthy run and never under five minutes.
 4. **Given** a `go.mod` or `go.sum` that `go mod tidy` would change, **When** CI runs, **Then** the `build` job fails.
 
+### User Story 7 - The Go code follows current idiom, fails closed, and the linter keeps it there (Priority: P3)
+
+**Current state**: a review of the whole tree found no defect `go vet` or the standard linters could see, and a handful they could not: `serve` returned the moment `Shutdown` was called rather than when it finished draining, so the process could exit with requests in flight; `startPeriodic` could be stopped only once and did not wait for its pass; the queue workers were not awaited before the pool they lease through closed; `signerd` held a goroutine for a client that connected and sent nothing; a mistyped `nexusd` subcommand booted a server; `Kernel.Resume` and `ResumeDelegation` turned an unrecognised resolution into an empty, successful `tool_result`; and seventeen response sites (REST handlers, the three webhooks and the `/readyz` and `/metrics` probes, the webhooks and `/readyz` being reachable without a token) put a database or dial error, with its host and SQL, in a response body. Around those, the code predated Go 1.22 to 1.26 idiom (`err == pgx.ErrNoRows`, `interface{}`, hand-written `slices.Contains` and `maps.Copy` loops, `fmt.Errorf` with nothing to format, error *types* named `ErrX`, a local named `max`), none of which the configured linters flagged.
+
+**Why this priority**: none of it was exploitable on a trusted network or visible in a test, which is why it had survived; each item is cheap to fix and the second half is cheap to keep fixed once a linter says so.
+
+**Independent Test**: `go test ./kernel -run TestResume` fails if the default case is removed; `go test ./internal/surfaces/rest ./internal/surfaces/telegram ./internal/surfaces/zalo ./internal/surfaces/email ./internal/runs/rest` fails if a response body carries the cause; `golangci-lint run --build-tags=integration ./...` reports the next `err == sentinel`, `interface{}` or shadowed builtin.
+
+**Acceptance Scenarios**:
+
+1. **Given** SIGTERM while a request is in flight, **When** the server shuts down, **Then** `serve` returns only after `Shutdown` has returned, so the request finishes (or the 30 s deadline passes) before the process exits.
+2. **Given** a run suspended on an approval, **When** `Resume` receives a decision it does not recognise, **Then** it yields an error and appends no `tool_result`.
+3. **Given** a database error behind `GET /v1/runs/{id}`, a webhook's channel lookup or `/readyz`, **When** the request fails, **Then** the response names the operation, not the cause, and the cause is in the log.
+4. **Given** a comparison `err == sentinel`, a type assertion on an error, a builtin shadowed by a local or an error type named `ErrX`, **When** CI lints, **Then** it fails.
+
 ## Requirements *(mandatory)*
 
 - **FR-401**: Backup, restore, RPO and RTO MUST be defined for the event log and audit chain, and a restore MUST be rehearsed and recorded (US1).
@@ -107,3 +122,6 @@ Where [spec 003](../003-trust-surface-conformance/spec.md) is about what the run
 - **FR-405**: The router MUST apply a capability floor for feature demand, and record it in the routing reason (US5).
 - **FR-406**: Every CI job MUST have a timeout sized from measured healthy runs; workflows MUST declare least-privilege permissions and pin each action to a commit; unit tests MUST run shuffled; a `go.mod` or `go.sum` that is not tidy MUST fail the build (US6).
 - **FR-407**: A package that starts a goroutine in non-test code MUST run goleak after its tests, enforced by a contract test with no standing exemptions (US6).
+- **FR-408**: A server's graceful shutdown MUST finish before the process exits; a periodic pass and the queue workers MUST be stopped and awaited, and a socket server MUST bound a connection's lifetime (US7).
+- **FR-409**: A response to a client MUST NOT carry the text of an infrastructure error (a database, queue or dependency failure); it names the operation and the log holds the cause. A resolution the kernel does not recognise MUST stop the run and MUST NOT produce a tool result (US7).
+- **FR-410**: Errors MUST be matched with `errors.Is` and `errors.As`/`errors.AsType`, error types MUST be named `XxxError`, and a local MUST NOT shadow a builtin; `.golangci.yml` enforces these and the standard library's newer forms (US7).
