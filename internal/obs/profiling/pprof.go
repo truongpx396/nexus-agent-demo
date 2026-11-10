@@ -17,7 +17,7 @@ import (
 
 // StartPprofServer exposes Go's net/http/pprof handlers (docs/observability.md)
 // on their OWN listener, bound to addr — never on the mux
-// cmd/nexusd/serve.go's REST/webhook surface or /metrics already share.
+// cmd/nexusd/surfaces_wiring.go's REST/webhook surface or /metrics already share.
 // net/http/pprof's own package doc warns against mounting it on a mux
 // anything untrusted can reach: /debug/pprof/profile lets an unauthenticated
 // caller pin a CPU core for up to `seconds` (30 by default, caller-settable
@@ -56,7 +56,7 @@ func StartPprofServer(addr string) (shutdown func(context.Context) error, err er
 		Addr:              addr,
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
-		// Unbounded, like cmd/nexusd/serve.go's own main httpSrv.WriteTimeout:
+		// Unbounded, like cmd/nexusd/http.go's own main server WriteTimeout:
 		// /debug/pprof/profile and /debug/pprof/trace both hold the response
 		// open for the caller's requested duration, so any fixed timeout here
 		// would sever a legitimate long capture.

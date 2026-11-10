@@ -75,7 +75,7 @@ func main() {
 	}
 	log.Info().Any("key_id", key.KeyID).Msg("signerd: loaded signing key")
 
-	// Profiling (docs/observability.md) — same opt-in knobs cmd/nexusd/serve.go
+	// Profiling (docs/observability.md) — same opt-in knobs cmd/nexusd/infra.go
 	// wires, under signerd's own address/app-name so the two processes never
 	// collide on a bind port or a Pyroscope application selector. signerd's
 	// own workload (sign a digest over a unix socket) is tiny, but a shared

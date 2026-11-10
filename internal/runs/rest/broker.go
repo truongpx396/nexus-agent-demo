@@ -155,7 +155,7 @@ func (b *broker) publish(sessionID uuid.UUID, p published) {
 // PublishDelta fans a live preview chunk out to sessionID's current
 // subscribers, the same non-blocking, no-subscriber-is-fine delivery
 // publish already gives an ordinary durable event. cmd/nexusd is the only
-// caller — kernel.Kernel.OnChunk is wired to this method in serve.go,
+// caller — kernel.Kernel.OnChunk is wired to this method in cmd/nexusd/compose.go,
 // mirroring how Receipts/OnSuspend/OnDelegate are each wired to a method on
 // some other package from that same file. A session nobody is currently
 // subscribed to (the common case for a queue-resumed run with no attached
