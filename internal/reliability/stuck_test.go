@@ -9,7 +9,7 @@ import (
 func TestTracker_RepeatedAction(t *testing.T) {
 	tr := newTracker(4)
 	var last TrackerVerdict
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		last = tr.Record("platform/shell@v1", []byte(`{"cmd":"ls"}`))
 	}
 	if !last.Suspected || last.Reason != ReasonRepeatedAction {
@@ -51,7 +51,7 @@ func TestTracker_ProgressNeverTrips(t *testing.T) {
 func TestTracker_DifferentReasonDoesNotCorroborate(t *testing.T) {
 	tr := newTracker(4)
 	// Trip once on repeated_action.
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		tr.Record("platform/shell@v1", []byte(`{"cmd":"ls"}`))
 	}
 	// Now trip on oscillation instead — a DIFFERENT reason, so this must be
@@ -69,7 +69,7 @@ func TestTracker_DifferentReasonDoesNotCorroborate(t *testing.T) {
 func TestRegistry_IsolatesSessions(t *testing.T) {
 	reg := NewRegistry(4)
 	s1, s2 := uuid.New(), uuid.New()
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		reg.Record(s1, "platform/shell@v1", []byte(`{"cmd":"ls"}`))
 	}
 	if v := reg.Record(s2, "platform/shell@v1", []byte(`{"cmd":"pwd"}`)); v.Suspected {

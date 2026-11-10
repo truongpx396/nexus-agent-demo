@@ -350,7 +350,7 @@ func (t *txn) DrawFromEnvelope(ctx context.Context, envelopeID uuid.UUID, amount
 		envelopeID, amount.Micros,
 	).Scan(&remainingMicros, &currency)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			var cur int64
 			var cy string
 			if qerr := t.Tx().QueryRow(ctx, `SELECT remaining_micros, currency FROM team_envelopes WHERE envelope_id = $1`, envelopeID).Scan(&cur, &cy); qerr != nil {

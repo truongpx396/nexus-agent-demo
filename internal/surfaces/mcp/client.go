@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -37,7 +38,7 @@ type Tool struct {
 func (t Tool) SchemaDigest() string {
 	h := sha256.New()
 	_, _ = fmt.Fprintf(h, "name=%s\ndescription=%s\ninput_schema=%s\n", t.Name, t.Description, string(t.InputSchema))
-	return fmt.Sprintf("%x", h.Sum(nil))[:8]
+	return hex.EncodeToString(h.Sum(nil))[:8]
 }
 
 // CallResult is what tools/call returns — Content is untrusted external

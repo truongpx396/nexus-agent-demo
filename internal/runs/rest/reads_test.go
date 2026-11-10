@@ -77,13 +77,16 @@ func TestGetRun_StatusCodesDistinguishMissingForbiddenAndBroken(t *testing.T) {
 		{"unknown run", &fakeReader{getErr: runs.ErrNotFound}, http.StatusNotFound, "run not found"},
 		{"someone else's run", &fakeReader{run: runs.RunView{RunID: runID, UserID: uuid.New()}}, http.StatusForbidden, "forbidden"},
 		// A failed read used to surface as 404, hiding an outage behind a client error.
-		{"read failure is a server error, not a 404", &fakeReader{getErr: errors.New("connection refused")}, http.StatusInternalServerError, "connection refused"},
+		{"read failure is a server error, not a 404", &fakeReader{getErr: errors.New("connection refused")}, http.StatusInternalServerError, "load run: internal error"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := get(readsServer(t, tenantID, userID, tc.reader), "/v1/runs/"+runID.String())
 			if rec.Code != tc.want || !strings.Contains(rec.Body.String(), tc.body) {
 				t.Fatalf("got %d %q, want %d containing %q", rec.Code, rec.Body.String(), tc.want, tc.body)
+			}
+			if strings.Contains(rec.Body.String(), "connection refused") {
+				t.Fatalf("body %q carries the reader's error text, which belongs in the log", rec.Body.String())
 			}
 		})
 	}

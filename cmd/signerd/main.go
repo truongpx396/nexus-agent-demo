@@ -11,11 +11,14 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"os"
 	"os/signal"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -29,8 +32,15 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/version"
 )
 
-const defaultKeyPath = ".dev/signer/ed25519.key"
-const defaultSocketPath = ".dev/signerd.sock"
+const (
+	defaultKeyPath    = ".dev/signer/ed25519.key"
+	defaultSocketPath = ".dev/signerd.sock"
+
+	// connDeadline bounds one request/response exchange. A client that connects
+	// and never sends (or never reads) would otherwise hold a goroutine and a
+	// file descriptor for the life of the process.
+	connDeadline = 10 * time.Second
+)
 
 func envOr(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
@@ -103,11 +113,15 @@ func main() {
 		}()
 	}
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	socketPath := envOr("NEXUS_SIGNERD_SOCKET", defaultSocketPath)
-	if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
+	if err := os.Remove(socketPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		fatalf("remove stale socket %s: %v", socketPath, err)
 	}
-	ln, err := net.Listen("unix", socketPath)
+	var lc net.ListenConfig
+	ln, err := lc.Listen(ctx, "unix", socketPath)
 	if err != nil {
 		fatalf("listen on %s: %v", socketPath, err)
 	}
@@ -116,24 +130,24 @@ func main() {
 	}
 	defer ln.Close() //nolint:errcheck // best-effort on the way out
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	go func() {
 		<-ctx.Done()
 		_ = ln.Close() // unblocks Accept below
 	}()
 
 	fmt.Printf("listening on %s\n", socketPath)
+	var handlers sync.WaitGroup
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
 			if ctx.Err() != nil {
-				return // orderly shutdown
+				handlers.Wait() // a signature already being written is finished, not cut off
+				return          // orderly shutdown
 			}
 			log.Error().Err(err).Msg("signerd: accept")
 			continue
 		}
-		go handleConn(conn, key)
+		handlers.Go(func() { handleConn(conn, key) })
 	}
 }
 
@@ -142,6 +156,7 @@ func main() {
 // "one JSON line in, one JSON line out" is needed for a local socket.
 func handleConn(conn net.Conn, key signerkey.Key) {
 	defer conn.Close() //nolint:errcheck // nothing left to flush after writeResponse below
+	_ = conn.SetDeadline(time.Now().Add(connDeadline))
 
 	scanner := bufio.NewScanner(conn)
 	scanner.Buffer(make([]byte, 0, 4096), 1<<20)

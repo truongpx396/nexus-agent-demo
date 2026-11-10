@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"strconv"
 	"sync"
@@ -27,8 +28,8 @@ import (
 // (web + postgres only, no ClickHouse/MinIO/worker), which predates OTLP
 // ingestion entirely (confirmed: POST /api/public/otel/v1/traces → 404
 // against v2). This is a deliberately different protocol from otlp.go, not
-// a config variant of it — Langfuse's own docs mark this Ingestion API
-// deprecated in favor of OTLP (Cloud sunset 2026-11-16), a trade-off
+// a config variant of it — Langfuse's own docs mark this Ingestion API as
+// superseded by OTLP (Cloud sunset 2026-11-16), a trade-off
 // accepted here specifically to keep the local trace stack at 2 containers
 // instead of 6.
 //
@@ -367,12 +368,8 @@ func newSpanID() trace.SpanID {
 // call finishes.
 func (s *langfuseSpan) End(attrs obs.Attrs) {
 	merged := make(obs.Attrs, len(s.startAttrs)+len(attrs))
-	for k, v := range s.startAttrs {
-		merged[k] = v
-	}
-	for k, v := range attrs {
-		merged[k] = v
-	}
+	maps.Copy(merged, s.startAttrs)
+	maps.Copy(merged, attrs)
 	filtered := obs.FilterTracked(merged, s.exp.Drops)
 
 	body := langfuseObservationBody{

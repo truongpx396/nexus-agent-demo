@@ -18,8 +18,8 @@ func TestCondensation_CannotAnswerWhetherAnExternalEffectCompleted(t *testing.T)
 	// completed: a tool_use paired with a clean, non-error, non-synthetic
 	// tool_result.
 	history := []Event{
-		{Type: EventToolUse, ToolID: strPtr("platform/send_email@v1")},
-		{Type: EventToolResult, ToolID: strPtr("platform/send_email@v1")},
+		{Type: EventToolUse, ToolID: new("platform/send_email@v1")},
+		{Type: EventToolResult, ToolID: new("platform/send_email@v1")},
 	}
 
 	c := Condense(2, "Sent the Q3 numbers to finance and moved on to the next task.")
@@ -52,5 +52,3 @@ func TestCondensation_CannotAnswerWhetherAnExternalEffectCompleted(t *testing.T)
 		t.Fatalf("condensation carries no useful model-facing content: %+v", c)
 	}
 }
-
-func strPtr(s string) *string { return &s }

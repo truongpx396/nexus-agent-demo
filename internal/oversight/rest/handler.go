@@ -79,7 +79,7 @@ type ResumeOutcome struct {
 }
 
 func toApprovalView(ap oversight.Approval) ApprovalView {
-	ctxJSON, _ := json.Marshal(ap.Context) //nolint:errcheck // ContextPackage is always marshalable (json.RawMessage + strings)
+	ctxJSON, _ := json.Marshal(ap.Context) // ContextPackage is always marshalable (json.RawMessage + strings)
 	return ApprovalView{
 		ApprovalID: ap.ApprovalID.String(), SessionID: ap.SessionID.String(), ToolID: ap.ToolID,
 		AskKind: ap.AskKind, Status: string(ap.Status), Context: ctxJSON, ExpiresAt: ap.ExpiresAt, CreatedAt: ap.CreatedAt,
@@ -97,7 +97,7 @@ func (h Handler) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 	}
 	approvals, err := h.Approvals.ListPending(r.Context(), tenantID)
 	if err != nil {
-		http.Error(w, "list approvals: "+err.Error(), http.StatusInternalServerError)
+		restkit.ServerError(w, r, "list approvals", err)
 		return
 	}
 	views := make([]ApprovalView, len(approvals))

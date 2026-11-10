@@ -92,11 +92,12 @@ func verifyReceiptChain(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, pub 
 		}
 
 		want := audit.HashInput(prevHash, tenantID, sessionID, seq, eventID, eventType, payloadDigest)
-		if !bytesEqualNilAware(want, hash) {
+		switch {
+		case !bytesEqualNilAware(want, hash):
 			report.Breaks = append(report.Breaks, audit.Break{SessionID: sessionID, Seq: seq, Kind: "hash_mismatch", Detail: "recomputed hash does not match the stored hash"})
-		} else if signerKeyID != currentKeyID {
+		case signerKeyID != currentKeyID:
 			report.Breaks = append(report.Breaks, audit.Break{SessionID: sessionID, Seq: seq, Kind: "unverifiable_signer_key", Detail: fmt.Sprintf("signed by %q, current trusted key is %q", signerKeyID, currentKeyID)})
-		} else if !ed25519.Verify(pub, hash, sig) {
+		case !ed25519.Verify(pub, hash, sig):
 			report.Breaks = append(report.Breaks, audit.Break{SessionID: sessionID, Seq: seq, Kind: "signature_invalid", Detail: "signature does not verify against the trusted public key"})
 		}
 
@@ -149,11 +150,12 @@ func verifyAnchors(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, pub ed255
 		if werr != nil {
 			return werr
 		}
-		if !bytesEqualNilAware(want, a.hash) {
+		switch {
+		case !bytesEqualNilAware(want, a.hash):
 			report.Breaks = append(report.Breaks, audit.Break{Seq: a.toSeq, Kind: "hash_mismatch", Detail: fmt.Sprintf("anchor %s: recomputed aggregate hash does not match the stored hash", a.anchorID)})
-		} else if a.signerKeyID != currentKeyID {
+		case a.signerKeyID != currentKeyID:
 			report.Breaks = append(report.Breaks, audit.Break{Seq: a.toSeq, Kind: "unverifiable_signer_key", Detail: fmt.Sprintf("anchor %s: signed by %q, current trusted key is %q", a.anchorID, a.signerKeyID, currentKeyID)})
-		} else if !ed25519.Verify(pub, a.hash, a.sig) {
+		case !ed25519.Verify(pub, a.hash, a.sig):
 			report.Breaks = append(report.Breaks, audit.Break{Seq: a.toSeq, Kind: "signature_invalid", Detail: fmt.Sprintf("anchor %s: signature does not verify against the trusted public key", a.anchorID)})
 		}
 

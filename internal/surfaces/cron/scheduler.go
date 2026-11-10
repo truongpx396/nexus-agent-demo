@@ -143,7 +143,7 @@ func (s *Scheduler) fire(ctx context.Context, tenantID uuid.UUID, d Schedule) {
 		ModelID:       route.ModelID,
 		AutonomyLevel: autonomy,
 	}
-	events, err := s.Starter.StartRun(context.Background(), req)
+	events, err := s.Starter.StartRun(context.WithoutCancel(ctx), req) // the run outlives this tick, and shutdown of the scheduler is not its cancellation
 	if err != nil {
 		log.Error().Err(err).Any("schedule_id", d.ID).Msg("cron: start run for due schedule")
 		return

@@ -118,7 +118,7 @@ func newVault(t *testing.T, admitted []string, tokenURL string) (*connectors.Vau
 	return &connectors.Vault{
 		Config: fakeConfig{admitted: admitted}, Connections: conns, States: states,
 		Providers: connoauth.NewRegistry(connoauth.Provider{
-			Name: "acme", ClientID: "client-1", ClientSecret: "secret-1", //nolint:gosec // fixture, no credential
+			Name: "acme", ClientID: "client-1", ClientSecret: "secret-1", // fixture, no credential
 			Endpoint: oauth2.Endpoint{AuthURL: "https://acme.example/authorize", TokenURL: tokenURL},
 		}),
 	}, states, conns
@@ -226,7 +226,7 @@ func TestToken_RefreshesAnExpiredTokenOnceAndReusesTheFreshOne(t *testing.T) {
 		t.Fatalf("HandleCallback: %v", err)
 	}
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		if got, err := v.AccessToken(context.Background(), tenantID, userID, "acme"); err != nil || got != "refreshed-token" {
 			t.Fatalf("AccessToken call %d = %q, %v, want the refreshed token", i+1, got, err)
 		}

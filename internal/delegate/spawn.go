@@ -3,6 +3,7 @@ package delegate
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/runstate"
@@ -109,7 +110,7 @@ func (d *Delegations) Wire(cfg Config) *Delegations {
 // chain already resolved Allow.
 func (d *Delegations) Spawn(ctx context.Context, req SpawnRequest) (uuid.UUID, error) {
 	if d.cfg.Kernel == nil {
-		return uuid.Nil, fmt.Errorf("delegate: Spawn called before Wire")
+		return uuid.Nil, errors.New("delegate: Spawn called before Wire")
 	}
 
 	var parent, child eventlog.Session

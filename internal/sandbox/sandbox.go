@@ -39,6 +39,11 @@ type Limits struct {
 	WallTimeout time.Duration
 }
 
+// maxOutputBytes caps how much of a container's stdout and stderr Exec reads
+// back. Anything past it is dropped; the tool pipeline bounds what reaches the
+// model on top of this.
+const maxOutputBytes = 8 << 20
+
 // DefaultLimits is a conservative default for one shell call: one core,
 // 512MiB, 128 PIDs, 30s wall clock.
 func DefaultLimits() Limits {
@@ -177,7 +182,7 @@ func (d *Docker) Exec(ctx context.Context, cfg Config, cmd string) (Result, erro
 
 	output := ""
 	if logs, lerr := d.Client.ContainerLogs(ctx, created.ID, client.ContainerLogsOptions{ShowStdout: true, ShowStderr: true}); lerr == nil {
-		b, _ := io.ReadAll(logs)
+		b, _ := io.ReadAll(io.LimitReader(logs, maxOutputBytes)) // a runaway process must not be able to fill nexusd's memory
 		_ = logs.Close()
 		output = string(b)
 	}

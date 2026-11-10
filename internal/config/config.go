@@ -10,6 +10,7 @@ package config
 
 import (
 	"context"
+	"slices"
 
 	"github.com/google/uuid"
 )
@@ -48,12 +49,7 @@ type Loader interface {
 
 // HasSkill reports whether skillID is in cfg's admitted set.
 func (c TenantConfig) HasSkill(skillID string) bool {
-	for _, id := range c.AdmittedSkillIDs {
-		if id == skillID {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(c.AdmittedSkillIDs, skillID)
 }
 
 // HasConnectorProvider reports whether provider is in cfg's admitted
@@ -62,10 +58,5 @@ func (c TenantConfig) HasSkill(skillID string) bool {
 // same fail-closed shape HasSkill already gives task 7.4's intersection
 // check.
 func (c TenantConfig) HasConnectorProvider(provider string) bool {
-	for _, p := range c.AdmittedConnectorProviders {
-		if p == provider {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(c.AdmittedConnectorProviders, provider)
 }

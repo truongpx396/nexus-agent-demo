@@ -3,6 +3,7 @@ package plan
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -183,7 +184,7 @@ func (l *Lifecycle) RunEvalGate(ctx context.Context, tenantID, planID uuid.UUID,
 // advances eval_passed -> signed_off, recording who signed in the same unit.
 func (l *Lifecycle) SignOff(ctx context.Context, tenantID, planID uuid.UUID, version int, by string) error {
 	if by == "" {
-		return fmt.Errorf("plan: sign-off requires a named signer")
+		return errors.New("plan: sign-off requires a named signer")
 	}
 	return l.transition(ctx, tenantID, planID, version, StatusEvalPassed, StatusSignedOff, nil,
 		func(ctx context.Context, tx Tx) error { return tx.SetSignedOffBy(ctx, planID, version, by) })

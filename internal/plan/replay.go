@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 )
@@ -70,9 +71,7 @@ func replayState(ctx context.Context, history []eventlog.Event, decrypt func(con
 			if err := json.Unmarshal(plaintext, &p); err != nil {
 				return state{}, fmt.Errorf("plan: unmarshal step_exited: %w", err)
 			}
-			for k, v := range p.Bindings {
-				st.Vars[k] = v
-			}
+			maps.Copy(st.Vars, p.Bindings)
 			st.CurrentStep = ""
 		case eventlog.EventPlanCompleted:
 			st.Completed = true

@@ -81,7 +81,7 @@ func TestClassify_CircuitBreakerOpensAfterThreeFailures(t *testing.T) {
 	fixedNow := time.Now()
 	c.now = func() time.Time { return fixedNow }
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		got := c.Classify(context.Background(), "x/y@v1", `{}`)
 		if got.Verdict != VerdictAsk {
 			t.Fatalf("call %d: Classify = %v, want Ask", i, got.Verdict)

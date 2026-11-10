@@ -10,6 +10,7 @@
 package builtin
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -24,10 +25,10 @@ import (
 // contains.
 func resolveWorkspacePath(workspaceDir, relPath string) (string, error) {
 	if workspaceDir == "" {
-		return "", fmt.Errorf("no workspace directory configured for this session")
+		return "", errors.New("no workspace directory configured for this session")
 	}
 	if relPath == "" {
-		return "", fmt.Errorf("path is required")
+		return "", errors.New("path is required")
 	}
 	cleaned := filepath.Clean("/" + relPath)
 	full := filepath.Join(workspaceDir, cleaned)

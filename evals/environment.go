@@ -2,6 +2,7 @@ package evals
 
 import (
 	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 )
 
@@ -44,17 +45,17 @@ func (e Environment) Digest() []byte {
 }
 
 // DigestHex is Digest formatted for a report table / dashboard column.
-func (e Environment) DigestHex() string { return fmt.Sprintf("%x", e.Digest()) }
+func (e Environment) DigestHex() string { return hex.EncodeToString(e.Digest()) }
 
-// ErrEnvironmentMismatch is returned by CompareEnvironments (and by
+// EnvironmentMismatchError is returned by CompareEnvironments (and by
 // gate.go's baseline regression check, which calls it before trusting a
 // stored baseline) when the two runs being compared did not happen under
 // the same eval_environment_digest.
-type ErrEnvironmentMismatch struct {
+type EnvironmentMismatchError struct {
 	Baseline, Candidate Environment
 }
 
-func (e ErrEnvironmentMismatch) Error() string {
+func (e EnvironmentMismatchError) Error() string {
 	return fmt.Sprintf(
 		"evals: refusing to compare across eval_environment_digest: baseline=%s candidate=%s",
 		e.Baseline.DigestHex(), e.Candidate.DigestHex(),
@@ -65,7 +66,7 @@ func (e ErrEnvironmentMismatch) Error() string {
 // recorded under different environments is never silently allowed.
 func CompareEnvironments(baseline, candidate Environment) error {
 	if baseline.DigestHex() != candidate.DigestHex() {
-		return ErrEnvironmentMismatch{Baseline: baseline, Candidate: candidate}
+		return EnvironmentMismatchError{Baseline: baseline, Candidate: candidate}
 	}
 	return nil
 }

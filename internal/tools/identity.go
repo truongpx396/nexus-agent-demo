@@ -2,8 +2,9 @@ package tools
 
 import (
 	"fmt"
+	"maps"
 	"regexp"
-	"sort"
+	"slices"
 )
 
 // ToolRef is the qualified tool identity (README task 3.1, pattern 13):
@@ -131,14 +132,8 @@ func (r *Registry) AdmissionStatus(ref ToolRef) (AdmissionStatus, bool) {
 // registration) order — manifest.go's Build depends on that determinism to
 // produce a stable digest.
 func (r *Registry) All() []Tool {
-	var namespaces []string
-	for ns := range r.byNamespace {
-		namespaces = append(namespaces, ns)
-	}
-	sort.Strings(namespaces)
-
 	var out []Tool
-	for _, ns := range namespaces {
+	for _, ns := range slices.Sorted(maps.Keys(r.byNamespace)) {
 		for _, key := range r.byNamespace[ns] {
 			out = append(out, r.tools[key].tool)
 		}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -132,7 +133,7 @@ func runGoLive(ctx context.Context, args []string) error {
 	}
 
 	if !ok {
-		return fmt.Errorf("go-live checklist has at least one FAIL — see docs/go-live.md")
+		return errors.New("go-live checklist has at least one FAIL — see docs/go-live.md")
 	}
 	fmt.Println("go-live: every AUTOMATED item passed (MANUAL items still require sign-off — see above)")
 	return nil

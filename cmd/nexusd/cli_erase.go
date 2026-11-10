@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -33,7 +34,7 @@ func runErase(ctx context.Context, args []string) error {
 		return err
 	}
 	if (*tenantName == "") == (*sessionArg == "") {
-		return fmt.Errorf("exactly one of --tenant or --session is required")
+		return errors.New("exactly one of --tenant or --session is required")
 	}
 
 	dsn := envOr("NEXUS_DATABASE_URL", defaultAppDSN)

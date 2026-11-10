@@ -38,12 +38,12 @@ func (k *Kernel) reconcile(ctx context.Context, st *RunState, res cost.Reservati
 // stream/transport failure, or empty output) means the caller must apply
 // promptctx.ExtractivePass instead — a condenser that can't run must never
 // block or fail the turn, only degrade it.
-func (k *Kernel) condense(ctx context.Context, st *RunState, cfg RunConfig, covered []provider.Message) (summary string, degraded bool, reservation cost.Reservation, err error) {
+func (k *Kernel) condense(ctx context.Context, st *RunState, cfg RunConfig, covered []provider.Message) (summary string, degraded bool, reservation cost.Reservation) {
 	reservation, reserveErr := k.Budget.Reserve(ctx, cost.ReserveRequest{
 		TenantID: st.TenantID, SessionID: st.SessionID, ModelID: cfg.CondenserModelID, Purpose: cost.PurposeCompaction,
 	})
 	if reserveErr != nil {
-		return "", true, reservation, nil
+		return "", true, reservation
 	}
 
 	prompt := promptctx.CondensePrompt(covered)
@@ -52,7 +52,7 @@ func (k *Kernel) condense(ctx context.Context, st *RunState, cfg RunConfig, cove
 	if serr != nil {
 		genSpan.End(obs.Attrs{"outcome": "error"})
 		k.reconcile(ctx, st, reservation, provider.Usage{}, false)
-		return "", true, reservation, nil
+		return "", true, reservation
 	}
 
 	var text strings.Builder
@@ -92,7 +92,7 @@ func (k *Kernel) condense(ctx context.Context, st *RunState, cfg RunConfig, cove
 	k.reconcile(ctx, st, reservation, usage, usageReported && streamErr == nil)
 
 	if streamErr != nil || text.Len() == 0 {
-		return "", true, reservation, nil
+		return "", true, reservation
 	}
-	return text.String(), false, reservation, nil
+	return text.String(), false, reservation
 }

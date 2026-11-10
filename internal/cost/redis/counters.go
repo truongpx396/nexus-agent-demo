@@ -114,7 +114,7 @@ func (s *Counters) Reserve(ctx context.Context, budgetID uuid.UUID, epoch, amoun
 		// there's room, so it must not assume there is.
 		return cost.ReserveUnavailable, 0, fmt.Errorf("redis reserve: %w", err)
 	}
-	pair, ok := res.([]interface{})
+	pair, ok := res.([]any)
 	if !ok || len(pair) != 2 {
 		return cost.ReserveUnavailable, 0, fmt.Errorf("redis reserve: unexpected script result %#v", res)
 	}
@@ -152,7 +152,7 @@ func (s *Counters) Arm(ctx context.Context, budgetID uuid.UUID, epoch, baseline 
 	return nil
 }
 
-func toInt64(v interface{}) int64 {
+func toInt64(v any) int64 {
 	switch n := v.(type) {
 	case int64:
 		return n

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -32,7 +33,7 @@ func newProvider() (provider.Provider, error) {
 	case "anthropic":
 		apiKey := os.Getenv("ANTHROPIC_API_KEY")
 		if apiKey == "" {
-			return nil, fmt.Errorf("NEXUS_PROVIDER=anthropic requires ANTHROPIC_API_KEY")
+			return nil, errors.New("NEXUS_PROVIDER=anthropic requires ANTHROPIC_API_KEY")
 		}
 		model := envOr("NEXUS_ANTHROPIC_MODEL", "claude-sonnet-5")
 		return anthropic.New(apiKey, model), nil
@@ -153,7 +154,7 @@ func newSpanExporter(ctx context.Context) (spanExporter, func(), error) {
 		publicKey := envOr("NEXUS_LANGFUSE_PUBLIC_KEY", "")
 		secretKey := envOr("NEXUS_LANGFUSE_SECRET_KEY", "")
 		if publicKey == "" || secretKey == "" {
-			return nil, nil, fmt.Errorf("NEXUS_LANGFUSE_HOST set but NEXUS_LANGFUSE_PUBLIC_KEY/NEXUS_LANGFUSE_SECRET_KEY missing")
+			return nil, nil, errors.New("NEXUS_LANGFUSE_HOST set but NEXUS_LANGFUSE_PUBLIC_KEY/NEXUS_LANGFUSE_SECRET_KEY missing")
 		}
 		exp := langfuse.NewLangfuseExporter(langfuseHost, publicKey, secretKey)
 		exporters = append(exporters, exp)
@@ -215,7 +216,7 @@ func parseHeaderList(raw string) map[string]string {
 		return nil
 	}
 	headers := map[string]string{}
-	for _, pair := range strings.Split(raw, ",") {
+	for pair := range strings.SplitSeq(raw, ",") {
 		k, v, ok := strings.Cut(pair, "=")
 		if !ok {
 			continue

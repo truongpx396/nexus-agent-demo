@@ -19,6 +19,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -58,19 +59,19 @@ import (
 type unusedControlPlaneBackend struct{}
 
 func (unusedControlPlaneBackend) Reserve(context.Context, controlplane.ReserveBudgetV1) (controlplane.ReserveBudgetResultV1, error) {
-	return controlplane.ReserveBudgetResultV1{}, fmt.Errorf("test control plane: ReserveBudget not wired")
+	return controlplane.ReserveBudgetResultV1{}, errors.New("test control plane: ReserveBudget not wired")
 }
 func (unusedControlPlaneBackend) ReportCost(context.Context, controlplane.ReportCostV1) error {
-	return fmt.Errorf("test control plane: ReportCost not wired")
+	return errors.New("test control plane: ReportCost not wired")
 }
 func (unusedControlPlaneBackend) EmitReceipt(context.Context, controlplane.EmitAuditReceiptV1) error {
-	return fmt.Errorf("test control plane: EmitAuditReceipt not wired")
+	return errors.New("test control plane: EmitAuditReceipt not wired")
 }
 func (unusedControlPlaneBackend) RequestApproval(context.Context, controlplane.RequestApprovalV1) (controlplane.RequestApprovalResultV1, error) {
-	return controlplane.RequestApprovalResultV1{}, fmt.Errorf("test control plane: RequestApproval not wired")
+	return controlplane.RequestApprovalResultV1{}, errors.New("test control plane: RequestApproval not wired")
 }
 func (unusedControlPlaneBackend) AuthorizeContentAccess(context.Context, controlplane.AuthorizeContentAccessV1) (controlplane.GrantV1, error) {
-	return controlplane.GrantV1{}, fmt.Errorf("test control plane: AuthorizeContentAccess not wired")
+	return controlplane.GrantV1{}, errors.New("test control plane: AuthorizeContentAccess not wired")
 }
 
 // newTestLauncher is the runs.Service every REST/CLI-parity test starts runs

@@ -14,7 +14,7 @@ import (
 // sees when Resume refuses to proceed past an in-flight claim.
 func TestErrUnresolvedClaims_Error(t *testing.T) {
 	sessionID := uuid.New()
-	err := ErrUnresolvedClaims{SessionID: sessionID, ClaimIDs: []uuid.UUID{uuid.New(), uuid.New()}}
+	err := UnresolvedClaimsError{SessionID: sessionID, ClaimIDs: []uuid.UUID{uuid.New(), uuid.New()}}
 	msg := err.Error()
 	for _, want := range []string{sessionID.String(), "2 unresolved claim"} {
 		if !strings.Contains(msg, want) {

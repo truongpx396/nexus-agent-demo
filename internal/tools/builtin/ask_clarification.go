@@ -3,6 +3,7 @@ package builtin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/tools"
@@ -67,7 +68,7 @@ func (AskClarification) ValidateInput(_ context.Context, in json.RawMessage, _ t
 		return fmt.Errorf("invalid input: %w", err)
 	}
 	if req.Question == "" {
-		return fmt.Errorf("question is required")
+		return errors.New("question is required")
 	}
 	return nil
 }

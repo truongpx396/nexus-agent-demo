@@ -113,7 +113,7 @@ func TestRunCtl_ResumeConversation_ConcurrentCallersResumeExactlyOnce(t *testing
 			c.Release()
 		}
 	}()
-	for i := 0; i < callers; i++ {
+	for i := range callers {
 		c, err := pool.Acquire(warmCtx)
 		if err != nil {
 			t.Fatalf("warm connection %d of %d (pool max %d): %v", i+1, callers, pool.Config().MaxConns, err)
@@ -127,15 +127,13 @@ func TestRunCtl_ResumeConversation_ConcurrentCallersResumeExactlyOnce(t *testing
 	var ok atomic.Int32
 	start := make(chan struct{})
 	var wg sync.WaitGroup
-	for i := 0; i < callers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range callers {
+		wg.Go(func() {
 			<-start
 			if _, err := ctl.ResumeConversation(ctx, tenantID, sessionID, "follow-up"); err == nil {
 				ok.Add(1)
 			}
-		}()
+		})
 	}
 	close(start)
 	wg.Wait()

@@ -3,8 +3,10 @@ package oversight
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"iter"
+	"slices"
 
 	"github.com/google/uuid"
 
@@ -155,12 +157,12 @@ func (r *Resumer) loadRunState(ctx context.Context, tenantID, sessionID uuid.UUI
 }
 
 func currentActiveKeyID(history []eventlog.Event) (string, error) {
-	for i := len(history) - 1; i >= 0; i-- {
-		if history[i].KeyID != crypto.ErasureKeyID {
-			return history[i].KeyID, nil
+	for _, h := range slices.Backward(history) {
+		if h.KeyID != crypto.ErasureKeyID {
+			return h.KeyID, nil
 		}
 	}
-	return "", fmt.Errorf("oversight: session has no active key in its history")
+	return "", errors.New("oversight: session has no active key in its history")
 }
 
 func errSeq(err error) iter.Seq2[eventlog.Event, error] {

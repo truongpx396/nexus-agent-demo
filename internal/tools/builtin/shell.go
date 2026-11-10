@@ -3,6 +3,7 @@ package builtin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"time"
@@ -60,7 +61,7 @@ func (Shell) ValidateInput(_ context.Context, in json.RawMessage, _ tools.RunCon
 		return fmt.Errorf("invalid input: %w", err)
 	}
 	if req.Cmd == "" {
-		return fmt.Errorf("cmd is required")
+		return errors.New("cmd is required")
 	}
 	return nil
 }

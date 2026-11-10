@@ -13,6 +13,10 @@ go.work
 go.work.sum
 
 # --- Build artifacts ---
+# `go build ./cmd/nexusd` drops its binary in the working directory; one was once committed at the repo root.
+/nexusd
+/nexusctl
+/signerd
 /cmd/nexusd/nexusd
 /cmd/nexusctl/nexusctl
 /cmd/signerd/signerd

@@ -185,7 +185,7 @@ func TestIsolation_TransactionLocalScopeHoldsUnderConcurrency(t *testing.T) {
 
 	var wg sync.WaitGroup
 	errCh := make(chan error, goroutines*iterationsEach)
-	for g := 0; g < goroutines; g++ {
+	for g := range goroutines {
 		tenantID := tenantA
 		if g%2 == 1 {
 			tenantID = tenantB
@@ -193,7 +193,7 @@ func TestIsolation_TransactionLocalScopeHoldsUnderConcurrency(t *testing.T) {
 		wg.Add(1)
 		go func(tenantID uuid.UUID) {
 			defer wg.Done()
-			for i := 0; i < iterationsEach; i++ {
+			for range iterationsEach {
 				var count int
 				err := s.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 					return tx.QueryRow(ctx, `SELECT count(*) FROM sessions`).Scan(&count)

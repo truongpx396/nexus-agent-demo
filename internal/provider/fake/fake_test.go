@@ -137,8 +137,7 @@ func TestThrottleErrorRefusesBeforeAnyChunk(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a throttle error from Stream itself")
 	}
-	var throttleErr *provider.ThrottleError
-	if !errors.As(err, &throttleErr) {
+	if _, ok := errors.AsType[*provider.ThrottleError](err); !ok {
 		t.Fatalf("err = %v (%T), want *provider.ThrottleError", err, err)
 	}
 }

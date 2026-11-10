@@ -50,8 +50,7 @@ func Classify(err error) FailureClass {
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || errors.Is(err, io.ErrUnexpectedEOF) {
 		return FailureRetryable
 	}
-	var perm *PermanentError
-	if errors.As(err, &perm) {
+	if _, ok := errors.AsType[*PermanentError](err); ok {
 		return FailurePermanent
 	}
 	return FailureRetryable
@@ -101,7 +100,7 @@ func (c BackoffConfig) Delay(attempt int, rng *rand.Rand) Delay {
 	if attempt < 1 {
 		attempt = 1
 	}
-	ceiling := c.Base * time.Duration(1<<min(attempt, 20)) //nolint:gosec // bounded by min(attempt,20); never overflows a time.Duration shift
+	ceiling := c.Base * time.Duration(1<<min(attempt, 20)) // bounded by min(attempt,20); never overflows a time.Duration shift
 	if ceiling > c.Max || ceiling <= 0 {
 		ceiling = c.Max
 	}

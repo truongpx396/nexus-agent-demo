@@ -14,6 +14,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -166,7 +167,7 @@ func parseFlags(args []string) (positional []string, flags map[string]string) {
 func cmdRun(w io.Writer, args []string) error {
 	positional, flags := parseFlags(args)
 	if len(positional) != 1 {
-		return fmt.Errorf(`run requires exactly one argument: nexusctl run "<input>"`)
+		return errors.New(`run requires exactly one argument: nexusctl run "<input>"`)
 	}
 
 	body := map[string]string{"input": positional[0]}
@@ -198,7 +199,7 @@ func cmdRun(w io.Writer, args []string) error {
 
 func cmdApprovals(w io.Writer, args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("approvals requires a subcommand: show|list|grant|deny")
+		return errors.New("approvals requires a subcommand: show|list|grant|deny")
 	}
 	c := newClient()
 	switch args[0] {
@@ -206,18 +207,18 @@ func cmdApprovals(w io.Writer, args []string) error {
 		return approvalsList(w, c)
 	case "show":
 		if len(args) < 2 {
-			return fmt.Errorf("approvals show requires an approval id")
+			return errors.New("approvals show requires an approval id")
 		}
 		return approvalsShow(w, c, args[1])
 	case "grant":
 		if len(args) < 2 {
-			return fmt.Errorf("approvals grant requires an approval id")
+			return errors.New("approvals grant requires an approval id")
 		}
 		_, flags := parseFlags(args[2:])
 		return approvalsGrant(w, c, args[1], flags["modify"])
 	case "deny":
 		if len(args) < 2 {
-			return fmt.Errorf("approvals deny requires an approval id")
+			return errors.New("approvals deny requires an approval id")
 		}
 		_, flags := parseFlags(args[2:])
 		return approvalsDeny(w, c, args[1], flags["reason"])
@@ -297,7 +298,7 @@ func approvalsDeny(w io.Writer, c *client, id, reason string) error {
 func cmdCancel(w io.Writer, args []string) error {
 	positional, flags := parseFlags(args)
 	if len(positional) != 1 {
-		return fmt.Errorf(`cancel requires exactly one argument: nexusctl cancel <session-id>`)
+		return errors.New(`cancel requires exactly one argument: nexusctl cancel <session-id>`)
 	}
 	c := newClient()
 	body := map[string]string{}
@@ -318,7 +319,7 @@ func cmdCancel(w io.Writer, args []string) error {
 func cmdSteer(w io.Writer, args []string) error {
 	positional, _ := parseFlags(args)
 	if len(positional) != 2 {
-		return fmt.Errorf(`steer requires exactly two arguments: nexusctl steer <session-id> "<input>"`)
+		return errors.New(`steer requires exactly two arguments: nexusctl steer <session-id> "<input>"`)
 	}
 	c := newClient()
 	respBody, status, err := c.do(http.MethodPost, "/v1/runs/"+positional[0]+"/steer", map[string]string{"input": positional[1]})
@@ -336,11 +337,11 @@ func cmdSteer(w io.Writer, args []string) error {
 func cmdFork(w io.Writer, args []string) error {
 	positional, flags := parseFlags(args)
 	if len(positional) != 1 {
-		return fmt.Errorf(`fork requires exactly one argument: nexusctl fork <session-id> --at=<seq> [--model=<model-id>]`)
+		return errors.New(`fork requires exactly one argument: nexusctl fork <session-id> --at=<seq> [--model=<model-id>]`)
 	}
 	atSeq, ok := flags["at"]
 	if !ok {
-		return fmt.Errorf("fork requires --at=<seq>")
+		return errors.New("fork requires --at=<seq>")
 	}
 	// at_seq must be a JSON number, not a string — parseFlags only ever
 	// gives us strings, so parse and re-encode it rather than growing

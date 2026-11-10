@@ -115,7 +115,8 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 
 	wantUser, wantPass, ok, err := s.Channels.WebhookCredential(r.Context(), tenantID)
 	if err != nil {
-		http.Error(w, "resolve channel: "+err.Error(), http.StatusInternalServerError)
+		log.Error().Err(err).Any("tenant_id", tenantID).Msg("email: resolve channel")
+		http.Error(w, "resolve channel: internal error", http.StatusInternalServerError)
 		return
 	}
 	if !ok {
@@ -172,7 +173,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 
 	if _, err := s.dispatch(r.Context(), tenantID, userID, sessionKey, deliveryID, msg.From, input); err != nil {
 		log.Error().Err(err).Any("tenant_id", tenantID).Msg("email: dispatch")
-		http.Error(w, "dispatch: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "dispatch: internal error", http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusOK)

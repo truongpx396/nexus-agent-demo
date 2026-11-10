@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -38,7 +39,7 @@ func runIngest(ctx context.Context, args []string) error {
 		return err
 	}
 	if *tenantName == "" || *path == "" || *mimeType == "" {
-		return fmt.Errorf("--tenant, --file, and --mime are all required")
+		return errors.New("--tenant, --file, and --mime are all required")
 	}
 
 	data, err := os.ReadFile(*path)

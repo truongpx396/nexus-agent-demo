@@ -50,7 +50,7 @@ func resolves(id string, known map[string]bool, aliases map[string]string) bool 
 func pathTokens(line string) []string {
 	var out []string
 	for _, m := range backticked.FindAllStringSubmatch(line, -1) {
-		p := strings.SplitN(strings.TrimRight(m[1], ",.;:"), "#", 2)[0]
+		p, _, _ := strings.Cut(strings.TrimRight(m[1], ",.;:"), "#")
 		if !strings.Contains(p, "/") {
 			continue
 		}
@@ -236,7 +236,7 @@ func TestSpecs_DoneTasksNamePathsThatExist(t *testing.T) {
 		if !strings.Contains(body, "**Paths**: verified") {
 			continue
 		}
-		for _, line := range strings.Split(body, "\n") {
+		for line := range strings.SplitSeq(body, "\n") {
 			if !strings.HasPrefix(line, "- [X]") {
 				continue
 			}

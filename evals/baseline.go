@@ -73,7 +73,7 @@ func SaveBaseline(path string, b Baseline) error {
 
 // CheckRegressions is task 10.2's regression definition, applied against a
 // stored baseline, and task 10.3's refusal made literal: comparing across a
-// different eval_environment_digest is refused outright (ErrEnvironmentMismatch),
+// different eval_environment_digest is refused outright (EnvironmentMismatchError),
 // never silently attempted. A case present in candidate but absent from
 // baseline (a newly added case) is never a regression — there is nothing to
 // have regressed FROM.

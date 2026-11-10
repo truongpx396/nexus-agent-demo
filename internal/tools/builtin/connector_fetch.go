@@ -3,6 +3,7 @@ package builtin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -91,7 +92,7 @@ func (c ConnectorFetch) ValidateInput(_ context.Context, in json.RawMessage, _ t
 		return fmt.Errorf("invalid input: %w", err)
 	}
 	if req.Provider == "" {
-		return fmt.Errorf("provider is required")
+		return errors.New("provider is required")
 	}
 	u, err := url.Parse(req.URL)
 	if err != nil {
@@ -139,7 +140,7 @@ func (c ConnectorFetch) Call(ctx context.Context, in json.RawMessage, rc tools.R
 		return tools.Result{IsError: true, Reason: fmt.Sprintf("no usable %s connection for this user: %s", req.Provider, err.Error())}, nil
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil) //nolint:gosec // scheme and private-network already validated above
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil) // scheme and private-network already validated above
 	if err != nil {
 		return tools.Result{IsError: true, Reason: err.Error()}, nil
 	}

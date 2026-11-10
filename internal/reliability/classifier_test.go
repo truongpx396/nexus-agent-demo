@@ -43,13 +43,11 @@ func TestBackoffConfig_Delay_GrowsWithAttempt(t *testing.T) {
 	// The jitter ceiling itself (not any one sampled draw) must grow —
 	// sample many draws per attempt and compare maxima.
 	maxAt := func(attempt int) time.Duration {
-		var max time.Duration
-		for i := 0; i < 200; i++ {
-			if d := cfg.Delay(attempt, rng).Duration; d > max {
-				max = d
-			}
+		var longest time.Duration
+		for range 200 {
+			longest = max(longest, cfg.Delay(attempt, rng).Duration)
 		}
-		return max
+		return longest
 	}
 	if maxAt(1) >= maxAt(5) {
 		t.Fatalf("backoff ceiling did not grow with attempt count: attempt1 max=%s attempt5 max=%s", maxAt(1), maxAt(5))
@@ -80,7 +78,7 @@ func TestCircuitBreaker_TripsOnlyOnIdenticalConsecutiveFailures(t *testing.T) {
 
 func TestCircuitBreaker_DifferentReasonsNeverTrip(t *testing.T) {
 	b := NewCircuitBreaker(3)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		if b.RecordFailure("reason-varies") {
 			t.Fatalf("varied-reason failures must never trip the breaker (i=%d)", i)
 		}

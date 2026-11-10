@@ -19,10 +19,25 @@ linters:
     - exhaustive # required for the typed terminal-reason and response-classification switches (kernel/)
     - errcheck
     - gosec
+    - errorlint # an error compared with == or asserted to a type misses a wrapped one
+    - errname # sentinel values are ErrX, error types are XError
+    - copyloopvar # Go 1.22 gives each iteration its own variable
+    - intrange # for i := range n
+    - modernize # the standard library's newer forms (slices, maps, errors.AsType, ...)
+    - perfsprint # errors.New / strconv over a Sprintf that formats nothing
+    - nolintlint # a //nolint that suppresses nothing is a stale claim
+    - predeclared # no shadowing max, min, new, ...
+    - unconvert
+    - usestdlibvars
     - forbidigo
   settings:
     exhaustive:
       default-signifies-exhaustive: false
+    modernize:
+      disable:
+        - omitzero # plan/predicate.go: switching a tag changes the JSON a plan digest is computed over
+    perfsprint:
+      strconcat: false # "a "+b reads better than a Sprintf and a concat is not a hot path
     forbidigo:
       forbid:
         - pattern: '^fmt\.Print(ln|f)?$'

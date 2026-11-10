@@ -309,7 +309,8 @@ func serve(ctx context.Context) error {
 	runsAPI.Bus = redisEventBus{client: redisClient}
 	runsAPI.Skills = &nexusdSkillSetPort{config: cfgStore, bundles: admittedSkillBundles}
 	runsAPI.MCP = mcpPort
-	runsAPI.Outbox = &surfaces.Outbox{Ledger: surfpg.NewLedger(st, keyStore, chain)}
+	outbox := &surfaces.Outbox{Ledger: surfpg.NewLedger(st, keyStore, chain)}
+	runsAPI.Outbox = outbox
 	runsAPI.OutboxSender = logSender{}
 	runsAPI.Exporter = spanExp
 
@@ -368,7 +369,6 @@ func serve(ctx context.Context) error {
 	// Phase 11: four more thin surfaces over the same kernel (README §11) —
 	// each starts runs through the one starter every surface shares.
 	channels := surfpg.NewChannels(st, keyStore)
-	outbox := &surfaces.Outbox{Ledger: surfpg.NewLedger(st, keyStore, chain)}
 
 	// Starter and Resume are the same two values for all three chat surfaces,
 	// so a fresh message and a resumed one drive the SAME underlying
@@ -435,10 +435,19 @@ func serve(ctx context.Context) error {
 		WriteTimeout: 0,
 		IdleTimeout:  120 * time.Second,
 	}
+	// ListenAndServe returns the instant Shutdown is called, not when the drain
+	// finishes, so serve must wait for the goroutine below or the process exits
+	// (running the defers above and then main's return) with requests still in
+	// flight. serveCtx also releases that goroutine when ListenAndServe fails
+	// on its own (the port is taken), where ctx is never cancelled.
+	serveCtx, stopServing := context.WithCancel(ctx)
+	defer stopServing()
+	drained := make(chan struct{})
 	go func() {
-		<-ctx.Done()
-		// ctx is already cancelled here, so the shutdown deadline hangs off a copy that keeps its values but not its cancellation.
-		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer close(drained)
+		<-serveCtx.Done()
+		// serveCtx is already cancelled here, so the shutdown deadline hangs off a copy that keeps its values but not its cancellation.
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(serveCtx), 30*time.Second)
 		defer cancel()
 		if err := httpSrv.Shutdown(shutdownCtx); err != nil {
 			log.Error().Err(err).Msg("nexusd: graceful shutdown failed")
@@ -447,6 +456,7 @@ func serve(ctx context.Context) error {
 	if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
+	<-drained
 	return nil
 }
 
@@ -467,7 +477,6 @@ const (
 // newAppPool builds the one pgxpool.Pool that dials through PgBouncer for
 // the life of the process — explicit sizing plus lifecycle knobs, replacing
 // the zero-config pgxpool.New serve() used before (README task 13.14).
-
 func newAppPool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 	pcfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {

@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
@@ -123,7 +124,8 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 
 	secret, ok, err := s.Channels.WebhookSecret(r.Context(), tenantID)
 	if err != nil {
-		http.Error(w, "resolve channel: "+err.Error(), http.StatusInternalServerError)
+		log.Error().Err(err).Any("tenant_id", tenantID).Msg("telegram: resolve channel")
+		http.Error(w, "resolve channel: internal error", http.StatusInternalServerError)
 		return
 	}
 	if !ok {
@@ -163,7 +165,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 
 	// Task 7.13: resolved fresh from THIS update, never cached.
 	userID := uuid.NewSHA1(telegramNamespace, fmt.Appendf(nil, "%s:%d", tenantID, upd.Message.From.ID))
-	chatID := fmt.Sprintf("%d", upd.Message.Chat.ID)
+	chatID := strconv.FormatInt(upd.Message.Chat.ID, 10)
 	// sessionKey is deterministic per (tenant, chat) — every message from
 	// this chat looks up the SAME key (store.GetSessionByKey), so a reply
 	// resumes the open conversation instead of always starting a new one.
@@ -173,11 +175,11 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	// deliveryID is Telegram's own update_id — monotonically increasing per
 	// bot, never reused — the provider-native id ClaimDelivery dedupes a
 	// redelivered update against.
-	deliveryID := fmt.Sprintf("%d", upd.UpdateID)
+	deliveryID := strconv.FormatInt(upd.UpdateID, 10)
 
 	if _, err := s.dispatch(r.Context(), tenantID, userID, sessionKey, deliveryID, chatID, upd.Message.Text); err != nil {
 		log.Error().Err(err).Any("tenant_id", tenantID).Msg("telegram: dispatch")
-		http.Error(w, "dispatch: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "dispatch: internal error", http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusOK)

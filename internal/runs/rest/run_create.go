@@ -85,7 +85,7 @@ func (h *Handler) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		var derr error
 		skillSetDigest, derr = h.Skills.Digest(r.Context(), tenantID)
 		if derr != nil {
-			http.Error(w, "resolve skill set digest: "+derr.Error(), http.StatusInternalServerError)
+			restkit.ServerError(w, r, "resolve skill set digest", derr)
 			return
 		}
 	}
@@ -101,7 +101,7 @@ func (h *Handler) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		var derr error
 		mcpCatalog, mcpCatalogDigest, derr = h.MCP.Resolve(r.Context(), tenantID, userID)
 		if derr != nil {
-			http.Error(w, "resolve MCP catalog: "+derr.Error(), http.StatusInternalServerError)
+			restkit.ServerError(w, r, "resolve MCP catalog", derr)
 			return
 		}
 	}
@@ -122,7 +122,7 @@ func (h *Handler) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "create run: "+notAdmitted.Reason, http.StatusBadRequest)
 		return
 	case err != nil:
-		http.Error(w, "create run: "+err.Error(), http.StatusInternalServerError)
+		restkit.ServerError(w, r, "create run", err)
 		return
 	}
 	go h.publishUntilDone(tenantID, launched.SessionID, launched.Events)

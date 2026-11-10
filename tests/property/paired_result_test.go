@@ -26,7 +26,7 @@ import (
 func genHistory(rng *rand.Rand, n int) (history []eventlog.Event, wantPaired map[uuid.UUID]bool) {
 	wantPaired = map[uuid.UUID]bool{}
 
-	for i := 0; i < n; i++ {
+	for range n {
 		switch rng.IntN(6) {
 		case 0, 1: // paired tool_use + tool_result
 			tu := eventlog.Event{EventID: uuid.New(), Type: eventlog.EventToolUse}
@@ -70,7 +70,7 @@ func genHistory(rng *rand.Rand, n int) (history []eventlog.Event, wantPaired map
 // repaired history.
 func TestHygienePairedResultInvariant(t *testing.T) {
 	seed := uint64(12345)
-	for trial := 0; trial < 300; trial++ {
+	for trial := range 300 {
 		rng := rand.New(rand.NewPCG(seed, uint64(trial))) //nolint:gosec // a property-test generator, not a security decision — see genHistory's doc comment
 		n := rng.IntN(30)
 		history, wantPaired := genHistory(rng, n)

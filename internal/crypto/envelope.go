@@ -91,12 +91,13 @@ func sealWithKey(key, plaintext, aad []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+	// One allocation holds nonce||ciphertext: Seal appends after the nonce, so
+	// the capacity is sized to take the whole sealed value without a regrow.
+	sealed := make([]byte, gcm.NonceSize(), gcm.NonceSize()+len(plaintext)+gcm.Overhead())
+	if _, err := io.ReadFull(rand.Reader, sealed); err != nil {
 		return nil, fmt.Errorf("generate nonce: %w", err)
 	}
-	ciphertext := gcm.Seal(nil, nonce, plaintext, aad)
-	return append(nonce, ciphertext...), nil
+	return gcm.Seal(sealed, sealed, plaintext, aad), nil
 }
 
 func openWithKey(key, sealed, aad []byte) ([]byte, error) {

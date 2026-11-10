@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 )
@@ -57,7 +58,7 @@ func (c *SignerClient) call(ctx context.Context, req Request) (Response, error) 
 		if err := scanner.Err(); err != nil {
 			return Response{}, fmt.Errorf("audit: read from signerd: %w", err)
 		}
-		return Response{}, fmt.Errorf("audit: signerd closed the connection with no response")
+		return Response{}, errors.New("audit: signerd closed the connection with no response")
 	}
 	var resp Response
 	if err := json.Unmarshal(scanner.Bytes(), &resp); err != nil {

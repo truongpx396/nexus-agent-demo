@@ -50,7 +50,7 @@ func Prune(transcript []provider.Message, policy PrunePolicy) ([]provider.Messag
 
 	cutoff := len(out) - policy.KeepLast
 	prunedCount := 0
-	for i := 0; i < cutoff; i++ {
+	for i := range cutoff {
 		m := out[i]
 		if m.Role != "tool" {
 			continue

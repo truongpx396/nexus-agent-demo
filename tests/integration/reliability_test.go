@@ -16,6 +16,8 @@
 package integration
 
 import (
+	"errors"
+
 	runctlpg "github.com/truongpx396/nexus-agent-demo/internal/runctl/postgres"
 
 	"context"
@@ -340,7 +342,7 @@ func TestQueue_RedisStreamsNeverDoubleLeases(t *testing.T) {
 	const workers = 8
 	var leased int32
 	var wg sync.WaitGroup
-	for i := 0; i < workers; i++ {
+	for i := range workers {
 		wg.Add(1)
 		go func(owner int) {
 			defer wg.Done()
@@ -927,18 +929,9 @@ func TestRunctl_Resume_RefusesWhileAClaimIsUnresolved(t *testing.T) {
 			break
 		}
 	}
-	var unresolved runctl.ErrUnresolvedClaims
-	if !asErrUnresolvedClaims(gotErr, &unresolved) {
-		t.Fatalf("Resume error = %v, want ErrUnresolvedClaims", gotErr)
+	if _, ok := errors.AsType[runctl.UnresolvedClaimsError](gotErr); !ok {
+		t.Fatalf("Resume error = %v, want UnresolvedClaimsError", gotErr)
 	}
-}
-
-func asErrUnresolvedClaims(err error, target *runctl.ErrUnresolvedClaims) bool {
-	if e, ok := err.(runctl.ErrUnresolvedClaims); ok {
-		*target = e
-		return true
-	}
-	return false
 }
 
 func TestRunctl_Replay_IsPureAndAgreesWithHydration(t *testing.T) {

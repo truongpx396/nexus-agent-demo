@@ -162,7 +162,7 @@ func (w WebFetch) Call(ctx context.Context, in json.RawMessage, _ tools.RunConte
 		}
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil) //nolint:gosec // scheme and private-network already validated above
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil) // scheme and private-network already validated above
 	if err != nil {
 		return tools.Result{IsError: true, Reason: err.Error()}, nil
 	}

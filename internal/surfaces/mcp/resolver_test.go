@@ -188,7 +188,7 @@ func TestResolve_AServersToolListIsCachedBetweenCalls(t *testing.T) {
 	srv := newRemote(t, issueTool)
 	d := &fakeDirectory{servers: map[string]mcp.Server{"gh": {ServerID: uuid.New(), Name: "gh", BaseURL: srv.URL, AuthKind: "none", Status: "admitted"}}}
 	r := resolver(d, nil)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if _, ok, err := r.Resolve(context.Background(), uuid.New(), uuid.New(), refFor("gh", issueTool)); err != nil || !ok {
 			t.Fatalf("Resolve #%d = (%v, %v)", i+1, ok, err)
 		}

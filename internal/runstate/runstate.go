@@ -16,7 +16,9 @@ package runstate
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/google/uuid"
 
@@ -83,12 +85,12 @@ func Seal(dek crypto.DEK, tenantID, sessionID uuid.UUID) kernel.SealFunc {
 // ActiveKeyID is the key a session's events are currently sealed under: its
 // most recent event whose key is not the erasure marker.
 func ActiveKeyID(history []eventlog.Event) (string, error) {
-	for i := len(history) - 1; i >= 0; i-- {
-		if history[i].KeyID != crypto.ErasureKeyID {
-			return history[i].KeyID, nil
+	for _, h := range slices.Backward(history) {
+		if h.KeyID != crypto.ErasureKeyID {
+			return h.KeyID, nil
 		}
 	}
-	return "", fmt.Errorf("runstate: session has no active key in its history")
+	return "", errors.New("runstate: session has no active key in its history")
 }
 
 // Load reads sessionID and its history, rehydrates the transcript, and returns a

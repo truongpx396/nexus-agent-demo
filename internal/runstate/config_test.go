@@ -75,11 +75,11 @@ var runConfigFields = map[string]resumeClass{
 }
 
 func TestRunConfigFieldsAreAllClassified(t *testing.T) {
-	typ := reflect.TypeOf(kernel.RunConfig{})
+	typ := reflect.TypeFor[kernel.RunConfig]()
 	seen := map[string]bool{}
 	var unclassified []string
-	for i := 0; i < typ.NumField(); i++ {
-		name := typ.Field(i).Name
+	for field := range typ.Fields() {
+		name := field.Name
 		seen[name] = true
 		if _, ok := runConfigFields[name]; !ok {
 			unclassified = append(unclassified, name)
@@ -104,11 +104,11 @@ func TestRunConfigFieldsAreAllClassified(t *testing.T) {
 // TestConfigForSetsExactlyThePinnedFields holds ConfigFor to the classification
 // above: it overwrites every pinned field and touches nothing else.
 func TestConfigForSetsExactlyThePinnedFields(t *testing.T) {
-	base := populated(t, reflect.TypeOf(kernel.RunConfig{}))
+	base := populated(t, reflect.TypeFor[kernel.RunConfig]())
 	got := runstate.ConfigFor(eventlog.Session{}, base.Interface().(kernel.RunConfig))
 
 	gv := reflect.ValueOf(got)
-	for i := 0; i < gv.NumField(); i++ {
+	for i := range gv.NumField() {
 		name := gv.Type().Field(i).Name
 		changed := !reflect.DeepEqual(gv.Field(i).Interface(), base.Field(i).Interface())
 		switch class := runConfigFields[name]; {
@@ -125,7 +125,7 @@ func TestConfigForSetsExactlyThePinnedFields(t *testing.T) {
 func populated(t *testing.T, typ reflect.Type) reflect.Value {
 	t.Helper()
 	v := reflect.New(typ).Elem()
-	for i := 0; i < typ.NumField(); i++ {
+	for i := range typ.NumField() {
 		switch p := v.Field(i).Addr().Interface().(type) {
 		case *string:
 			*p = "set"

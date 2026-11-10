@@ -219,7 +219,7 @@ func TestRedisStreams_DeadLetterStreamIsCapped(t *testing.T) {
 	q.deadMaxLen = 3
 
 	var last uuid.UUID
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		job, err := q.Enqueue(ctx, newTestJob())
 		if err != nil {
 			t.Fatalf("enqueue %d: %v", i, err)
@@ -248,7 +248,7 @@ func TestRedisStreams_UnparseableEntryIsDeadLetteredNotRetriedForever(t *testing
 	q, client := newTestQueue(t)
 	ctx := context.Background()
 
-	if err := client.XAdd(ctx, &goredis.XAddArgs{Stream: streamKey, Values: map[string]interface{}{"job_id": "not-a-uuid"}}).Err(); err != nil {
+	if err := client.XAdd(ctx, &goredis.XAddArgs{Stream: streamKey, Values: map[string]any{"job_id": "not-a-uuid"}}).Err(); err != nil {
 		t.Fatalf("xadd malformed entry: %v", err)
 	}
 	good, err := q.Enqueue(ctx, newTestJob())

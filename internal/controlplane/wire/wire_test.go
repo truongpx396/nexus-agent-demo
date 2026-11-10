@@ -177,7 +177,7 @@ func TestWireNames_Golden(t *testing.T) {
 func TestFixturesSetEveryField(t *testing.T) {
 	for _, v := range []any{admitReq, admitRes, reserveReq, reserveRes, reportReq, auditReq, approveReq, approveRes, contentReq, contentRes} {
 		rv := reflect.ValueOf(v)
-		for i := 0; i < rv.NumField(); i++ {
+		for i := range rv.NumField() {
 			if rv.Field(i).IsZero() {
 				t.Errorf("%s.%s is zero in the test fixtures: set it so the round trip covers it", rv.Type().Name(), rv.Type().Field(i).Name)
 			}

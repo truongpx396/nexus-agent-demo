@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/zlib"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -59,7 +60,7 @@ func Convert(sourceName, mimeType string, data []byte) (Document, error) {
 
 func convertPlainText(data []byte) (string, error) {
 	if !utf8.Valid(data) {
-		return "", fmt.Errorf("not valid UTF-8 text")
+		return "", errors.New("not valid UTF-8 text")
 	}
 	return string(data), nil
 }
@@ -283,7 +284,7 @@ func convertDOCX(data []byte) (string, error) {
 		}
 	}
 	if docXML == nil {
-		return "", fmt.Errorf("missing word/document.xml")
+		return "", errors.New("missing word/document.xml")
 	}
 	rc, err := docXML.Open()
 	if err != nil {
@@ -295,7 +296,7 @@ func convertDOCX(data []byte) (string, error) {
 	var out strings.Builder
 	for {
 		tok, err := dec.Token()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {

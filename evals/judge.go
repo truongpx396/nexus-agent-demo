@@ -2,7 +2,9 @@ package evals
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -88,7 +90,7 @@ type JudgeCase struct {
 // here at an uncalibrated one instead of an unreachable one.
 func (j *Judge) Calibrate(ctx context.Context, labeled []JudgeCase) (agreement float64, err error) {
 	if len(labeled) == 0 {
-		return 0, fmt.Errorf("evals: Calibrate requires at least one labeled case")
+		return 0, errors.New("evals: Calibrate requires at least one labeled case")
 	}
 	agree := 0
 	for _, c := range labeled {
@@ -112,7 +114,7 @@ func (j *Judge) Calibrated() bool { return j.calibrated }
 // shared by Calibrate (against a known label) and Grade (blind).
 func (j *Judge) gradeOnce(ctx context.Context, c JudgeCase) (Verdict, string, error) {
 	if j.Provider == nil {
-		return "", "", fmt.Errorf("evals: Judge has no Provider configured")
+		return "", "", errors.New("evals: Judge has no Provider configured")
 	}
 	budget := j.Budget
 	if budget == nil {
@@ -134,7 +136,7 @@ func (j *Judge) gradeOnce(ctx context.Context, c JudgeCase) (Verdict, string, er
 	if err != nil {
 		return "", "", fmt.Errorf("judge stream: %w", err)
 	}
-	var text string
+	var sb strings.Builder
 	for {
 		chunk, ok, serr := stream.Next(ctx)
 		if serr != nil {
@@ -144,9 +146,10 @@ func (j *Judge) gradeOnce(ctx context.Context, c JudgeCase) (Verdict, string, er
 			break
 		}
 		if chunk.Kind == provider.ChunkContent {
-			text += chunk.Text
+			sb.WriteString(chunk.Text)
 		}
 	}
+	text := sb.String()
 	pass := parseJudgeVerdict(text)
 	if pass {
 		return VerdictPass, text, nil
@@ -160,7 +163,7 @@ func (j *Judge) gradeOnce(ctx context.Context, c JudgeCase) (Verdict, string, er
 // provider used in every correctness test scripts its content verbatim, so
 // this only ever sees exactly what a case's fixture put there.
 func parseJudgeVerdict(text string) bool {
-	for i := 0; i < len(text); i++ {
+	for i := range len(text) {
 		if text[i] == ' ' || text[i] == '\n' || text[i] == '\t' {
 			continue
 		}

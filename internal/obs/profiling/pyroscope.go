@@ -90,14 +90,14 @@ func StartPyroscope(cfg PyroscopeConfig) (*pyroscope.Profiler, error) {
 // every other warning/error in this process already surfaces through.
 type pyroscopeZerologAdapter struct{}
 
-func (pyroscopeZerologAdapter) Infof(format string, args ...interface{}) {
+func (pyroscopeZerologAdapter) Infof(format string, args ...any) {
 	log.Info().Msgf("pyroscope: "+format, args...)
 }
 
-func (pyroscopeZerologAdapter) Debugf(format string, args ...interface{}) {
+func (pyroscopeZerologAdapter) Debugf(format string, args ...any) {
 	log.Debug().Msgf("pyroscope: "+format, args...)
 }
 
-func (pyroscopeZerologAdapter) Errorf(format string, args ...interface{}) {
+func (pyroscopeZerologAdapter) Errorf(format string, args ...any) {
 	log.Error().Msgf("pyroscope: "+format, args...)
 }

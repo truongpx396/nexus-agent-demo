@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 
 	"github.com/google/uuid"
 
@@ -145,12 +146,12 @@ func Rehydrate(ctx context.Context, history []eventlog.Event, decrypt DecryptFun
 // sessions. history must already be in seq order (store.ListEvents' own
 // contract) — the same contract Rehydrate itself has.
 func RehydrateTaint(ctx context.Context, history []eventlog.Event, decrypt DecryptFunc) ([3]bool, error) {
-	for i := len(history) - 1; i >= 0; i-- {
-		if history[i].Type != eventlog.EventTaintTransition {
+	for _, h := range slices.Backward(history) {
+		if h.Type != eventlog.EventTaintTransition {
 			continue
 		}
 		var p taintTransitionPayload
-		if err := decodeEvent(ctx, history[i], decrypt, &p); err != nil {
+		if err := decodeEvent(ctx, h, decrypt, &p); err != nil {
 			return [3]bool{}, err
 		}
 		return p.Engaged, nil

@@ -50,7 +50,7 @@ func (h *Handler) ownedRun(w http.ResponseWriter, r *http.Request, tenantID, use
 		http.Error(w, "run not found", http.StatusNotFound)
 		return runs.RunView{}, false
 	case err != nil:
-		http.Error(w, "load run: "+err.Error(), http.StatusInternalServerError)
+		restkit.ServerError(w, r, "load run", err)
 		return runs.RunView{}, false
 	case run.UserID != userID:
 		http.Error(w, "forbidden", http.StatusForbidden)

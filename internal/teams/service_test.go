@@ -217,7 +217,7 @@ func TestEndTeam_EndingAnAlreadyEndedTeamRecordsNothingTwice(t *testing.T) {
 	reason := string(kernel.ReasonCostExhausted)
 	finish(f, members[0], eventlog.SessionStatusFailed, &reason)
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		if err := svc.OnMemberTerminal(context.Background(), tenant, members[0].SessionID); err != nil {
 			t.Fatalf("OnMemberTerminal #%d: %v", i+1, err)
 		}
@@ -265,7 +265,7 @@ func TestEnvelopeBudgetGate_MembersShareOneCeilingAndAreRefusedOnceItIsSpent(t *
 	f.envelopes[id] = &envelope{ceiling: cost.Money{Micros: 2000, Currency: "USD"}, remaining: cost.Money{Micros: 2000, Currency: "USD"}, members: 2}
 	g := &teams.EnvelopeBudgetGate{Store: f, EnvelopeID: id, TenantID: tenant, PerCallEstimate: cost.Money{Micros: 1000, Currency: "USD"}, Currency: "USD"}
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		if res, err := g.Reserve(context.Background(), cost.ReserveRequest{TenantID: tenant, SessionID: uuid.New()}); err != nil || res.Decision.Kind != cost.DecisionAllow {
 			t.Fatalf("Reserve %d = %v, %v, want allowed while the shared envelope has room", i+1, res.Decision.Kind, err)
 		}

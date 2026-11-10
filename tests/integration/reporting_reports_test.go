@@ -43,7 +43,7 @@ func TestReports_ToolCallCountsAndModelSpend(t *testing.T) {
 				return err
 			}
 			for tool, n := range tools {
-				for i := 0; i < n; i++ {
+				for range n {
 					tool := tool
 					if _, err := store.Append(ctx, tx, eventlog.Event{
 						EventID: uuid.New(), SessionID: sessionID, TenantID: tenantID,

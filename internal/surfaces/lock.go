@@ -43,7 +43,7 @@ const (
 // session_key; what to do about that is the
 // caller's own documented choice, never this function's.
 func AcquireSessionLock(ctx context.Context, l Locker, sessionKey string) (token string, ok bool, err error) {
-	for attempt := 0; attempt < lockAcquireAttempts; attempt++ {
+	for attempt := range lockAcquireAttempts {
 		token, ok, err = l.Acquire(ctx, sessionKey)
 		if err != nil || ok {
 			return token, ok, err

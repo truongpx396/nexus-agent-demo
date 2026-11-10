@@ -3,6 +3,7 @@ package kernel
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"iter"
 
@@ -203,7 +204,7 @@ func (k *Kernel) Run(ctx context.Context, st *RunState, cfg RunConfig) iter.Seq2
 		if !k.seed(ctx, st, cfg, yield) {
 			return
 		}
-		k.runTurns(ctx, st, cfg, yield, 1)
+		k.runTurns(ctx, st, cfg, yield)
 	}
 }
 
@@ -325,7 +326,7 @@ func (k *Kernel) Resume(ctx context.Context, st *RunState, cfg RunConfig, res Pe
 		case ApprovalDecisionGranted, ApprovalDecisionGrantedModified:
 			executor, ok := k.Tools.(ApprovedExecutor)
 			if !ok {
-				yield(eventlog.Event{}, fmt.Errorf("kernel: Resume called but the configured ToolExecutor does not implement ApprovedExecutor"))
+				yield(eventlog.Event{}, errors.New("kernel: Resume called but the configured ToolExecutor does not implement ApprovedExecutor"))
 				return
 			}
 			execCtx := ExecContext{TenantID: st.TenantID, SessionID: st.SessionID, AutonomyLevel: cfg.AutonomyLevel}
@@ -334,6 +335,11 @@ func (k *Kernel) Resume(ctx context.Context, st *RunState, cfg RunConfig, res Pe
 			result = ToolResult{IsError: true, Synthetic: true, PermissionDenied: true, Reason: "approval_denied: " + res.Reason}
 		case ApprovalDecisionInvalidated:
 			result = ToolResult{IsError: true, Synthetic: true, PermissionDenied: true, Reason: "approval_invalidated: " + res.Reason}
+		default:
+			// A zero or future decision must not become an empty, successful
+			// tool_result that lets the run carry on past a refused execution.
+			yield(eventlog.Event{}, fmt.Errorf("kernel: Resume: unknown approval decision %q for %s", res.Decision, res.ToolID))
+			return
 		}
 
 		toolID := res.ToolID
@@ -364,7 +370,7 @@ func (k *Kernel) Resume(ctx context.Context, st *RunState, cfg RunConfig, res Pe
 			return
 		}
 
-		k.runTurns(ctx, st, cfg, yield, 1)
+		k.runTurns(ctx, st, cfg, yield)
 	}
 }
 
@@ -398,6 +404,9 @@ func (k *Kernel) ResumeDelegation(ctx context.Context, st *RunState, cfg RunConf
 			result = ToolResult{IsError: true, Synthetic: true, Reason: "delegation_reaped: " + res.Reason}
 		case DelegationBoundExceeded:
 			result = ToolResult{IsError: true, Synthetic: true, Reason: "bound_exceeded: " + res.Reason}
+		default:
+			yield(eventlog.Event{}, fmt.Errorf("kernel: ResumeDelegation: unknown outcome %q for %s", res.Outcome, res.ToolID))
+			return
 		}
 
 		toolID := res.ToolID
@@ -411,7 +420,7 @@ func (k *Kernel) ResumeDelegation(ctx context.Context, st *RunState, cfg RunConf
 			return
 		}
 
-		k.runTurns(ctx, st, cfg, yield, 1)
+		k.runTurns(ctx, st, cfg, yield)
 	}
 }
 
@@ -440,7 +449,7 @@ func (k *Kernel) Continue(ctx context.Context, st *RunState, cfg RunConfig) iter
 			yield(eventlog.Event{}, err)
 			return
 		}
-		k.runTurns(ctx, st, cfg, yield, 1)
+		k.runTurns(ctx, st, cfg, yield)
 	}
 }
 
@@ -478,6 +487,6 @@ func (k *Kernel) ResumeConversation(ctx context.Context, st *RunState, cfg RunCo
 			return
 		}
 
-		k.runTurns(ctx, st, cfg, yield, 1)
+		k.runTurns(ctx, st, cfg, yield)
 	}
 }

@@ -3,6 +3,7 @@ package builtin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"path/filepath"
@@ -54,7 +55,7 @@ func (FileSearch) ValidateInput(_ context.Context, in json.RawMessage, _ tools.R
 		return fmt.Errorf("invalid input: %w", err)
 	}
 	if req.Pattern == "" {
-		return fmt.Errorf("pattern is required")
+		return errors.New("pattern is required")
 	}
 	if _, err := filepath.Match(req.Pattern, "probe"); err != nil {
 		return fmt.Errorf("invalid glob pattern: %w", err)

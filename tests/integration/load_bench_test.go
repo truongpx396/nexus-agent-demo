@@ -94,7 +94,7 @@ func TestLoadPOSTRunsThroughput(t *testing.T) {
 	sem := make(chan struct{}, loadTestConcurrency)
 	start := time.Now()
 
-	for i := 0; i < loadTestTotalRequests; i++ {
+	for i := range loadTestTotalRequests {
 		wg.Add(1)
 		sem <- struct{}{}
 		go func(i int) {

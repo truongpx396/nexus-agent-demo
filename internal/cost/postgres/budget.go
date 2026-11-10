@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -24,7 +25,7 @@ func GetBudget(ctx context.Context, tx pgx.Tx, scope cost.BudgetScope, scopeRef 
 		string(scope), scopeRef,
 	)
 	if err := row.Scan(&b.ID, &b.Scope, &b.ScopeRef, &currency, &ceilingMicros, &b.Epoch); err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return cost.Budget{}, false, nil
 		}
 		return cost.Budget{}, false, fmt.Errorf("get budget scope=%s: %w", scope, err)
