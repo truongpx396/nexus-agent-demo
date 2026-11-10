@@ -55,6 +55,7 @@ This is a refactor with almost no change in behaviour (the two exceptions are na
 1. **Given** a session a worker has just driven as far as it goes, **When** any path (queue worker, approval resume) reports it, **Then** one call, `Control.NotifySettled`, tells every registered observer, and one failing observer does not stop the others.
 2. **Given** the files of `cmd/nexusd`, **When** they are scanned, **Then** none contains a SQL statement, the operator commands included.
 3. **Given** an unreachable observer or a failing checkpoint write, **When** the run has already finished, **Then** the failure is logged and the run's result is unchanged.
+4. **Given** `nexusd serve`, **When** it starts, **Then** `serve` is the sequence of named steps (open the infrastructure, start profiling, build the feature graph, mount the API, start the background loops, serve HTTP) and each lives in the file named for it; a constructor in that sequence returns its error and never exits the process; every loop it starts is stopped and awaited on shutdown, in the reverse of start order; and a subcommand's usage text is derived from the table that dispatches it.
 
 ### User Story 4 - Features meet through ports, and the rule is enforced (Priority: P2)
 

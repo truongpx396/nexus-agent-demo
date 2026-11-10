@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -16,6 +18,51 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/audit"
 	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 )
+
+// runHTTPServer serves handler on addr until ctx is cancelled, then drains it:
+// README task 13.2 (F2), a real *http.Server with timeouts driven to a graceful
+// Shutdown by ctx (runServe's signal.NotifyContext), not a bare ListenAndServe
+// that never returns.
+func runHTTPServer(ctx context.Context, addr string, handler http.Handler) error {
+	httpSrv := &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		// WriteTimeout is deliberately 0 (unbounded): it bounds the ENTIRE
+		// response write, including GET /v1/runs/{id}/events' long-lived
+		// SSE stream — any nonzero value here would sever a legitimate,
+		// still-active stream, not just a slow one. ReadHeaderTimeout/
+		// ReadTimeout still bound slowloris on the request side, and
+		// IdleTimeout still bounds a connection sitting idle between
+		// requests.
+		WriteTimeout: 0,
+		IdleTimeout:  120 * time.Second,
+	}
+	// ListenAndServe returns the instant Shutdown is called, not when the drain
+	// finishes, so this must wait for the goroutine below or the process exits
+	// (running the caller's defers and then main's return) with requests still in
+	// flight. serveCtx also releases that goroutine when ListenAndServe fails on
+	// its own (the port is taken), where ctx is never cancelled.
+	serveCtx, stopServing := context.WithCancel(ctx)
+	defer stopServing()
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		<-serveCtx.Done()
+		// serveCtx is already cancelled here, so the shutdown deadline hangs off a copy that keeps its values but not its cancellation.
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(serveCtx), 30*time.Second)
+		defer cancel()
+		if err := httpSrv.Shutdown(shutdownCtx); err != nil {
+			log.Error().Err(err).Msg("nexusd: graceful shutdown failed")
+		}
+	}()
+	if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	<-drained
+	return nil
+}
 
 // metricsStaleClaimAfter mirrors runDashboard's own default — how old an
 // in_flight claim must be before /metrics counts it as unresolved (README

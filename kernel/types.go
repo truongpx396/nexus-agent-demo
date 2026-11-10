@@ -259,7 +259,7 @@ type RunConfig struct {
 // ChunkEvent is what OnChunk receives for one live provider.Chunk. TenantID/
 // SessionID identify which run it belongs to — Kernel is a single,
 // process-wide value shared across every concurrent run (cmd/nexusd/
-// serve.go constructs exactly one), so a hook can't infer that from
+// compose.go constructs exactly one), so a hook can't infer that from
 // receiver state the way a per-run type could.
 type ChunkEvent struct {
 	TenantID  uuid.UUID

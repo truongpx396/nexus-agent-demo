@@ -2,498 +2,66 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"net/http"
-	"os"
-	"os/signal"
-	"syscall"
-	"time"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/contentaccess"
-	teamspg "github.com/truongpx396/nexus-agent-demo/internal/teams/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/tools/kerneladapter"
-
-	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
-	delegatepg "github.com/truongpx396/nexus-agent-demo/internal/delegate/postgres"
-
-	runctlpg "github.com/truongpx396/nexus-agent-demo/internal/runctl/postgres"
-
-	queueredis "github.com/truongpx396/nexus-agent-demo/internal/queue/redis"
-
-	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/redis/go-redis/v9"
-	"github.com/rs/zerolog/log"
-
-	"github.com/truongpx396/nexus-agent-demo/internal/audit"
-	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/authn"
-	configpg "github.com/truongpx396/nexus-agent-demo/internal/config/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/connectors"
-	connectorspg "github.com/truongpx396/nexus-agent-demo/internal/connectors/postgres"
-	connectorsredis "github.com/truongpx396/nexus-agent-demo/internal/connectors/redis"
-	contentaccesspg "github.com/truongpx396/nexus-agent-demo/internal/contentaccess/postgres"
-	contentrest "github.com/truongpx396/nexus-agent-demo/internal/contentaccess/rest"
-	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/delegate"
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/memory"
-	"github.com/truongpx396/nexus-agent-demo/internal/obs/profiling"
-	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
-	oversightpg "github.com/truongpx396/nexus-agent-demo/internal/oversight/postgres"
-	oversightrest "github.com/truongpx396/nexus-agent-demo/internal/oversight/rest"
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
-	"github.com/truongpx396/nexus-agent-demo/internal/reliability"
-	reportingpg "github.com/truongpx396/nexus-agent-demo/internal/reporting/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
-	runctlrest "github.com/truongpx396/nexus-agent-demo/internal/runctl/rest"
-	"github.com/truongpx396/nexus-agent-demo/internal/runs"
-	runspg "github.com/truongpx396/nexus-agent-demo/internal/runs/postgres"
-	runsrest "github.com/truongpx396/nexus-agent-demo/internal/runs/rest"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
-	"github.com/truongpx396/nexus-agent-demo/internal/surfaces"
-	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/cron"
-	cronpg "github.com/truongpx396/nexus-agent-demo/internal/surfaces/cron/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/email"
-	surfpg "github.com/truongpx396/nexus-agent-demo/internal/surfaces/postgres"
-	restkit "github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
-	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/telegram"
-	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/zalo"
-	"github.com/truongpx396/nexus-agent-demo/internal/teams"
 	"github.com/truongpx396/nexus-agent-demo/internal/version"
-	"github.com/truongpx396/nexus-agent-demo/kernel"
 )
 
-func runServe() {
+// runServe is the default command: print the build, then serve until ctx is
+// cancelled by SIGTERM or SIGINT, which is what unblocks the HTTP server's
+// graceful Shutdown and, in turn, every defer serve registers (README task 13.2,
+// F2).
+func runServe(ctx context.Context, _ []string) error {
 	fmt.Printf("nexusd %s (%s)\n", version.Version, version.GitCommit)
-
-	// signal.NotifyContext (README task 13.2, F2) — mirrors
-	// cmd/signerd/main.go's own pattern: SIGTERM/SIGINT cancel ctx, which is
-	// what unblocks the HTTP server's graceful Shutdown below and, in turn,
-	// every defer serve() registers (queue workers, cron scheduler,
-	// audit-anchor loop, team backstop) — none of those ran before this
-	// change, because the old bare ListenAndServe never returned.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	if err := serve(ctx); err != nil {
-		fatalf("serve: %v", err)
-	}
+	return serve(ctx)
 }
 
+// serve is the process's startup sequence: open the infrastructure, build the
+// feature graph over it, start the background loops, and serve HTTP until ctx is
+// cancelled. Each step lives in the file named for it (infra.go, compose.go,
+// background.go, surfaces_wiring.go, http.go), and its stop is deferred here, so
+// shutdown runs the reverse of this order: the HTTP drain, then the loops, then
+// the exporters, then the pool.
 func serve(ctx context.Context) error {
 	cfg, err := loadServerConfig(devMode)
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
 
-	pool, err := newAppPool(ctx, cfg.DatabaseURL)
+	in, err := openInfra(ctx, cfg)
 	if err != nil {
-		return fmt.Errorf("connect: %w", err)
+		return err
 	}
-	defer pool.Close()
-	st := store.New(pool)
-
-	kek, err := loadOrGenerateKEK(cfg.KEKPath, devMode)
-	if err != nil {
-		return fmt.Errorf("load KEK: %w", err)
-	}
-	keyStore := cryptopg.NewKeyStore(kek)
-
-	signingKey, err := loadOrGenerateSigningKey(cfg.AuthnSigningKeyPath, devMode)
-	if err != nil {
-		return fmt.Errorf("load AuthN signing key: %w", err)
-	}
-	verifier := authn.NewDevVerifier(authn.PublicKey(signingKey))
+	defer in.close()
 
 	prov, err := newProvider()
 	if err != nil {
 		return fmt.Errorf("configure provider: %w", err)
 	}
 
-	// Built ahead of kernel.Kernel below (moved up from its original
-	// pre-Tracer position further down this function) — Kernel.Tracer needs
-	// this same exporter, not just runsrest.Handler.Exporter, so it has to exist
-	// before the Kernel literal does.
+	// The span exporter exists before the kernel does: Kernel.Tracer needs this
+	// same exporter, not just runsrest.Handler.Exporter.
 	spanExp, shutdownSpanExp, err := newSpanExporter(ctx)
 	if err != nil {
 		return fmt.Errorf("configure span exporter: %w", err)
 	}
 	defer shutdownSpanExp()
 
-	// Profiling (docs/observability.md's "profiling" compose profile):
-	// on-demand pprof on its OWN loopback-scoped listener (never the mux
-	// below /metrics/webhooks share — profiling.StartPprofServer's own doc comment
-	// says why), plus optional continuous profiling pushed to Grafana
-	// Pyroscope. Both are opt-in and no-ops when their env vars are unset —
-	// same zero-setup posture as the span exporter above. Mutex/block
-	// sampling is a single process-wide rate shared by both consumers
-	// (profiling.EnableMutexBlockProfiling's own doc comment), so it's set once
-	// here regardless of which of the two ends up using it.
-	mutexFraction := envIntOr("NEXUS_PPROF_MUTEX_FRACTION", 0)
-	blockRate := envIntOr("NEXUS_PPROF_BLOCK_RATE", 0)
-	profiling.EnableMutexBlockProfiling(mutexFraction, blockRate)
-
-	shutdownPprof, err := profiling.StartPprofServer(envOr("NEXUS_PPROF_ADDR", ""))
+	stopProfiling, err := startProfiling()
 	if err != nil {
-		return fmt.Errorf("start pprof server: %w", err)
-	}
-	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := shutdownPprof(shutdownCtx); err != nil {
-			log.Error().Err(err).Msg("nexusd: shutdown pprof server")
-		}
-	}()
-
-	profiler, err := profiling.StartPyroscope(profiling.PyroscopeConfig{
-		ServerAddress:       envOr("NEXUS_PYROSCOPE_ADDR", ""),
-		ApplicationName:     "nexusd",
-		Tags:                map[string]string{"git_commit": version.GitCommit},
-		MutexBlockProfiling: mutexFraction > 0 || blockRate > 0,
-	})
-	if err != nil {
-		return fmt.Errorf("start pyroscope: %w", err)
-	}
-	if profiler != nil {
-		defer func() {
-			if err := profiler.Stop(); err != nil {
-				log.Error().Err(err).Msg("nexusd: stop pyroscope profiler")
-			}
-		}()
-	}
-
-	// Sign-only audit key custody (README task 5.1): nexusd dials
-	// signerd's unix socket and can ask it to sign, never read the key
-	// itself — internal/audit/signerkey (the package that CAN read it) is
-	// imported only by cmd/signerd, enforced by
-	// tests/contract/boundaries_test.go.
-	signer := audit.NewSignerClient(cfg.SignerdSocket)
-	chain := auditpg.NewChain(signer)
-
-	// Moved ahead of newToolPipeline (Phase 2's own original ordering had
-	// this after) — Phase 11's connectors.Vault needs a live Redis client
-	// for its bounded-TTL OAuth state, and newToolPipeline needs the Vault
-	// itself to wire platform/connector_fetch and the MCP dynamic resolver.
-	redisClient := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
-
-	// internal/queue's Redis Streams adapter (the retired Postgres
-	// queue_jobs table's successor) — built here, ahead of kernelRunStarter
-	// and runctl.Control below, both of which need to enqueue a queued run
-	// (README task 6.1's own successor) once they've durably seeded/
-	// appended it.
-	queuePort, err := queueredis.NewStreams(ctx, redisClient)
-	if err != nil {
-		return fmt.Errorf("configure queue: %w", err)
-	}
-
-	// sessionLock serializes each conversational webhook surface's
-	// decide-then-act sequence (look up the session, then resume it or start
-	// a fresh one) and the turn it kicks off, keyed on the surface's own
-	// session_key. It is deliberately a different key from the queue
-	// workers', which lock on the session id for the whole run: sharing one
-	// would make a delivery wait out every in-flight run. Two racing
-	// deliveries for one chat would otherwise both find the session busy
-	// and each start a fresh one. SessionLock's key derivation is a fixed
-	// function of the key, so this and startQueueWorkers' own instance
-	// need not be the same value.
-	sessionLock := queueredis.NewSessionLock(redisClient, 30*time.Second)
-
-	cfgStore := configpg.NewStore(st)
-	vault := &connectors.Vault{
-		Config: cfgStore, Connections: connectorspg.NewConnections(st, keyStore), States: connectorsredis.NewStates(redisClient),
-		Providers: newConnectorRegistry(),
-	}
-
-	// Built here, ahead of newToolPipeline (moved up from its original
-	// Phase 4 position below): Phase 12's platform/retrieve tool needs a
-	// Retriever wired into the resident catalog, and a Retriever needs a
-	// Gate to reserve embedding calls against (README task 12.4) — the
-	// same "construct the shared dependency before the thing that needs
-	// it" ordering vault itself already follows one step up.
-	gate := newCostGate(st, redisClient)
-
-	delegations := delegate.NewDelegations(delegatepg.New(st, keyStore, chain))
-	teamsSvc := teams.NewService(teamspg.New(st, keyStore, chain, teamspg.Lineage{Of: delegatepg.LineageOf, Record: delegatepg.RecordLineage}))
-	pipeline, catalog, catalogManifestDigest, admittedSkillBundles, mcpPort := newToolPipeline(st, cfgStore, keyStore, chain, delegations, teamsSvc, vault, gate)
-	loadedTools := make([]string, len(catalog))
-	for i, c := range catalog {
-		loadedTools[i] = c.Name
-	}
-
-	oversightStore := oversightpg.New(st, keyStore, chain)
-	approvals := oversight.NewApprovals(oversightStore)
-	inputs := oversight.NewInputs(oversightStore)
-	k := &kernel.Kernel{
-		Provider: provider.Wrap([]provider.Provider{prov}),
-		Tools:    kerneladapter.PipelineExecutor{Pipeline: pipeline}, // real tool pipeline, Phase 3
-		Budget:   gate,                                               // real reserve-then-reconcile cost gate, Phase 4
-		Log: postgres.New(st, postgres.Hooks{
-			Chain:    chain,                       // hash-chained audit receipts, Phase 5 task 5.2
-			Suspend:  onSuspendFunc(approvals),    // durably record an approval on every suspend, Phase 5 task 5.6
-			Delegate: onDelegateFunc(delegations), // bind a delegation to its gating tool_use, Phase 8 task 8.10
-		}),
-		Stuck:        reliability.NewRegistry(stuckDetectionWindow),   // README task 6.8
-		Tracer:       spanExp,                                         // per-run/per-turn/per-tool-call spans, docs/local-llm.md
-		TraceContent: envOr("NEXUS_TRACE_CONTENT", "false") == "true", // opt-in prompt/tool content in traces, docs/local-llm.md — off by default, keeps every span content-free unless explicitly requested
-	}
-
-	memStore := &memory.Store{RootDir: envOr("NEXUS_MEMORY_ROOT", ".dev/memory"), Config: cfgStore}
-
-	starter := &kernelRunStarter{
-		kernel:      k,
-		system:      "You are a helpful agent. Tools may be denied or require approval depending on the session's autonomy level.",
-		catalog:     catalog,
-		loadedTools: loadedTools,
-		maxTurns:    25,
-		memory:      memStore,
-		queue:       queuePort,
-		redisClient: redisClient,
-	}
-
-	// Wire's own doc comment: must land before the first real dispatch —
-	// well before serve() returns and starts accepting traffic. Reuses
-	// starter's own System/MaxTurns so a delegated child's kernel run is
-	// configured identically to a root run's (README task 8.9's own child
-	// session inherits the parent's harness_digest for the same reason).
-	delegations.Wire(delegate.Config{
-		Prices: costpg.New(st),
-		Kernel: k, Pipeline: pipeline,
-		System: starter.system, Catalog: catalog, LoadedTools: loadedTools, MaxTurns: starter.maxTurns,
-	})
-
-	resumer := &oversight.Resumer{
-		Kernel: k, Approvals: approvals, Sessions: oversightStore, Keys: oversightStore,
-		System: starter.system, Catalog: catalog, MaxTurns: starter.maxTurns,
-	}
-	grants := contentaccess.NewGrants(contentaccesspg.NewGrantStore(st, keyStore, chain))
-
-	ctl := &runctl.Control{
-		Store: runctlpg.New(st, keyStore, chain), Approvals: approvals, Inputs: inputs, Kernel: k,
-		System: starter.system, Catalog: catalog, MaxTurns: starter.maxTurns, CatalogManifestDigest: catalogManifestDigest,
-		Queue: queuePort,
-		// Who is told a session settled: a delegation's parent, a team.
-		Observers: []runctl.SettledObserver{delegations, teamsSvc},
-	}
-
-	// teamsSvc.Wire's own doc comment: must land before the first real
-	// dispatch, the same "well before serve() returns" timing
-	// delegations.Wire above already follows. Canceler is ctl itself —
-	// endTeam reaps a still-active member the same way runctl.Control.Cancel
-	// already reaps anything else (README task 9.9, reusing 8.14).
-	teamsSvc.Wire(teams.Config{
-		Prices: costpg.New(st),
-		Kernel: k, Pipeline: pipeline, Canceler: ctl,
-		System: starter.system, Catalog: catalog, LoadedTools: loadedTools, MaxTurns: starter.maxTurns,
-	})
-
-	// One run-admission use case for every surface that starts a fresh run:
-	// admit the session through the control plane, mint its key, start it.
-	controlPlane := newControlPlane(st, gate, chain, approvals, grants)
-	launcher := &runs.Service{
-		Admit:                 controlPlane,
-		Keys:                  runspg.Keys{Store: st, KeyStore: keyStore},
-		Starter:               starter,
-		CatalogManifestDigest: catalogManifestDigest,
-	}
-
-	// Every feature that exposes REST endpoints supplies its own module, mounted
-	// by the kit that authenticates them. The run endpoints also own the live
-	// fan-out of a run's events, which the queue workers and the kernel's chunk
-	// callback publish into, so they are built first and kept.
-	runsAPI := runsrest.NewHandler(launcher, runspg.Reader{Store: st, KeyStore: keyStore})
-	// Redis Pub/Sub-backed EventBus (broker.go's own doc comment on why this
-	// surface needs one now): every publish reaches every nexusd process,
-	// not just whichever one produced it — required once a run's turn loop
-	// may execute on a different process (internal/queue's worker pool)
-	// than whichever process holds the client's own SSE connection.
-	runsAPI.Bus = redisEventBus{client: redisClient}
-	runsAPI.Skills = &nexusdSkillSetPort{config: cfgStore, bundles: admittedSkillBundles}
-	runsAPI.MCP = mcpPort
-	outbox := &surfaces.Outbox{Ledger: surfpg.NewLedger(st, keyStore, chain)}
-	runsAPI.Outbox = outbox
-	runsAPI.OutboxSender = logSender{}
-	runsAPI.Exporter = spanExp
-
-	srv := restkit.NewServer(verifier,
-		runsAPI,
-		oversightrest.Handler{Approvals: approvals, Decisions: oversight.Decisions{Resume: resumer, Settled: ctl}},
-		contentrest.Handler{Grants: grants},
-		runctlrest.Handler{Control: ctl},
-	)
-
-	// Live typing-style preview over SSE, decoupled from the durable event
-	// path: k.OnChunk fires as the current turn's provider stream decodes
-	// each chunk (kernel/turns.go), well before that turn's own
-	// accumulation/classification/append — runsAPI.PublishDelta fans it out to
-	// whichever clients are subscribed to that session's /v1/runs/{id}/events
-	// stream right now, and drops it silently for anyone who isn't (same
-	// non-blocking, best-effort delivery the durable path's own
-	// broker.publish already has). Nothing about cost reconcile, tool
-	// dispatch, or the audit chain reads this — those still only ever see
-	// the complete, accumulated turn, exactly as before this was wired.
-	k.OnChunk = func(ev kernel.ChunkEvent) {
-		switch ev.Chunk.Kind {
-		case provider.ChunkContent:
-			runsAPI.PublishDelta(ev.SessionID, runsrest.DeltaDTO{Kind: "content", Text: ev.Chunk.Text})
-		case provider.ChunkToolUse:
-			runsAPI.PublishDelta(ev.SessionID, runsrest.DeltaDTO{Kind: "tool_use", ToolUseID: ev.Chunk.ToolUseID, ToolName: ev.Chunk.ToolName})
-		case provider.ChunkReasoning:
-			// No Text/Opaque on this signal at all (kernel.Kernel.OnChunk's
-			// own doc comment already strips it before this closure ever
-			// sees it) — a client learns only that the model is reasoning
-			// right now, the same "event visible, body redacted" shape
-			// EventThought's own durable record has.
-			runsAPI.PublishDelta(ev.SessionID, runsrest.DeltaDTO{Kind: "reasoning"})
-		case provider.ChunkUsage, provider.ChunkDone:
-			// Turn-level bookkeeping a client has no use for as a live
-			// preview — the durable EventTerminal/cost records still carry
-			// them.
-		}
-	}
-
-	stopAnchor := startAnchorLoop(ctx, tenantDirectory(), auditpg.Scoped{St: st, Chain: chain})
-	defer stopAnchor()
-
-	stopTeamBackstop := startTeamBackstopLoop(ctx, tenantDirectory(), teamsSvc)
-	defer stopTeamBackstop()
-
-	stopIdleConversationSweep := startIdleConversationSweepLoop(ctx, tenantDirectory(), ctl)
-	defer stopIdleConversationSweep()
-
-	stopWorkers := startQueueWorkers(ctx, redisClient, queuePort, runsAPI, ctl)
-	defer stopWorkers()
-
-	stopEventBus := startEventBus(ctx, redisClient, runsAPI)
-	defer stopEventBus()
-
-	// Phase 11: four more thin surfaces over the same kernel (README §11) —
-	// each starts runs through the one starter every surface shares.
-	channels := surfpg.NewChannels(st, keyStore)
-
-	// Starter and Resume are the same two values for all three chat surfaces,
-	// so a fresh message and a resumed one drive the SAME underlying
-	// *kernelRunStarter / *runctl.Control pair.
-	resume := conversationResumer{ctl: ctl, redisClient: redisClient}
-
-	runReader := runspg.Reader{Store: st, KeyStore: keyStore}
-	inboundDedup := surfpg.NewDedup(st)
-	telegramSrv := &telegram.Server{
-		Reader: runReader, Dedup: inboundDedup, Launcher: launcher, Resume: resume, Channels: channels,
-		Outbox:    outbox,
-		RateLimit: telegram.NewRateLimiter(20, time.Minute),
-		Lock:      sessionLock,
-	}
-	zaloSrv := &zalo.Server{
-		Reader: runReader, Dedup: inboundDedup, Launcher: launcher, Resume: resume, Channels: channels,
-		Outbox:    outbox,
-		RateLimit: zalo.NewRateLimiter(20, time.Minute),
-		Lock:      sessionLock,
-	}
-	emailSrv := &email.Server{
-		Reader: runReader, Dedup: inboundDedup, Launcher: launcher, Resume: resume, Channels: emailChannels{channels},
-		Outbox:    outbox,
-		RateLimit: email.NewRateLimiter(20, time.Minute),
-		Lock:      sessionLock,
-	}
-	scheduler := &cron.Scheduler{
-		Schedules: cronpg.New(st, keyStore), Starter: starter, Tenants: adminTenantLister{},
-		CatalogManifestDigest: catalogManifestDigest,
-	}
-	go scheduler.Run(ctx)
-
-	mux := http.NewServeMux()
-	// /healthz (liveness) and /readyz (Postgres + Redis + signerd all
-	// reachable) are unauthenticated and mounted on this OUTER mux — never
-	// wrapped by the REST kit's auth middleware (README task 13.1/13.2):
-	// a load balancer or Kubernetes probe has no bearer token to send.
-	mux.HandleFunc("GET /healthz", handleHealthz)
-	mux.HandleFunc("GET /readyz", handleReadyz(pool, redisClient, signer))
-	mux.HandleFunc("GET /metrics", handleMetrics(reportingpg.New(st)))
-	mux.Handle("/v1/webhooks/telegram/", telegramSrv.Handler())
-	mux.Handle("/v1/webhooks/zalo/", zaloSrv.Handler())
-	mux.Handle("/v1/webhooks/email/", emailSrv.Handler())
-	mux.Handle("/", srv.Handler())
-
-	addr := cfg.HTTPAddr
-	fmt.Printf("listening on %s (provider=%s)\n", addr, envOr("NEXUS_PROVIDER", "fake"))
-
-	// README task 13.2 (F2): a real *http.Server with timeouts, driven to a
-	// graceful Shutdown by ctx's cancellation (runServe's signal.NotifyContext)
-	// instead of the old bare ListenAndServe that never returned.
-	httpSrv := &http.Server{
-		Addr:              addr,
-		Handler:           mux,
-		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       30 * time.Second,
-		// WriteTimeout is deliberately 0 (unbounded): it bounds the ENTIRE
-		// response write, including GET /v1/runs/{id}/events' long-lived
-		// SSE stream — any nonzero value here would sever a legitimate,
-		// still-active stream, not just a slow one. ReadHeaderTimeout/
-		// ReadTimeout still bound slowloris on the request side, and
-		// IdleTimeout still bounds a connection sitting idle between
-		// requests.
-		WriteTimeout: 0,
-		IdleTimeout:  120 * time.Second,
-	}
-	// ListenAndServe returns the instant Shutdown is called, not when the drain
-	// finishes, so serve must wait for the goroutine below or the process exits
-	// (running the defers above and then main's return) with requests still in
-	// flight. serveCtx also releases that goroutine when ListenAndServe fails
-	// on its own (the port is taken), where ctx is never cancelled.
-	serveCtx, stopServing := context.WithCancel(ctx)
-	defer stopServing()
-	drained := make(chan struct{})
-	go func() {
-		defer close(drained)
-		<-serveCtx.Done()
-		// serveCtx is already cancelled here, so the shutdown deadline hangs off a copy that keeps its values but not its cancellation.
-		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(serveCtx), 30*time.Second)
-		defer cancel()
-		if err := httpSrv.Shutdown(shutdownCtx); err != nil {
-			log.Error().Err(err).Msg("nexusd: graceful shutdown failed")
-		}
-	}()
-	if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
-	<-drained
-	return nil
-}
+	defer stopProfiling()
 
-// appPoolMaxConns/appPoolMinConns are README task 13.14's explicit sizing
-// (closing production-readiness finding F14: "the connection pool is
-// constructed with no config at all"), reconciled against
-// deploy/docker-compose.yml's own PgBouncer service (DEFAULT_POOL_SIZE=20,
-// MAX_CLIENT_CONN=200) — this is the only client pool that dials THROUGH
-// PgBouncer (the admin pools startQueueWorkers/tenantDirectory/etc. construct
-// connect directly to Postgres, bypassing it entirely), so its own ceiling
-// is what actually has to fit under that budget alongside every other
-// process sharing the same PgBouncer instance.
-const (
-	appPoolMaxConns = 20
-	appPoolMinConns = 2
-)
-
-// newAppPool builds the one pgxpool.Pool that dials through PgBouncer for
-// the life of the process — explicit sizing plus lifecycle knobs, replacing
-// the zero-config pgxpool.New serve() used before (README task 13.14).
-func newAppPool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
-	pcfg, err := pgxpool.ParseConfig(dsn)
+	svc, err := buildServices(in, prov, spanExp)
 	if err != nil {
-		return nil, fmt.Errorf("parse pool config: %w", err)
+		return err
 	}
-	pcfg.MaxConns = appPoolMaxConns
-	pcfg.MinConns = appPoolMinConns
-	pcfg.MaxConnLifetime = 30 * time.Minute
-	pcfg.MaxConnIdleTime = 5 * time.Minute
-	pcfg.HealthCheckPeriod = time.Minute
-	return pgxpool.NewWithConfig(ctx, pcfg)
-}
+	runsAPI, restAPI := newRESTAPI(in, svc, spanExp)
 
-// stuckDetectionWindow is internal/reliability.NewRegistry's window (README
-// task 6.8): how many recent tool calls a session's own Tracker looks back
-// over for a repeating cycle. 8 is small enough to catch a tight retry loop
-// within a handful of turns without false-tripping on a normal multi-step
-// task that happens to touch the same tool (e.g. several distinct
-// file_read calls) more than once.
-const stuckDetectionWindow = 8
+	stopBackground := startBackground(ctx, in, svc, runsAPI)
+	defer stopBackground()
+
+	fmt.Printf("listening on %s (provider=%s)\n", cfg.HTTPAddr, envOr("NEXUS_PROVIDER", "fake"))
+	return runHTTPServer(ctx, cfg.HTTPAddr, newMux(in, svc, restAPI))
+}
