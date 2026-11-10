@@ -42,10 +42,9 @@ func CreateSession(ctx context.Context, tx pgx.Tx, s eventlog.Session) error {
 	return nil
 }
 
-// ErrSessionNotFound is what GetSession wraps when no row is visible: the
-// session does not exist, or it belongs to another tenant (RLS cannot tell
-// the two apart, and neither should the caller).
-var ErrSessionNotFound = errors.New("session not found")
+// ErrSessionNotFound is what GetSession wraps when no row is visible. It is
+// eventlog.ErrSessionNotFound, so both names match under errors.Is.
+var ErrSessionNotFound = eventlog.ErrSessionNotFound
 
 // sessionColumns is every column the session reads select, in the order
 // scanSession scans them: one list, so a column added to the aggregate is added

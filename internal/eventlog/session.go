@@ -2,10 +2,18 @@ package eventlog
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+// ErrSessionNotFound is what a session read wraps when no row is visible: the
+// session does not exist, or it belongs to another tenant (RLS cannot tell the
+// two apart, and neither should the caller). It lives here, in the shared
+// vocabulary, so a feature can recognise it without importing the persistence
+// kit that produces it.
+var ErrSessionNotFound = errors.New("session not found")
 
 // Session is the subset of the sessions table (migration 0002) Phase 2
 // reads and writes. Columns this layer never touches (audience_ref,

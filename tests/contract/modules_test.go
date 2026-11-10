@@ -1,7 +1,7 @@
 package contract
 
 import (
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 
@@ -82,7 +82,7 @@ func TestAdapterIsolation(t *testing.T) {
 			violations = append(violations, strings.TrimPrefix(p.PkgPath, modulePrefix)+" imports "+strings.TrimPrefix(imp, modulePrefix))
 		}
 	}
-	sort.Strings(violations)
+	slices.Sort(violations)
 	for _, v := range violations {
 		t.Errorf("%s: an adapter may import its own feature, the domain and the shared persistence kit, never another feature's adapter; inject the dependency from cmd/nexusd instead", v)
 	}
@@ -157,7 +157,7 @@ func TestFeatureDependencies(t *testing.T) {
 	if checked < 30 {
 		t.Fatalf("checked only %d packages; this rule would pass vacuously", checked)
 	}
-	sort.Strings(violations)
+	slices.Sort(violations)
 	for _, v := range violations {
 		t.Errorf("%s is not a declared dependency: if the coupling is intended, add it to allowedFeatureImports in tests/contract/modules_test.go and say why in the PR", v)
 	}

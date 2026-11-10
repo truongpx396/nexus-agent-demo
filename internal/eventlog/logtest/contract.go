@@ -5,6 +5,7 @@
 package logtest
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"testing"
@@ -49,6 +50,7 @@ func event(tenantID, sessionID uuid.UUID, typ eventlog.EventType, payload string
 
 // Run executes the contract against s.
 func Run(t *testing.T, s Subject) {
+	t.Helper()
 	ctx := context.Background()
 
 	t.Run("Append numbers a session's events from 1 and ignores the caller's Seq", func(t *testing.T) {
@@ -101,8 +103,8 @@ func Run(t *testing.T, s Subject) {
 		}
 		for name, e := range map[string]eventlog.Event{"returned": got, "persisted": stored[0]} {
 			if e.EventID != in.EventID || e.Type != in.Type || e.Actor != in.Actor || e.KeyID != in.KeyID ||
-				e.SchemaVersion != in.SchemaVersion || string(e.Payload) != string(in.Payload) ||
-				string(e.PayloadDigest) != string(in.PayloadDigest) {
+				e.SchemaVersion != in.SchemaVersion || !bytes.Equal(e.Payload, in.Payload) ||
+				!bytes.Equal(e.PayloadDigest, in.PayloadDigest) {
 				t.Errorf("%s event %+v does not carry the appended fields %+v", name, e, in)
 			}
 			if e.ToolID == nil || *e.ToolID != toolID || e.ModelID == nil || *e.ModelID != modelID ||

@@ -84,8 +84,9 @@ func TestSteer_IsRefusedWhereItCouldNotBeHonored(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			c, f, _ := newControl()
 			s := f.seedSession(status, "supervised")
-			if _, err := c.Steer(context.Background(), tenant, s.SessionID, "hello"); err == nil {
-				t.Fatal("Steer succeeded: the message would be stranded with no one to read it")
+			_, err := c.Steer(context.Background(), tenant, s.SessionID, "hello")
+			if !errors.Is(err, runctl.ErrSessionState) {
+				t.Fatalf("Steer = %v, want ErrSessionState: the message would be stranded with no one to read it", err)
 			}
 			if len(f.events) != 0 {
 				t.Errorf("%d events recorded for a refused steer, want none", len(f.events))
@@ -113,14 +114,14 @@ func TestTightenAutonomy_NeverWidens(t *testing.T) {
 	c, f, _ := newControl()
 	s := f.seedSession(eventlog.SessionStatusRunning, "read_only")
 
-	if err := c.TightenAutonomy(context.Background(), tenant, s.SessionID, "autonomous"); err == nil {
-		t.Fatal("TightenAutonomy widened a read_only session to autonomous")
+	if err := c.TightenAutonomy(context.Background(), tenant, s.SessionID, "autonomous"); !errors.Is(err, runctl.ErrInvalidArgument) {
+		t.Fatalf("TightenAutonomy widening read_only to autonomous = %v, want ErrInvalidArgument", err)
 	}
 	if f.sessions[s.SessionID].AutonomyLevel != "read_only" || len(f.events) != 0 {
 		t.Errorf("a refused widening changed level to %s and recorded %v", f.sessions[s.SessionID].AutonomyLevel, f.eventTypes())
 	}
-	if err := c.TightenAutonomy(context.Background(), tenant, s.SessionID, "yolo"); err == nil {
-		t.Error("TightenAutonomy accepted an unknown level")
+	if err := c.TightenAutonomy(context.Background(), tenant, s.SessionID, "yolo"); !errors.Is(err, runctl.ErrInvalidArgument) {
+		t.Errorf("TightenAutonomy(unknown level) = %v, want ErrInvalidArgument", err)
 	}
 }
 
@@ -285,11 +286,11 @@ func TestSend_ContinuesAPausedConversationAndSteersARunningOne(t *testing.T) {
 func TestSend_RefusesAnEndedOrUnknownSession(t *testing.T) {
 	c, f, q := newControl()
 	ended := f.seedSession(eventlog.SessionStatusCompleted, "supervised")
-	if err := c.Send(context.Background(), tenant, ended.SessionID, "too late"); err == nil {
-		t.Error("Send to a completed session succeeded")
+	if err := c.Send(context.Background(), tenant, ended.SessionID, "too late"); !errors.Is(err, runctl.ErrSessionState) {
+		t.Errorf("Send to a completed session = %v, want ErrSessionState", err)
 	}
-	if err := c.Send(context.Background(), tenant, uuid.New(), "who?"); err == nil {
-		t.Error("Send to a session that does not exist succeeded")
+	if err := c.Send(context.Background(), tenant, uuid.New(), "who?"); !errors.Is(err, runctl.ErrSessionNotFound) {
+		t.Errorf("Send to a session that does not exist = %v, want ErrSessionNotFound", err)
 	}
 	if len(f.events) != 0 || len(q.jobs) != 0 {
 		t.Errorf("a refused Send left %d events and %d jobs", len(f.events), len(q.jobs))

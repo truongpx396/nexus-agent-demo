@@ -3,6 +3,8 @@ package ingest
 import (
 	"archive/zip"
 	"bytes"
+	"compress/zlib"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -119,5 +121,49 @@ func TestConvert_DOCX_ExtractsParagraphs(t *testing.T) {
 func TestConvert_DOCX_NotAZipFails(t *testing.T) {
 	if _, err := Convert("doc.docx", MimeDOCX, []byte("not a zip")); err == nil {
 		t.Fatal("expected an error for a non-zip docx, got nil")
+	}
+}
+
+// deflate compresses b the way a PDF's FlateDecode filter does.
+func deflate(t *testing.T, b []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	w := zlib.NewWriter(&buf)
+	if _, err := w.Write(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// A decompression bomb is refused at the limit, and a stream within it is not.
+func TestZlibInflate_RefusesToExpandPastTheLimit(t *testing.T) {
+	bomb := deflate(t, make([]byte, 8<<20)) // 8 MiB of zeros: a few KB of zlib
+	if len(bomb) > 1<<20 {
+		t.Fatalf("test input is %d bytes compressed; it is meant to be tiny", len(bomb))
+	}
+	got, err := zlibInflate(bomb, 1<<20)
+	if !errors.Is(err, errInflatedTooLarge) || len(got) != 1<<20 {
+		t.Errorf("zlibInflate(bomb, 1MiB) = %d bytes, %v; want the limit's worth and errInflatedTooLarge", len(got), err)
+	}
+	if got, err := zlibInflate(deflate(t, []byte("fits")), 1<<20); err != nil || string(got) != "fits" {
+		t.Errorf("zlibInflate(small) = %q, %v", got, err)
+	}
+}
+
+// A PDF whose only content stream is a bomb converts to empty text, quickly and
+// in bounded memory, rather than failing the document or exhausting memory.
+func TestConvert_PDF_SkipsADecompressionBomb(t *testing.T) {
+	bomb := deflate(t, make([]byte, maxInflatedStreamBytes+1))
+	pdf := append([]byte("%PDF-1.4\n1 0 obj << /Filter /FlateDecode >>\nstream\n"), bomb...)
+	pdf = append(pdf, []byte("\nendstream\nendobj\n")...)
+	doc, err := Convert("bomb.pdf", MimePDF, pdf)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if strings.TrimSpace(doc.Text) != "" {
+		t.Errorf("a bomb stream produced text %q, want none", doc.Text)
 	}
 }

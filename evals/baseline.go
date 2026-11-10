@@ -32,7 +32,7 @@ type Baseline struct {
 // ToBaseline reduces a GateResult to the Baseline shape SaveBaseline
 // persists — the thing a maintainer commits once a candidate's own gate run
 // is the new "last known good."
-func (r GateResult) ToBaseline() Baseline {
+func (r *GateResult) ToBaseline() Baseline {
 	b := Baseline{Environment: r.Environment, Cases: make(map[string]CaseStat, len(r.Cases))}
 	for _, c := range r.Cases {
 		b.Cases[c.CaseID] = CaseStat{Class: c.Class, Pass: c.Pass, N: c.N, Interval: c.Interval, Verdict: c.Verdict}

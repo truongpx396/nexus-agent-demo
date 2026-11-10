@@ -1,6 +1,9 @@
 package plan
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestPredicate_EqNe(t *testing.T) {
 	ctx := Context{"category": StringValue("urgent")}
@@ -85,5 +88,20 @@ func TestPredicate_UnboundFieldErrors(t *testing.T) {
 func TestPredicate_UnrecognizedOpErrors(t *testing.T) {
 	if _, err := (Predicate{Op: "wat"}).Eval(Context{}); err == nil {
 		t.Fatalf("an unrecognized op must error — the whole point of a closed AST is refusing anything outside it")
+	}
+}
+
+// A plan's digest is computed over this JSON, so the shape is a contract: a
+// predicate with no operand still carries an empty "value". The struct tag once
+// said omitempty, which never applies to a struct and so never omitted it; it was
+// dropped as a misleading no-op, and this keeps the bytes it always produced.
+func TestPredicate_JSONShapeIsStable(t *testing.T) {
+	got, err := json.Marshal(Predicate{Op: OpAnd, And: []Predicate{{Op: OpEq, Field: "x", Value: StringValue("y")}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"op":"and","value":{"kind":""},"and":[{"op":"eq","field":"x","value":{"kind":"string","str":"y"}}]}`
+	if string(got) != want {
+		t.Errorf("predicate JSON changed, and a plan digest hashes it:\n got %s\nwant %s", got, want)
 	}
 }

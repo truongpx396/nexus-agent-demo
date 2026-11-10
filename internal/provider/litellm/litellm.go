@@ -20,6 +20,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 )
@@ -40,7 +41,7 @@ type Provider struct {
 	BaseURL string
 	Model   string
 	APIKey  string       // optional; empty is fine for a local, unauthenticated proxy
-	Client  *http.Client // defaults to http.DefaultClient
+	Client  *http.Client // defaults to a client with a response-header timeout (defaultClient)
 }
 
 func New(baseURL, model, apiKey string) *Provider {
@@ -54,11 +55,32 @@ func (p *Provider) baseURL() string {
 	return defaultBaseURL
 }
 
+// responseHeaderTimeout bounds how long the proxy may take to start answering. It
+// does not bound the response: headers arrive as generation begins, and a total
+// http.Client.Timeout would cut a long stream off mid-sentence. Without any
+// bound, an endpoint that accepts the connection and never answers would hold a
+// run's worker, and the session lock that worker keeps renewing, indefinitely.
+const responseHeaderTimeout = 5 * time.Minute // a local model can spend minutes on a long prompt before its first byte
+
+// defaultClient is what a Provider with no Client uses. It is one client for the
+// process so its connections are pooled.
+var defaultClient = newClient(responseHeaderTimeout)
+
+// newClient is the default transport with a response-header timeout added.
+func newClient(headerTimeout time.Duration) *http.Client {
+	tr := &http.Transport{}
+	if def, ok := http.DefaultTransport.(*http.Transport); ok {
+		tr = def.Clone()
+	}
+	tr.ResponseHeaderTimeout = headerTimeout
+	return &http.Client{Transport: tr}
+}
+
 func (p *Provider) client() *http.Client {
 	if p.Client != nil {
 		return p.Client
 	}
-	return http.DefaultClient
+	return defaultClient
 }
 
 // --- request shapes (the subset of the Chat Completions API this adapter uses) ---

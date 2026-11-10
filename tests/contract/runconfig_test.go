@@ -6,7 +6,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -87,7 +87,7 @@ func TestRunningFeaturesDoNotPinRunConfigByHand(t *testing.T) {
 	if checked == 0 {
 		t.Fatal("no source files found in the running packages; the rule would pass vacuously")
 	}
-	sort.Strings(offenders)
+	slices.Sort(offenders)
 	for _, o := range offenders {
 		t.Errorf("%s in a kernel.RunConfig literal: take the session's pinned fields from runstate.ConfigFor(session, base) so none is forgotten", o)
 	}

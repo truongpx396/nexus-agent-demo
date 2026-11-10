@@ -7,7 +7,7 @@
 package contract
 
 import (
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 
@@ -529,7 +529,7 @@ func TestImportBoundaries(t *testing.T) {
 					return true
 				}, nil)
 			}
-			sort.Strings(imported)
+			slices.Sort(imported)
 
 			for _, forbidden := range r.forbidden {
 				var hits []string

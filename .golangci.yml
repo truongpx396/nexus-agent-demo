@@ -33,9 +33,6 @@ linters:
   settings:
     exhaustive:
       default-signifies-exhaustive: false
-    modernize:
-      disable:
-        - omitzero # plan/predicate.go: switching a tag changes the JSON a plan digest is computed over
     perfsprint:
       strconcat: false # "a "+b reads better than a Sprintf and a concat is not a hot path
     forbidigo:
@@ -44,6 +41,8 @@ linters:
           msg: use structured logging (slog) instead of fmt.Print* outside a cmd/ entrypoint
         - pattern: '^math/rand\.'
           msg: use crypto/rand — math/rand must never back a security decision (safety classifier, idempotency keys, audit nonces)
+        - pattern: '^sort\.(Slice|SliceStable|SliceIsSorted|Strings|Ints|Float64s|Sort|Stable|IsSorted)$'
+          msg: use slices (slices.Sort, slices.SortFunc with cmp.Compare, slices.IsSorted) — type-checked and without reflection
   exclusions:
     rules:
       - path: (^|/)cmd/

@@ -3,7 +3,7 @@ package evals
 import (
 	"fmt"
 	"io/fs"
-	"sort"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -45,7 +45,7 @@ func LoadProviderScriptCases(dir fs.FS) ([]ProviderScriptCase, error) {
 		}
 		names = append(names, e.Name())
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 
 	cases := make([]ProviderScriptCase, 0, len(names))
 	for _, name := range names {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -68,7 +68,7 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool, dir fs.FS) ([]Applied, err
 		}
 		versions = append(versions, e.Name())
 	}
-	sort.Strings(versions)
+	slices.Sort(versions)
 
 	var result []Applied
 	for _, version := range versions {

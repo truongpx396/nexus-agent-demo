@@ -113,7 +113,7 @@ func (t *fakeTx) Append(_ context.Context, _, sessionID uuid.UUID, typ eventlog.
 	return eventlog.Event{EventID: uuid.New(), SessionID: sessionID, Type: typ, Seq: int64(len(t.f.events))}, nil
 }
 
-var errNoSession = errors.New("session not found")
+var errNoSession = eventlog.ErrSessionNotFound
 
 func (t *fakeTx) GetSession(_ context.Context, id uuid.UUID) (eventlog.Session, error) {
 	s, ok := t.f.sessions[id]

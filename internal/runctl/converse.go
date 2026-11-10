@@ -42,7 +42,7 @@ func (c *Control) ResumeConversation(ctx context.Context, tenantID, sessionID uu
 			if err != nil {
 				return err
 			}
-			return fmt.Errorf("runctl: session %s is %q, not awaiting_input; nothing to resume a conversation into", sessionID, sess.Status)
+			return fmt.Errorf("%w: session %s is %q, not awaiting_input; nothing to resume a conversation into", ErrSessionState, sessionID, sess.Status)
 		}
 		ev, err = tx.Append(ctx, tenantID, sessionID, eventlog.EventUserMessage, nil, nil, userMessagePayload{Body: input})
 		return err

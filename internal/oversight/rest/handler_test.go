@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -103,6 +104,10 @@ func TestGetApproval_DistinguishesABadIDFromAMissingApproval(t *testing.T) {
 	missing := serve(uuid.New(), fakeApprovals{getErr: oversight.ErrNotFound}, &fakeDecisions{})
 	if rec := resttest.Do(t, missing, http.MethodGet, "/v1/approvals/"+id.String(), ""); rec.Code != http.StatusNotFound {
 		t.Errorf("an unknown approval = %d, want 404", rec.Code)
+	}
+	down := serve(uuid.New(), fakeApprovals{getErr: errors.New("dial tcp 10.0.0.7:5432: refused")}, &fakeDecisions{})
+	if rec := resttest.Do(t, down, http.MethodGet, "/v1/approvals/"+id.String(), ""); rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "10.0.0.7") {
+		t.Errorf("a failed lookup = %d %q, want a 500 that omits the cause (it used to answer 404 with it)", rec.Code, rec.Body)
 	}
 }
 

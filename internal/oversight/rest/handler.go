@@ -10,6 +10,7 @@ package rest
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -118,8 +119,12 @@ func (h Handler) handleGetApproval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ap, err := h.Approvals.Get(r.Context(), tenantID, id)
+	if errors.Is(err, oversight.ErrNotFound) {
+		http.Error(w, "approval not found", http.StatusNotFound)
+		return
+	}
 	if err != nil {
-		http.Error(w, "approval not found: "+err.Error(), http.StatusNotFound)
+		restkit.ServerError(w, r, "get approval", err)
 		return
 	}
 	restkit.WriteJSON(w, http.StatusOK, toApprovalView(ap))
@@ -144,8 +149,7 @@ func (h Handler) handleGrantApproval(w http.ResponseWriter, r *http.Request) {
 	}
 	var req grantApprovalRequest
 	if r.ContentLength != 0 {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		if !restkit.DecodeJSON(w, r, &req) {
 			return
 		}
 	}
@@ -175,8 +179,7 @@ func (h Handler) handleDenyApproval(w http.ResponseWriter, r *http.Request) {
 	}
 	var req denyApprovalRequest
 	if r.ContentLength != 0 {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		if !restkit.DecodeJSON(w, r, &req) {
 			return
 		}
 	}
