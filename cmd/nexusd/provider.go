@@ -78,7 +78,7 @@ func newProvider() (provider.Provider, error) {
 // that package), so a single-ChunkSpec script is a choice this call site
 // made, not something fake.Provider forces. Splitting it here is what lets
 // the zero-setup NEXUS_PROVIDER=fake default actually exercise
-// kernel.Kernel.OnChunk's live per-chunk relay (serve.go) instead of
+// kernel.Kernel.OnChunk's live per-chunk relay (compose.go's publishDeltas) instead of
 // delivering the whole reply as one chunk — every internal/provider/fake
 // correctness test keeps authoring its own Script and is untouched by this.
 func demoContentChunks(text string) []fake.ChunkSpec {

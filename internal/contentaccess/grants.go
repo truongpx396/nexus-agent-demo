@@ -9,6 +9,7 @@ package contentaccess
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -81,6 +82,11 @@ type GrantStore interface {
 	RecordAccess(ctx context.Context, tenantID, sessionID, granteeID uuid.UUID, eventCount int) error
 }
 
+// ErrNoGrant reports a read by a principal with no currently valid grant for the
+// session: the refusal a caller is told about (and that is audited as
+// content_access_refused), as distinct from a storage failure.
+var ErrNoGrant = errors.New("contentaccess: no valid content access grant")
+
 // Grants issues and enforces content access grants. Every grant AND every
 // read under it produces its own hash-chained audit receipt
 // (content_access_granted, content_accessed) — "audited, expiring, receipt
@@ -131,7 +137,7 @@ func (g *Grants) Authorize(ctx context.Context, tenantID, sessionID, granteeID u
 	if err := g.Store.RecordRefusal(ctx, tenantID, sessionID, granteeID, "no valid grant"); err != nil {
 		return Grant{}, err
 	}
-	return Grant{}, fmt.Errorf("obs: no valid content access grant for session %s, grantee %s", sessionID, granteeID)
+	return Grant{}, fmt.Errorf("%w for session %s, grantee %s", ErrNoGrant, sessionID, granteeID)
 }
 
 // Read authorizes granteeID against sessionID (Authorize) and, only on
@@ -149,7 +155,7 @@ func (g *Grants) Read(ctx context.Context, tenantID, sessionID, granteeID uuid.U
 		return nil, err
 	}
 	if err := g.Store.RecordAccess(ctx, tenantID, sessionID, granteeID, len(history)); err != nil {
-		return nil, fmt.Errorf("obs: record content access receipt: %w", err)
+		return nil, fmt.Errorf("contentaccess: record content access receipt: %w", err)
 	}
 	return history, nil
 }

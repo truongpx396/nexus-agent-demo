@@ -6,7 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -262,6 +262,6 @@ func tablesReferencingSessions(ctx context.Context, t *testing.T, pool *pgxpool.
 		}
 		out = append(out, name)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }

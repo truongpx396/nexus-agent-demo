@@ -3,7 +3,7 @@ package evals
 import (
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 )
 
 // GateInput is every case this gate run will grade, grouped by the suite
@@ -162,7 +162,7 @@ func (g *Gate) Run(ctx context.Context, in GateInput) GateResult {
 		}
 	}
 
-	sort.Strings(order)
+	slices.Sort(order)
 
 	cases := make([]CaseResult, 0, len(order))
 	passedCases := 0

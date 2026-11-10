@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -91,7 +91,7 @@ func scanLeakChecks(root string, exempt map[string]string) (checked int, missing
 			missing = append(missing, dir)
 		}
 	}
-	sort.Strings(missing)
+	slices.Sort(missing)
 	return checked, missing, nil
 }
 

@@ -9,7 +9,7 @@ package rest
 import (
 	"context"
 	"encoding/hex"
-	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -43,6 +43,23 @@ func (h Handler) Routes(r restkit.Router) {
 	r.Handle("POST /v1/runs/{id}/fork", h.handleForkRun)
 }
 
+// fail answers an error from run control. The session being absent, in a state
+// that refuses the operation, or given an argument it cannot act on is the
+// caller's to be told, with the status that says which; anything else is an
+// infrastructure failure, which is logged and never echoed (restkit.ServerError).
+func fail(w http.ResponseWriter, r *http.Request, op string, err error) {
+	switch {
+	case errors.Is(err, runctl.ErrSessionNotFound):
+		http.Error(w, "run not found", http.StatusNotFound)
+	case errors.Is(err, runctl.ErrSessionState):
+		http.Error(w, err.Error(), http.StatusConflict)
+	case errors.Is(err, runctl.ErrInvalidArgument):
+		http.Error(w, err.Error(), http.StatusBadRequest)
+	default:
+		restkit.ServerError(w, r, op, err)
+	}
+}
+
 // ForkView is what this surface exposes for one fork — translated from
 // runctl.ForkResult. DigestDiverged is surfaced explicitly and first — task
 // 6.11's own "reports digest divergence rather than presenting it as a
@@ -70,13 +87,12 @@ func (h Handler) handleCancelRun(w http.ResponseWriter, r *http.Request) {
 	}
 	var req cancelRequest
 	if r.ContentLength != 0 {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		if !restkit.DecodeJSON(w, r, &req) {
 			return
 		}
 	}
 	if err := h.Control.Cancel(r.Context(), tenantID, id, req.Reason); err != nil {
-		http.Error(w, "cancel: "+err.Error(), http.StatusInternalServerError)
+		fail(w, r, "cancel", err)
 		return
 	}
 	restkit.WriteJSON(w, http.StatusOK, map[string]string{"status": "aborted"})
@@ -104,12 +120,11 @@ func (h Handler) handleSteerRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req steerRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+	if !restkit.DecodeJSON(w, r, &req) {
 		return
 	}
 	if err := h.Control.Send(r.Context(), tenantID, id, req.Input); err != nil {
-		http.Error(w, "steer: "+err.Error(), http.StatusInternalServerError)
+		fail(w, r, "steer", err)
 		return
 	}
 	restkit.WriteJSON(w, http.StatusOK, map[string]string{"status": "steered"})
@@ -130,12 +145,11 @@ func (h Handler) handleTightenAutonomy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req tightenAutonomyRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+	if !restkit.DecodeJSON(w, r, &req) {
 		return
 	}
 	if err := h.Control.TightenAutonomy(r.Context(), tenantID, id, req.Target); err != nil {
-		http.Error(w, "tighten autonomy: "+err.Error(), http.StatusBadRequest)
+		fail(w, r, "tighten autonomy", err)
 		return
 	}
 	restkit.WriteJSON(w, http.StatusOK, map[string]string{"status": "tightened", "autonomy_level": req.Target})
@@ -157,13 +171,12 @@ func (h Handler) handleForkRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req forkRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+	if !restkit.DecodeJSON(w, r, &req) {
 		return
 	}
 	result, err := h.Control.Fork(r.Context(), tenantID, id, req.AtSeq, runctl.ForkOverrides{ModelID: req.Model})
 	if err != nil {
-		http.Error(w, "fork: "+err.Error(), http.StatusInternalServerError)
+		fail(w, r, "fork", err)
 		return
 	}
 	restkit.WriteJSON(w, http.StatusOK, ForkView{

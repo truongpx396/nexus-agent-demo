@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -44,6 +45,18 @@ import (
 	toolspg "github.com/truongpx396/nexus-agent-demo/internal/tools/postgres"
 )
 
+// toolStack is what newToolPipeline assembles: the pipeline every tool call goes
+// through, the resident catalog the model is shown, the digest that pins it, and
+// the admitted skill bundles and MCP port the run API resolves a session's tools
+// against.
+type toolStack struct {
+	pipeline       *tools.Pipeline
+	catalog        []provider.ToolSchema
+	manifestDigest []byte
+	skillBundles   []skills.SkillBundle
+	mcp            *mcp.Port
+}
+
 // newToolPipeline wires the Phase 3 tool pipeline: the resident catalog
 // (the builtin tools, now including Phase 7's activate_skill/
 // read_skill_file), the permission chain's tenant-independent config, and
@@ -61,13 +74,16 @@ import (
 // Ledger/Spawner fields are satisfied by delegations/nexusdDelegationSpawner
 // immediately — Wire only needs to land before the FIRST real dispatch,
 // which is well after serve() finishes wiring everything.
-func newToolPipeline(st *store.Store, cfgStore config.Loader, keyStore *cryptopg.KeyStore, chain *auditpg.Chain, delegations *delegate.Delegations, teamsSvc *teams.Service, vault *connectors.Vault, gate *cost.Gate) (*tools.Pipeline, []provider.ToolSchema, []byte, []skills.SkillBundle, *mcp.Port) {
+func newToolPipeline(st *store.Store, cfgStore config.Loader, keyStore *cryptopg.KeyStore, chain *auditpg.Chain, delegations *delegate.Delegations, teamsSvc *teams.Service, vault *connectors.Vault, gate *cost.Gate) (toolStack, error) {
 	reg := tools.NewRegistry()
 	if err := reg.DeclareNamespace("platform", "nexusd"); err != nil {
-		fatalf("declare platform namespace: %v", err)
+		return toolStack{}, fmt.Errorf("declare platform namespace: %w", err)
 	}
 
-	skillCatalog, admittedBundles, scriptTools := loadSkillCatalog(reg)
+	skillCatalog, admittedBundles, scriptTools, err := loadSkillCatalog(reg)
+	if err != nil {
+		return toolStack{}, err
+	}
 
 	// NEXUS_WEB_FETCH_ALLOWLIST is the ONE egress allowlist README task
 	// 5.13 established, extended by task 11.9 to cover platform/
@@ -132,14 +148,14 @@ func newToolPipeline(st *store.Store, cfgStore config.Loader, keyStore *cryptopg
 	catalog := make([]provider.ToolSchema, 0, len(builtinTools)+len(scriptTools))
 	for _, t := range builtinTools {
 		if err := reg.Register(t); err != nil {
-			fatalf("register tool %s: %v", t.ID(), err)
+			return toolStack{}, fmt.Errorf("register tool %s: %w", t.ID(), err)
 		}
 		status, findings := tools.Scan(t.Descriptor())
 		if err := reg.SetAdmissionStatus(t.ID(), status); err != nil {
-			fatalf("set admission status for %s: %v", t.ID(), err)
+			return toolStack{}, fmt.Errorf("set admission status for %s: %w", t.ID(), err)
 		}
 		if status != tools.AdmissionClean {
-			fatalf("builtin tool %s failed admission (%s): %v", t.ID(), status, findings)
+			return toolStack{}, fmt.Errorf("builtin tool %s failed admission (%s): %v", t.ID(), status, findings)
 		}
 		toolRefs = append(toolRefs, t.ID().String())
 		d := t.Descriptor()
@@ -184,7 +200,7 @@ func newToolPipeline(st *store.Store, cfgStore config.Loader, keyStore *cryptopg
 		// — falls through to mcpResolver instead of failing immediately.
 		Dynamic: mcpResolver,
 	})
-	return pipeline, catalog, manifest.Digest, admittedBundles, mcpPort
+	return toolStack{pipeline: pipeline, catalog: catalog, manifestDigest: manifest.Digest, skillBundles: admittedBundles, mcp: mcpPort}, nil
 }
 
 // newConnectorRegistry builds internal/connectors.Registry from
@@ -260,26 +276,26 @@ const devSkillsSigningPubkey = "O25T/FllLc+s5DjZvNhcrLzo13358AdkbfLpYX0jEFc="
 // registration fails (e.g. a namespace/ref collision), the WHOLE bundle is
 // dropped, per task 7.5 — never a bundle with a body but a silently
 // missing tool.
-func loadSkillCatalog(reg *tools.Registry) (*skills.Catalog, []skills.SkillBundle, []tools.Tool) {
+func loadSkillCatalog(reg *tools.Registry) (*skills.Catalog, []skills.SkillBundle, []tools.Tool, error) {
 	bundles, err := skills.LoadBundles(envOr("NEXUS_SKILLS_ROOT", "skills"))
 	if err != nil {
-		fatalf("load skill bundles: %v", err)
+		return nil, nil, nil, fmt.Errorf("load skill bundles: %w", err)
 	}
 	if len(bundles) == 0 {
-		return skills.NewCatalog(nil), nil, nil
+		return skills.NewCatalog(nil), nil, nil, nil
 	}
 
 	var pubKey ed25519.PublicKey
 	if raw := envOr("NEXUS_SKILLS_SIGNING_PUBKEY", devSkillsSigningPubkey); raw != "" {
 		decoded, err := base64.StdEncoding.DecodeString(raw)
 		if err != nil {
-			fatalf("decode NEXUS_SKILLS_SIGNING_PUBKEY: %v", err)
+			return nil, nil, nil, fmt.Errorf("decode NEXUS_SKILLS_SIGNING_PUBKEY: %w", err)
 		}
 		pubKey = ed25519.PublicKey(decoded)
 	}
 
 	if err := reg.DeclareNamespace("skill", "nexusd"); err != nil {
-		fatalf("declare skill namespace: %v", err)
+		return nil, nil, nil, fmt.Errorf("declare skill namespace: %w", err)
 	}
 
 	var admitted []skills.SkillBundle
@@ -308,7 +324,7 @@ func loadSkillCatalog(reg *tools.Registry) (*skills.Catalog, []skills.SkillBundl
 		}
 		admitted = append(admitted, b)
 	}
-	return skills.NewCatalog(admitted), admitted, scriptTools
+	return skills.NewCatalog(admitted), admitted, scriptTools, nil
 }
 
 // newSandboxFactory wires platform/shell to run inside Docker (README task

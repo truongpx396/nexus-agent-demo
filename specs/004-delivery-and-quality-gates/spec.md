@@ -104,6 +104,8 @@ Where [spec 003](../003-trust-surface-conformance/spec.md) is about what the run
 
 **Why this priority**: none of it was exploitable on a trusted network or visible in a test, which is why it had survived; each item is cheap to fix and the second half is cheap to keep fixed once a linter says so.
 
+A second pass over the same tree found the same class again, deeper: the `runctl` and `contentaccess` handlers told a refusal from a database failure only by status code and answered both with the error's text, `Read` answering 403 for either; the REST kit read request bodies with no limit, so one authenticated request could make the process buffer until it died; ingest inflated an uploaded PDF's streams with no cap (a decompression bomb); and both model providers used `http.DefaultClient`, which has no timeout of any kind, so an endpoint that accepted the connection and never answered held a worker and the session lock it kept renewing for ever. `serve` was a 379-line function in a file one line under the size cap, `main` a hand-kept `switch` whose usage text could drift from its cases, `newToolPipeline` called `os.Exit` from a constructor with the pool already open, and the cron scheduler ran as a goroutine nothing waited for.
+
 **Independent Test**: `go test ./kernel -run TestResume` fails if the default case is removed; `go test ./internal/surfaces/rest ./internal/surfaces/telegram ./internal/surfaces/zalo ./internal/surfaces/email ./internal/runs/rest` fails if a response body carries the cause; `golangci-lint run --build-tags=integration ./...` reports the next `err == sentinel`, `interface{}` or shadowed builtin.
 
 **Acceptance Scenarios**:
@@ -111,7 +113,10 @@ Where [spec 003](../003-trust-surface-conformance/spec.md) is about what the run
 1. **Given** SIGTERM while a request is in flight, **When** the server shuts down, **Then** `serve` returns only after `Shutdown` has returned, so the request finishes (or the 30 s deadline passes) before the process exits.
 2. **Given** a run suspended on an approval, **When** `Resume` receives a decision it does not recognise, **Then** it yields an error and appends no `tool_result`.
 3. **Given** a database error behind `GET /v1/runs/{id}`, a webhook's channel lookup or `/readyz`, **When** the request fails, **Then** the response names the operation, not the cause, and the cause is in the log.
-4. **Given** a comparison `err == sentinel`, a type assertion on an error, a builtin shadowed by a local or an error type named `ErrX`, **When** CI lints, **Then** it fails.
+4. **Given** a comparison `err == sentinel`, a type assertion on an error, a builtin shadowed by a local, an error type named `ErrX` or a call to package `sort`, **When** CI lints, **Then** it fails.
+5. **Given** run control or a content read that the session's state or the caller's grant refuses, **When** the handler answers, **Then** it is 404, 409, 400 or 403 by `errors.Is` on the use case's sentinel, and a storage failure behind the same call is a logged 500 that names only the operation.
+6. **Given** a request body past 4 MiB, **When** any route reads it, **Then** the answer is 413 and the process has buffered at most the limit; a PDF stream that inflates past 32 MiB, or 256 MiB across a document, is skipped.
+7. **Given** a model endpoint that accepts the connection and sends no headers, **When** a run calls it, **Then** the call fails after the provider's header timeout, while a response that sends headers promptly and streams for longer is delivered whole.
 
 ## Requirements *(mandatory)*
 
@@ -125,3 +130,4 @@ Where [spec 003](../003-trust-surface-conformance/spec.md) is about what the run
 - **FR-408**: A server's graceful shutdown MUST finish before the process exits; a periodic pass and the queue workers MUST be stopped and awaited, and a socket server MUST bound a connection's lifetime (US7).
 - **FR-409**: A response to a client MUST NOT carry the text of an infrastructure error (a database, queue or dependency failure); it names the operation and the log holds the cause. A resolution the kernel does not recognise MUST stop the run and MUST NOT produce a tool result (US7).
 - **FR-410**: Errors MUST be matched with `errors.Is` and `errors.As`/`errors.AsType`, error types MUST be named `XxxError`, and a local MUST NOT shadow a builtin; `.golangci.yml` enforces these and the standard library's newer forms (US7).
+- **FR-411**: A use case MUST give an error its caller can act on a sentinel wrapped with `%w`, and a binding MUST map it with `errors.Is`; every other error from it is an infrastructure failure under FR-409. A request body MUST be bounded by the kit and read with `rest.DecodeJSON`, and untrusted input MUST NOT be read, inflated or waited for without a bound (US7).

@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"sort"
 )
 
 // maxPredicateDepth bounds how deeply And/Or may nest — a closed AST still
@@ -197,7 +196,7 @@ func validateReachability(p Plan, seen map[string]Step) error {
 		}
 	}
 	if len(unreachable) > 0 {
-		sort.Strings(unreachable)
+		slices.Sort(unreachable)
 		return fmt.Errorf("plan: unreachable step(s) from start_step %q: %v", p.StartStep, unreachable)
 	}
 	return nil

@@ -40,7 +40,7 @@ func (c *Control) Steer(ctx context.Context, tenantID, sessionID uuid.UUID, inpu
 			return err
 		}
 		if sess.Status == eventlog.SessionStatusCompleted || sess.Status == eventlog.SessionStatusFailed {
-			return fmt.Errorf("runctl: session %s is already terminal (%s); cannot steer", sessionID, sess.Status)
+			return fmt.Errorf("%w: session %s is already terminal (%s); cannot steer", ErrSessionState, sessionID, sess.Status)
 		}
 		if sess.Status == eventlog.SessionStatusAwaitingInput {
 			// Steer durably records the message for whatever resumer
@@ -49,7 +49,7 @@ func (c *Control) Steer(ctx context.Context, tenantID, sessionID uuid.UUID, inpu
 			// no live goroutine to reach one; only ResumeConversation
 			// re-enters the loop from here. Refuse rather than silently
 			// stranding the message.
-			return fmt.Errorf("runctl: session %s is awaiting the next conversation turn; call ResumeConversation with the new message rather than Steer", sessionID)
+			return fmt.Errorf("%w: session %s is awaiting the next conversation turn; call ResumeConversation with the new message rather than Steer", ErrSessionState, sessionID)
 		}
 		if sess.Status == eventlog.SessionStatusSuspended {
 			if _, err := c.Approvals.Invalidate(ctx, tenantID, sessionID, oversight.InvalidationSteer); err != nil {

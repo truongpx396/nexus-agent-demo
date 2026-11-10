@@ -1,7 +1,8 @@
 package kernel
 
 import (
-	"sort"
+	"cmp"
+	"slices"
 
 	"github.com/google/uuid"
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
@@ -78,8 +79,8 @@ func Hygiene(history []eventlog.Event) (kept []eventlog.Event, synthesize []Synt
 	// Map iteration order is randomized; sort so a given history always
 	// produces the same synthesize order (map iteration is not a source of
 	// non-determinism this package wants to leak to its callers or tests).
-	sort.Slice(synthesize, func(i, j int) bool {
-		return synthesize[i].PairRef.String() < synthesize[j].PairRef.String()
+	slices.SortFunc(synthesize, func(a, b SyntheticResult) int {
+		return cmp.Compare(a.PairRef.String(), b.PairRef.String())
 	})
 
 	return kept, synthesize

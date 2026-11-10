@@ -6,7 +6,7 @@ import (
 	"go/token"
 	"io/fs"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -95,7 +95,7 @@ func TestNoBuildStageNames(t *testing.T) {
 	if files < 500 || goFiles < 300 {
 		t.Fatalf("scanned %d files (%d Go); the rule would pass vacuously", files, goFiles)
 	}
-	sort.Strings(offenders)
+	slices.Sort(offenders)
 	for _, o := range dedupe(offenders) {
 		t.Error(o)
 	}

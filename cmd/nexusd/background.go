@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"sync"
 	"time"
 
@@ -18,6 +19,8 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
 	runctlpg "github.com/truongpx396/nexus-agent-demo/internal/runctl/postgres"
 	runsrest "github.com/truongpx396/nexus-agent-demo/internal/runs/rest"
+	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/cron"
+	cronpg "github.com/truongpx396/nexus-agent-demo/internal/surfaces/cron/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/teams"
 	"github.com/truongpx396/nexus-agent-demo/internal/tenancy"
 	tenancypg "github.com/truongpx396/nexus-agent-demo/internal/tenancy/postgres"
@@ -76,6 +79,47 @@ func startPeriodic(ctx context.Context, interval time.Duration, fn func(context.
 	return func() {
 		cancel()
 		loop.Wait()
+	}
+}
+
+// startBackground starts every loop that runs beside the HTTP server: audit
+// anchoring, the team backstop, the idle-conversation sweep, the queue workers,
+// the event bus and the cron scheduler. The one stop it returns ends them in the
+// reverse of the order they started, as a run of defers would, and waits for each.
+func startBackground(ctx context.Context, in *infra, svc *services, runsAPI *runsrest.Handler) (stop func()) {
+	var stops []func()
+	stops = append(stops,
+		startAnchorLoop(ctx, tenantDirectory(), auditpg.Scoped{St: in.st, Chain: in.chain}),
+		startTeamBackstopLoop(ctx, tenantDirectory(), svc.teams),
+		startIdleConversationSweepLoop(ctx, tenantDirectory(), svc.ctl),
+		startQueueWorkers(ctx, in.redis, in.queue, runsAPI, svc.ctl),
+		startEventBus(ctx, in.redis, runsAPI),
+		startScheduler(ctx, in, svc),
+	)
+	return func() {
+		for _, stop := range slices.Backward(stops) {
+			stop()
+		}
+	}
+}
+
+// startScheduler runs the cron surface's poll loop, which starts runs through
+// the same starter every surface shares. Its stop cancels the loop and waits for
+// it, so a pass that is mid-run finishes unwinding before the pool it uses closes.
+func startScheduler(ctx context.Context, in *infra, svc *services) (stop func()) {
+	scheduler := &cron.Scheduler{
+		Schedules: cronpg.New(in.st, in.keys), Starter: svc.starter, Tenants: adminTenantLister{},
+		CatalogManifestDigest: svc.catalogManifestDigest,
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		scheduler.Run(ctx)
+	}()
+	return func() {
+		cancel()
+		<-done
 	}
 }
 

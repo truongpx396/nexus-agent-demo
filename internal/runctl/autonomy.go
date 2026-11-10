@@ -28,7 +28,7 @@ type autonomyTightenedPayload struct {
 func (c *Control) TightenAutonomy(ctx context.Context, tenantID, sessionID uuid.UUID, target string) error {
 	targetLevel, err := permissions.ParseAutonomyLevel(target)
 	if err != nil {
-		return fmt.Errorf("runctl: tighten autonomy: %w", err)
+		return fmt.Errorf("%w: tighten autonomy: %w", ErrInvalidArgument, err)
 	}
 	return c.Store.InTenant(ctx, tenantID, func(ctx context.Context, tx Tx) error {
 		sess, err := tx.GetSession(ctx, sessionID)
@@ -41,7 +41,7 @@ func (c *Control) TightenAutonomy(ctx context.Context, tenantID, sessionID uuid.
 		}
 		ratchet := permissions.Pin(currentLevel)
 		if err := ratchet.Tighten(targetLevel); err != nil {
-			return fmt.Errorf("runctl: %w", err)
+			return fmt.Errorf("%w: tighten autonomy: %w", ErrInvalidArgument, err)
 		}
 
 		if err := tx.SetAutonomyLevel(ctx, sessionID, target); err != nil {

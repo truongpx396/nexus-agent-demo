@@ -66,11 +66,11 @@ func (c *Control) Resume(ctx context.Context, tenantID, sessionID uuid.UUID) ite
 			return
 		}
 		if sess.Status == eventlog.SessionStatusCompleted || sess.Status == eventlog.SessionStatusFailed {
-			yield(eventlog.Event{}, fmt.Errorf("runctl: session %s is already terminal (%s); nothing to resume", sessionID, sess.Status))
+			yield(eventlog.Event{}, fmt.Errorf("%w: session %s is already terminal (%s); nothing to resume", ErrSessionState, sessionID, sess.Status))
 			return
 		}
 		if sess.Status == eventlog.SessionStatusSuspended {
-			yield(eventlog.Event{}, fmt.Errorf("runctl: session %s is suspended on a pending approval or input request; resolve it (internal/oversight) rather than calling Resume", sessionID))
+			yield(eventlog.Event{}, fmt.Errorf("%w: session %s is suspended on a pending approval or input request; resolve it (internal/oversight) rather than calling Resume", ErrSessionState, sessionID))
 			return
 		}
 		if sess.Status == eventlog.SessionStatusAwaitingInput {
@@ -81,7 +81,7 @@ func (c *Control) Resume(ctx context.Context, tenantID, sessionID uuid.UUID) ite
 			// that through kernel.Continue would resume with no new input
 			// at all, which isn't what Continue is for; ResumeConversation
 			// is the one correct path back out of this status.
-			yield(eventlog.Event{}, fmt.Errorf("runctl: session %s is awaiting the next conversation turn; call ResumeConversation with the new message rather than Resume", sessionID))
+			yield(eventlog.Event{}, fmt.Errorf("%w: session %s is awaiting the next conversation turn; call ResumeConversation with the new message rather than Resume", ErrSessionState, sessionID))
 			return
 		}
 

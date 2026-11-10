@@ -3,11 +3,12 @@ package contract
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -97,7 +98,7 @@ func scanGoFileSizes(root string, limit int, exempt map[string]string) (checked 
 		}
 		return nil
 	})
-	sort.Slice(over, func(i, j int) bool { return over[i].lines > over[j].lines })
+	slices.SortFunc(over, func(a, b oversizedFile) int { return cmp.Compare(b.lines, a.lines) })
 	return checked, over, err
 }
 

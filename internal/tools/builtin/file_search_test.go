@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"testing"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/tools"
@@ -35,12 +35,12 @@ func TestFileSearch_MatchesGlobPattern(t *testing.T) {
 	if err := json.Unmarshal(result.Output, &decoded); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	sort.Strings(decoded.Matches)
+	slices.Sort(decoded.Matches)
 	// filepath.Match's "*.go" matches by base name for a.go/b.go/sub/c.go
 	// (matched against the base name fallback) and by full relative path
 	// for a.go/b.go (no directory separator).
 	want := []string{"a.go", filepath.Join("sub", "c.go"), "b.go"}
-	sort.Strings(want)
+	slices.Sort(want)
 	if len(decoded.Matches) != len(want) {
 		t.Fatalf("Matches = %v, want %v", decoded.Matches, want)
 	}

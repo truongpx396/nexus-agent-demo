@@ -15,9 +15,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"os/signal"
+	"slices"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -82,7 +85,47 @@ const (
 // process-wide switch is simpler than plumbing a bool through each.
 var devMode bool
 
-func main() {
+// command is one nexusd subcommand: it receives the process context (cancelled by
+// Ctrl-C or SIGTERM) and the arguments after its name.
+type command func(ctx context.Context, args []string) error
+
+// commands is every subcommand, and the one place the usage text comes from.
+var commands = map[string]command{
+	"serve":        runServe,
+	"migrate":      func(ctx context.Context, _ []string) error { return runMigrate(ctx) },
+	"seed":         runSeed,
+	"verify-chain": runVerifyChain,
+	"dashboard":    runDashboard,
+	"go-live":      runGoLive,
+	"erase":        runErase,
+	"ingest":       runIngest,
+	"token":        runToken,
+}
+
+func main() { os.Exit(run(os.Args[1:])) }
+
+// parseArgs strips the global --dev flag, wherever it appears, and splits off the
+// subcommand name; with no subcommand the process serves.
+func parseArgs(args []string) (name string, rest []string, dev bool) {
+	name = "serve"
+	named := false
+	for _, a := range args {
+		switch {
+		case a == "--dev":
+			dev = true
+		case !named:
+			name, named = a, true
+		default:
+			rest = append(rest, a)
+		}
+	}
+	return name, rest, dev
+}
+
+// run dispatches a subcommand and returns the process's exit code, so main's one
+// os.Exit happens after run's defers, not instead of them. With no subcommand it
+// serves.
+func run(args []string) int {
 	// Before InitLogger, before every other envOr/os.Getenv call this file
 	// and the packages it wires up make: .env.example (repo root) documents
 	// what dotenv.Load fills in here, and only when the real environment
@@ -92,70 +135,24 @@ func main() {
 	}
 	obs.InitLogger("nexusd")
 
-	// Ctrl-C or SIGTERM cancels a long subcommand (migrate, ingest, verify-chain)
-	// cleanly instead of killing it mid-statement; serve installs its own.
+	// Ctrl-C or SIGTERM cancels a long subcommand (migrate, ingest, verify-chain,
+	// serve) cleanly instead of killing it mid-statement.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	args := os.Args[1:]
-	var filtered []string
-	for _, a := range args {
-		if a == "--dev" {
-			devMode = true
-			continue
-		}
-		filtered = append(filtered, a)
-	}
-
-	if len(filtered) < 1 {
-		runServe()
-		return
-	}
-	switch filtered[0] {
-	case "migrate":
-		if err := runMigrate(ctx); err != nil {
-			fatalf("migrate: %v", err)
-		}
-	case "seed":
-		if err := runSeed(ctx, filtered[1:]); err != nil {
-			fatalf("seed: %v", err)
-		}
-	case "verify-chain":
-		if err := runVerifyChain(ctx, filtered[1:]); err != nil {
-			fatalf("verify-chain: %v", err)
-		}
-	case "dashboard":
-		if err := runDashboard(ctx, filtered[1:]); err != nil {
-			fatalf("dashboard: %v", err)
-		}
-	case "go-live":
-		if err := runGoLive(ctx, filtered[1:]); err != nil {
-			fatalf("go-live: %v", err)
-		}
-	case "erase":
-		if err := runErase(ctx, filtered[1:]); err != nil {
-			fatalf("erase: %v", err)
-		}
-	case "ingest":
-		if err := runIngest(ctx, filtered[1:]); err != nil {
-			fatalf("ingest: %v", err)
-		}
-	case "token":
-		if err := runToken(ctx, filtered[1:]); err != nil {
-			fatalf("token: %v", err)
-		}
-	case "serve":
-		runServe()
-	default:
+	name, rest, dev := parseArgs(args)
+	devMode = dev
+	cmd, ok := commands[name]
+	if !ok {
 		// A mistyped subcommand must not boot a server as a side effect.
-		fmt.Fprintf(os.Stderr, "nexusd: unknown command %q (commands: serve, migrate, seed, verify-chain, dashboard, go-live, erase, ingest, token)\n", filtered[0])
-		os.Exit(2)
+		fmt.Fprintf(os.Stderr, "nexusd: unknown command %q (commands: %s)\n", name, strings.Join(slices.Sorted(maps.Keys(commands)), ", "))
+		return 2
 	}
-}
-
-func fatalf(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, format+"\n", args...)
-	os.Exit(1)
+	if err := cmd(ctx, rest); err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", name, err)
+		return 1
+	}
+	return 0
 }
 
 // envIntOr parses key as a base-10 int, falling back to fallback on unset OR

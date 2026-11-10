@@ -25,6 +25,17 @@ const (
 	MimeDOCX      = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 )
 
+// A FlateDecode stream is attacker-shaped input: a few kilobytes of zlib can
+// inflate to gigabytes (a decompression bomb). Each stream is capped, and the
+// whole document has a budget, so converting one upload costs bounded memory and
+// time; a stream or document past either is skipped, as an undecodable one is.
+const (
+	maxInflatedStreamBytes = 32 << 20
+	maxInflatedTotalBytes  = 256 << 20
+)
+
+var errInflatedTooLarge = errors.New("ingest: stream inflates past the size limit")
+
 // Convert normalizes one source file's raw bytes into a Document. Every
 // extractor below is intentionally minimal and dependency-free (stdlib
 // only, README §2's own "collapse infrastructure, keep the seam" thesis
@@ -147,6 +158,7 @@ func decodeEntities(s string) string {
 func convertPDF(data []byte) (string, error) {
 	var out strings.Builder
 	remaining := data
+	inflateBudget := maxInflatedTotalBytes
 	for {
 		startIdx := bytes.Index(remaining, []byte("stream"))
 		if startIdx < 0 {
@@ -173,8 +185,10 @@ func convertPDF(data []byte) (string, error) {
 		body := remaining[streamStart : streamStart+endIdx]
 
 		var content []byte
-		if flate {
-			if decoded, err := zlibInflate(body); err == nil {
+		if flate && inflateBudget > 0 {
+			decoded, err := zlibInflate(body, min(maxInflatedStreamBytes, inflateBudget))
+			inflateBudget -= len(decoded)
+			if err == nil {
 				content = decoded
 			}
 			// A stream declared FlateDecode that fails to inflate (e.g. it
@@ -194,13 +208,23 @@ func convertPDF(data []byte) (string, error) {
 	return out.String(), nil
 }
 
-func zlibInflate(compressed []byte) ([]byte, error) {
+// zlibInflate decompresses one stream, returning errInflatedTooLarge (and
+// the limit's worth of bytes it read, so the caller can charge them to its
+// budget) rather than expanding past limit.
+func zlibInflate(compressed []byte, limit int) ([]byte, error) {
 	r, err := zlib.NewReader(bytes.NewReader(compressed))
 	if err != nil {
 		return nil, err
 	}
 	defer r.Close() //nolint:errcheck // read-only decompression; nothing to flush
-	return io.ReadAll(r)
+	out, err := io.ReadAll(io.LimitReader(r, int64(limit)+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(out) > limit {
+		return out[:limit], errInflatedTooLarge
+	}
+	return out, nil
 }
 
 // extractPDFText pulls the literal-string operands of Tj/TJ operators —

@@ -18,6 +18,7 @@ package rest
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -40,7 +41,31 @@ type Router struct {
 // Handle registers h for pattern (a net/http ServeMux pattern such as
 // "GET /v1/approvals/{id}"), behind the bearer-token check.
 func (r Router) Handle(pattern string, h http.HandlerFunc) {
-	r.mux.Handle(pattern, r.srv.authed(h))
+	r.mux.Handle(pattern, r.srv.authed(func(w http.ResponseWriter, req *http.Request) {
+		req.Body = http.MaxBytesReader(w, req.Body, maxRequestBody)
+		h(w, req)
+	}))
+}
+
+// maxRequestBody bounds every request body a module reads. The server's
+// ReadTimeout bounds how long a client may take to send one, not how much: a
+// JSON decoder buffers a whole value, so without this a single authenticated
+// request could make the process allocate until it is killed.
+const maxRequestBody = 4 << 20
+
+// DecodeJSON decodes the request body into v. On failure it has already
+// answered, 413 for a body over the limit and 400 for anything else, so the
+// handler just returns.
+func DecodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
+	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+		if _, tooLarge := errors.AsType[*http.MaxBytesError](err); tooLarge {
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+		} else {
+			http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		}
+		return false
+	}
+	return true
 }
 
 // Server serves the modules it was given over HTTP.

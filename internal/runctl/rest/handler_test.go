@@ -5,7 +5,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -90,7 +92,7 @@ func TestTightenAutonomy_MapsARefusalTo400(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || got["autonomy_level"] != "read_only" {
 		t.Errorf("body %q, want the level that was applied", rec.Body)
 	}
-	if rec := resttest.Do(t, serve(&fakeController{err: errors.New("cannot widen")}), http.MethodPost, "/v1/runs/"+id.String()+"/autonomy", `{"target":"autonomous"}`); rec.Code != http.StatusBadRequest {
+	if rec := resttest.Do(t, serve(&fakeController{err: fmt.Errorf("%w: cannot widen", runctl.ErrInvalidArgument)}), http.MethodPost, "/v1/runs/"+id.String()+"/autonomy", `{"target":"autonomous"}`); rec.Code != http.StatusBadRequest {
 		t.Errorf("a refused widening = %d, want 400", rec.Code)
 	}
 }
@@ -108,5 +110,40 @@ func TestForkRun_ReportsDigestDivergenceAndHexEncodesTheDigests(t *testing.T) {
 	}
 	if view.SessionID != child.String() || !view.DigestDiverged || view.ParentDigest != hex.EncodeToString([]byte{0xab, 0xcd}) || view.ChildDigest != "0102" {
 		t.Errorf("view = %+v, want the child session, the divergence flag and hex digests: a fork must never read as a byte-identical replay", view)
+	}
+}
+
+// Every operation tells the caller what the caller can act on (404, 409, 400)
+// and nothing about an infrastructure failure, which is a logged 500.
+func TestRunControl_MapsRefusalsToStatusesAndNeverEchoesInfrastructureErrors(t *testing.T) {
+	id := uuid.New().String()
+	ops := map[string]struct{ path, body string }{
+		"cancel":   {"/v1/runs/" + id + "/cancel", ""},
+		"steer":    {"/v1/runs/" + id + "/steer", `{"input":"x"}`},
+		"autonomy": {"/v1/runs/" + id + "/autonomy", `{"target":"read_only"}`},
+		"fork":     {"/v1/runs/" + id + "/fork", `{"at_seq":1}`},
+	}
+	outcomes := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"a missing session", fmt.Errorf("fork: %w", runctl.ErrSessionNotFound), http.StatusNotFound},
+		{"a session in the wrong state", fmt.Errorf("%w: already terminal", runctl.ErrSessionState), http.StatusConflict},
+		{"an argument it cannot act on", fmt.Errorf("%w: no events", runctl.ErrInvalidArgument), http.StatusBadRequest},
+		{"an infrastructure failure", errors.New("dial tcp 10.0.0.7:5432: connection refused"), http.StatusInternalServerError},
+	}
+	for op, req := range ops {
+		for _, o := range outcomes {
+			t.Run(op+"/"+o.name, func(t *testing.T) {
+				rec := resttest.Do(t, serve(&fakeController{err: o.err}), http.MethodPost, req.path, req.body)
+				if rec.Code != o.want {
+					t.Fatalf("status = %d, want %d (%s)", rec.Code, o.want, rec.Body)
+				}
+				if o.want == http.StatusInternalServerError && strings.Contains(rec.Body.String(), "10.0.0.7") {
+					t.Errorf("a 500 echoed the infrastructure error: %q", rec.Body)
+				}
+			})
+		}
 	}
 }

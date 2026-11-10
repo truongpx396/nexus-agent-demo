@@ -4,7 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"sort"
+	"slices"
 	"strconv"
 	"testing"
 )
@@ -63,7 +63,7 @@ func TestTaxonomy_EveryDeclaredTypeHasAnOwnerAndNothingIsStale(t *testing.T) {
 			stale = append(stale, string(typ))
 		}
 	}
-	sort.Strings(stale)
+	slices.Sort(stale)
 	for _, s := range stale {
 		t.Errorf("taxonomy.go owns %q, which event.go does not declare", s)
 	}
@@ -80,7 +80,7 @@ func TestTaxonomy_KnownAndTypes(t *testing.T) {
 	if len(types) != len(owners) {
 		t.Fatalf("Types() returned %d, want %d", len(types), len(owners))
 	}
-	if !sort.SliceIsSorted(types, func(i, j int) bool { return types[i] < types[j] }) {
+	if !slices.IsSorted(types) {
 		t.Error("Types() is not sorted")
 	}
 }

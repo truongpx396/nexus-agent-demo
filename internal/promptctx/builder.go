@@ -8,8 +8,9 @@ package promptctx
 
 import (
 	"bytes"
+	"cmp"
 	"fmt"
-	"sort"
+	"slices"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 )
@@ -37,8 +38,7 @@ func Build(system string, catalog []provider.ToolSchema, transcript []provider.M
 // applies, and for the same reason: cache identity must never depend on
 // registration or iteration order).
 func PrefixBytes(system string, catalog []provider.ToolSchema, transcript []provider.Message) []byte {
-	sorted := append([]provider.ToolSchema(nil), catalog...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Name < sorted[j].Name })
+	sorted := slices.SortedFunc(slices.Values(catalog), func(a, b provider.ToolSchema) int { return cmp.Compare(a.Name, b.Name) })
 
 	var buf bytes.Buffer
 	fmt.Fprintf(&buf, "system=%s\n", system)

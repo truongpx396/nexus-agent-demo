@@ -1,8 +1,9 @@
 package cost
 
 import (
+	"cmp"
 	"fmt"
-	"sort"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -70,16 +71,16 @@ func (pb *PriceBook) Lookup(meter MeterID, subject string, at time.Time) (PriceB
 	if len(candidates) == 0 {
 		return PriceBookEntry{}, false
 	}
-	sort.Slice(candidates, func(i, j int) bool {
-		// Exact subject match first, then highest version.
-		iExact := candidates[i].Subject == subject
-		jExact := candidates[j].Subject == subject
-		if iExact != jExact {
-			return iExact
+	// Exact subject match first, then highest version.
+	return slices.MinFunc(candidates, func(a, b PriceBookEntry) int {
+		if aExact, bExact := a.Subject == subject, b.Subject == subject; aExact != bExact {
+			if aExact {
+				return -1
+			}
+			return 1
 		}
-		return candidates[i].Version > candidates[j].Version
-	})
-	return candidates[0], true
+		return cmp.Compare(b.Version, a.Version)
+	}), true
 }
 
 // Cost prices quantity units of meter for subject at time at, using

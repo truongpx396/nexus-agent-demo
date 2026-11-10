@@ -4,7 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -58,7 +58,7 @@ func TestComposition_MainContainsNoSQL(t *testing.T) {
 	if checked == 0 {
 		t.Fatal("no source files found under cmd/nexusd; the rule would pass vacuously")
 	}
-	sort.Strings(offenders)
+	slices.Sort(offenders)
 	for _, o := range offenders {
 		t.Errorf("cmd/nexusd/%s holds SQL; move it behind a port into the package that owns the table", o)
 	}
