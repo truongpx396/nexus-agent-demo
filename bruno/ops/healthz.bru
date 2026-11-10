@@ -1,0 +1,23 @@
+meta {
+  name: Liveness (healthz)
+  type: http
+  seq: 1
+  tags: [
+    smoke
+  ]
+}
+
+get {
+  url: {{baseUrl}}/healthz
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body: eq ok
+}
+
+docs {
+  Liveness probe. Unauthenticated: a load balancer has no bearer token to send.
+}

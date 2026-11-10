@@ -1,0 +1,26 @@
+meta {
+  name: Get run
+  type: http
+  seq: 3
+  tags: [
+    smoke
+  ]
+}
+
+get {
+  url: {{baseUrl}}/v1/runs/{{runId}}
+  body: none
+  auth: inherit
+}
+
+assert {
+  res.status: eq 200
+  res.body.run_id: eq {{runId}}
+  res.body.status: isString
+}
+
+docs {
+  Status and terminal reason of the run in `runId`: `{"run_id", "status", "terminal_reason"?}`. `terminal_reason` is absent until the run settles.
+
+  `404` for a run that does not exist in the token's tenant, `403` for one that belongs to another user.
+}

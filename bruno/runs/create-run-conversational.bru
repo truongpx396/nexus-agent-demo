@@ -1,0 +1,34 @@
+meta {
+  name: Create run (conversational)
+  type: http
+  seq: 2
+  tags: [
+    smoke
+  ]
+}
+
+post {
+  url: {{baseUrl}}/v1/runs
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "input": "hello",
+    "conversational": true
+  }
+}
+
+assert {
+  res.status: eq 202
+  res.body.run_id: isString
+}
+
+script:post-response {
+  bru.setVar("chatRunId", res.body.run_id);
+}
+
+docs {
+  Same endpoint, with `"conversational": true`: a plain reply suspends the session awaiting your next message instead of ending the run. `Steer run` then continues it in place. The run id is saved to `chatRunId`, so this does not replace the `runId` of the one-shot run.
+}

@@ -1,0 +1,30 @@
+meta {
+  name: Tighten autonomy
+  type: http
+  seq: 2
+  tags: [
+    smoke
+  ]
+}
+
+post {
+  url: {{baseUrl}}/v1/runs/{{runId}}/autonomy
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "target": "read_only"
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.status: eq tightened
+  res.body.autonomy_level: eq read_only
+}
+
+docs {
+  Moves the session's autonomy level toward `read_only`: `autonomous` -> `supervised` -> `read_only`. The ratchet only turns one way, so a target looser than the current level is refused with `400`; the current level itself is accepted. The change and the event that records it commit together.
+}

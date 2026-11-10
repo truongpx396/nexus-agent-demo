@@ -1,0 +1,39 @@
+meta {
+  name: Fork run
+  type: http
+  seq: 3
+  tags: [
+    smoke
+  ]
+}
+
+post {
+  url: {{baseUrl}}/v1/runs/{{runId}}/fork
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "at_seq": 1
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.session_id: isString
+  res.body.digest_diverged: isBoolean
+}
+
+script:post-response {
+  bru.setVar("forkRunId", res.body.session_id);
+}
+
+docs {
+  Creates a new session from the history of `runId` up to and including `at_seq`. External effects are disabled in the fork (its autonomy is pinned to `read_only`), it inherits no approvals, and it has its own budget and audit chain. The new session id is saved to `forkRunId`.
+
+  - `at_seq` (required): every run has an event at seq 1, which is why that is the default. Pick a real one from `Stream run events (SSE)`.
+  - `model`: override the model id; empty inherits the parent's.
+
+  `digest_diverged: true` means the fork ran under different behaviour-determining config than its parent, so it is a candidate fix and not a reproduction of the original run. `400` if no event exists at or before `at_seq`.
+}

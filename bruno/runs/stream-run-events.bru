@@ -1,0 +1,26 @@
+meta {
+  name: Stream run events (SSE)
+  type: http
+  seq: 4
+  tags: [
+    smoke
+  ]
+}
+
+get {
+  url: {{baseUrl}}/v1/runs/{{runId}}/events
+  body: none
+  auth: inherit
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  The run's event log as Server-Sent Events: the history is replayed first, then live events and `delta` previews follow until the `terminal` event, when the server closes the stream.
+
+  A frame looks like `event: content` / `data: {"event_id", "seq", "type", "actor", "body", ...}`. `body` is the decrypted payload, shown only to the run's own user; `thought` events never carry one.
+
+  A conversational run (`chatRunId`) does not emit `terminal` while it waits for your next message, so its stream stays open: close the request when you have seen enough.
+}

@@ -1,0 +1,31 @@
+meta {
+  name: Grant approval (modified input)
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/v1/approvals/{{approvalId}}/grant
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "modified_input": {
+      "field": "value"
+    }
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.session_id: isString
+  res.body.error: isUndefined
+}
+
+docs {
+  Approves with the approver's own substitution for the tool input, for example changing the recipient at grant time. The modified input re-binds the approval's digest.
+
+  `modified_input` is the tool's input object, so `{"field": "value"}` is a placeholder: copy the real shape from the approval's `context`.
+}

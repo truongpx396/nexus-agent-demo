@@ -1,0 +1,22 @@
+meta {
+  name: Metrics
+  type: http
+  seq: 3
+  tags: [
+    smoke
+  ]
+}
+
+get {
+  url: {{baseUrl}}/metrics
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Per-tenant golden signals, with per-tool and per-model breakdowns, in Prometheus text format. Unauthenticated, like the probes.
+}

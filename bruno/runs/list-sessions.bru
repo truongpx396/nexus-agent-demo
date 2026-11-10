@@ -1,0 +1,23 @@
+meta {
+  name: List sessions
+  type: http
+  seq: 5
+  tags: [
+    smoke
+  ]
+}
+
+get {
+  url: {{baseUrl}}/v1/sessions
+  body: none
+  auth: inherit
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+}
+
+docs {
+  The token's own root sessions, newest first, capped at 200: `[{"run_id", "status", "terminal_reason"?, "created_at", "autonomy_level"}]`. Sessions belong to a user, so a token minted for a new user sees an empty list.
+}

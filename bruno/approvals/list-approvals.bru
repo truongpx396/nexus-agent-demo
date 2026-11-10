@@ -1,0 +1,33 @@
+meta {
+  name: List pending approvals
+  type: http
+  seq: 1
+  tags: [
+    smoke
+  ]
+}
+
+get {
+  url: {{baseUrl}}/v1/approvals
+  body: none
+  auth: inherit
+}
+
+assert {
+  res.status: eq 200
+  res.body: isArray
+}
+
+script:post-response {
+  // Keep the first pending approval for the requests below. When the list is
+  // empty, approvalId keeps whatever the environment holds.
+  if (Array.isArray(res.body) && res.body.length > 0) {
+    bru.setVar("approvalId", res.body[0].approval_id);
+  }
+}
+
+docs {
+  The tenant's approvals that are waiting on a person: `[{"approval_id", "session_id", "tool_id", "ask_kind", "status", "context", "expires_at", "created_at"}]`. `context` is the decision-ready rendering (recipient, subject, attachment digests), never a bare id.
+
+  An approval exists only when a `supervised` run proposes a tool call with a non-read-only effect. The dev fake provider never does, so this list is empty until `NEXUS_PROVIDER` points at a real model. The first entry is saved to `approvalId`.
+}

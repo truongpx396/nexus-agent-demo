@@ -1,0 +1,29 @@
+meta {
+  name: Cancel run
+  type: http
+  seq: 4
+  tags: [
+    smoke
+  ]
+}
+
+post {
+  url: {{baseUrl}}/v1/runs/{{chatRunId}}/cancel
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "reason": "cancelled from Bruno"
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.status: eq aborted
+}
+
+docs {
+  Aborts the run in `chatRunId`; the body is optional. A pending approval or input request on a suspended session is released first. Cancelling a run that has already completed or failed is a no-op that still answers `200`, so a second call is harmless.
+}

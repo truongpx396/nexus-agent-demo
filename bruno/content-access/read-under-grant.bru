@@ -1,0 +1,22 @@
+meta {
+  name: Read under grant
+  type: http
+  seq: 2
+  tags: [
+    smoke
+  ]
+}
+
+get {
+  url: {{baseUrl}}/v1/sessions/{{runId}}/content-access-grants/read
+  body: none
+  auth: inherit
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  Reads the session's content as the calling principal, who must be the grantee of a valid grant. `403` when there is none, or it has expired. With a single token this passes only if `granteeId` is that token's own `user_id`; to see the `403`, send it with a different user's token.
+}

@@ -1,0 +1,9 @@
+{
+  "version": "1",
+  "name": "nexus-agent-demo",
+  "type": "collection",
+  "ignore": [
+    "node_modules",
+    ".git"
+  ]
+}

@@ -1,0 +1,23 @@
+meta {
+  name: Grant approval
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/v1/approvals/{{approvalId}}/grant
+  body: none
+  auth: inherit
+}
+
+assert {
+  res.status: eq 200
+  res.body.session_id: isString
+  res.body.error: isUndefined
+}
+
+docs {
+  Approves the tool call as proposed and resumes the suspended run. The answer is an acknowledgement, `{"session_id", "events_appended", "error"?}`: ask `Get run` whether the run is done, or follow `Stream run events (SSE)`.
+
+  A decision that could not be applied still answers `200`, with the reason in `error`, which is why the assertions check that `error` is absent.
+}

@@ -1,0 +1,27 @@
+meta {
+  name: Deny approval
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/v1/approvals/{{approvalId}}/deny
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "reason": "not what I asked for"
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.session_id: isString
+  res.body.error: isUndefined
+}
+
+docs {
+  Refuses the tool call. `reason` is optional, and so is the whole body. Like `Grant approval`, it answers `200` with a `{"session_id", "events_appended", "error"?}` acknowledgement.
+}
