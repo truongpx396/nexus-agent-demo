@@ -5,7 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"sort"
+	"slices"
 )
 
 // CanonicalDigest is the one artifact task 3.5 names, with three jobs:
@@ -86,7 +86,7 @@ func writeCanonical(buf *bytes.Buffer, v any) error {
 		for k := range val {
 			keys = append(keys, k)
 		}
-		sort.Strings(keys)
+		slices.Sort(keys)
 		buf.WriteByte('{')
 		for i, k := range keys {
 			if i > 0 {

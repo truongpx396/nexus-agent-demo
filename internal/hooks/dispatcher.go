@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"sort"
 	"sync"
 	"time"
 )
@@ -154,7 +153,7 @@ func touchedPaths(orig, updated json.RawMessage) ([]string, error) {
 			touched = append(touched, k)
 		}
 	}
-	sort.Strings(touched)
+	slices.Sort(touched)
 	return touched, nil
 }
 

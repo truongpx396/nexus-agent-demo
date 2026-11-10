@@ -4,7 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 
@@ -110,7 +110,7 @@ func liveTables(t *testing.T, root string) map[string]bool {
 	if err != nil || len(files) == 0 {
 		t.Fatalf("no migrations found under %s/migrations (err=%v)", root, err)
 	}
-	sort.Strings(files) // applied in filename order
+	slices.Sort(files) // applied in filename order
 	live := map[string]bool{}
 	for _, f := range files {
 		b, err := os.ReadFile(f) //nolint:gosec // path built from this repo's own migrations listing
@@ -205,7 +205,7 @@ func TestTableOwnership_SQLStaysInTheOwner(t *testing.T) {
 	if checked < 100 {
 		t.Fatalf("scanned only %d source files; the rule would pass vacuously", checked)
 	}
-	sort.Strings(offenders)
+	slices.Sort(offenders)
 	offenders = dedupe(offenders)
 	for _, o := range offenders {
 		t.Error(o)

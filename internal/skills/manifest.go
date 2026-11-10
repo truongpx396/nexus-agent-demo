@@ -1,9 +1,10 @@
 package skills
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"fmt"
-	"sort"
+	"slices"
 )
 
 // ResidentMetadata is tier 1 (README task 7.6): what the model sees about an
@@ -49,16 +50,14 @@ func BuildSkillSet(bundles []SkillBundle, admittedIDs []string) SkillSet {
 			DeclaredToolIDs: append([]string(nil), b.DeclaredToolIDs...),
 		})
 	}
-	sort.Slice(set.Entries, func(i, j int) bool { return set.Entries[i].SkillID < set.Entries[j].SkillID })
+	slices.SortFunc(set.Entries, func(a, b ResidentMetadata) int { return cmp.Compare(a.SkillID, b.SkillID) })
 
 	h := sha256.New()
 	for _, e := range set.Entries {
 		_, _ = fmt.Fprintf(h, "skill_id=%s\n", e.SkillID)
 		_, _ = fmt.Fprintf(h, "description=%s\n", e.Description)
 		_, _ = fmt.Fprintf(h, "trigger_hint=%s\n", e.TriggerHint)
-		ids := append([]string(nil), e.DeclaredToolIDs...)
-		sort.Strings(ids)
-		for _, id := range ids {
+		for _, id := range slices.Sorted(slices.Values(e.DeclaredToolIDs)) {
 			_, _ = fmt.Fprintf(h, "declared_tool_id=%s\n", id)
 		}
 	}

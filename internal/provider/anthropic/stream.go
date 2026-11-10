@@ -185,10 +185,10 @@ func (s *stream) Next(ctx context.Context) (provider.Chunk, bool, error) {
 			}
 		case "message_delta":
 			s.usage.OutputTokens = evt.Usage.OutputTokens
-			s.pending = append(s.pending, provider.Chunk{Kind: provider.ChunkUsage, Usage: s.usage})
-			s.pending = append(s.pending, provider.Chunk{
-				Kind: provider.ChunkDone, Done: stopReasonToDone(evt.Delta.StopReason), RefusalCategory: evt.Delta.StopDetails.Category,
-			})
+			s.pending = append(s.pending,
+				provider.Chunk{Kind: provider.ChunkUsage, Usage: s.usage},
+				provider.Chunk{Kind: provider.ChunkDone, Done: stopReasonToDone(evt.Delta.StopReason), RefusalCategory: evt.Delta.StopDetails.Category},
+			)
 		case "message_stop":
 			s.closed = true
 			_ = s.body.Close()

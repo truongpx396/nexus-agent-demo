@@ -82,7 +82,7 @@ const (
 type Predicate struct {
 	Op     Op          `json:"op"`
 	Field  string      `json:"field,omitempty"`
-	Value  Value       `json:"value,omitempty"`
+	Value  Value       `json:"value"` // no omitempty: it never applies to a struct, so every predicate has always carried "value"
 	Values []Value     `json:"values,omitempty"`
 	And    []Predicate `json:"and,omitempty"`
 	Or     []Predicate `json:"or,omitempty"`

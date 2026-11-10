@@ -7,7 +7,7 @@
 package rest
 
 import (
-	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -62,8 +62,7 @@ func (h Handler) handleRequestContentAccessGrant(w http.ResponseWriter, r *http.
 		return
 	}
 	var req requestGrantRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+	if !restkit.DecodeJSON(w, r, &req) {
 		return
 	}
 	granteeID, err := uuid.Parse(req.GranteeID)
@@ -78,7 +77,7 @@ func (h Handler) handleRequestContentAccessGrant(w http.ResponseWriter, r *http.
 
 	gr, err := h.Grants.RequestGrant(r.Context(), tenantID, sessionID, granteeID, req.Reason, time.Duration(req.TTLSeconds)*time.Second)
 	if err != nil {
-		http.Error(w, "request grant: "+err.Error(), http.StatusInternalServerError)
+		restkit.ServerError(w, r, "request grant", err)
 		return
 	}
 	restkit.WriteJSON(w, http.StatusCreated, grantView{
@@ -103,8 +102,12 @@ func (h Handler) handleReadUnderGrant(w http.ResponseWriter, r *http.Request) {
 	// principal to authorize, a read is always "show ME what I was
 	// granted," never "show me what someone else was granted."
 	dtos, err := h.Grants.Read(r.Context(), tenantID, sessionID, userID)
+	if errors.Is(err, contentaccess.ErrNoGrant) {
+		http.Error(w, "no valid content access grant", http.StatusForbidden)
+		return
+	}
 	if err != nil {
-		http.Error(w, "read under grant: "+err.Error(), http.StatusForbidden)
+		restkit.ServerError(w, r, "read under grant", err)
 		return
 	}
 	restkit.WriteJSON(w, http.StatusOK, dtos)

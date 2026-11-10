@@ -2,7 +2,7 @@ package runstate_test
 
 import (
 	"reflect"
-	"sort"
+	"slices"
 	"testing"
 
 	"github.com/google/uuid"
@@ -91,8 +91,8 @@ func TestRunConfigFieldsAreAllClassified(t *testing.T) {
 			stale = append(stale, name)
 		}
 	}
-	sort.Strings(unclassified)
-	sort.Strings(stale)
+	slices.Sort(unclassified)
+	slices.Sort(stale)
 	if len(unclassified) > 0 {
 		t.Errorf("kernel.RunConfig has fields with no resume class: %v; add each to runConfigFields, and to runstate.ConfigFor if the session pins it", unclassified)
 	}

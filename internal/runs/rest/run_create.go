@@ -61,8 +61,7 @@ func (h *Handler) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 	tenantID, userID := principal.TenantID, principal.UserID
 
 	var req createRunRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+	if !restkit.DecodeJSON(w, r, &req) {
 		return
 	}
 	if req.Input == "" {

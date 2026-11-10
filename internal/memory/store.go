@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -75,6 +75,6 @@ func (s *Store) list(tenantID uuid.UUID) ([]fileEntry, error) {
 		}
 		out = append(out, fileEntry{name: e.Name(), path: filepath.Join(dir, e.Name()), mtime: info.ModTime()})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].mtime.Before(out[j].mtime) })
+	slices.SortFunc(out, func(a, b fileEntry) int { return a.mtime.Compare(b.mtime) })
 	return out, nil
 }

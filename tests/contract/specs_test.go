@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -197,7 +197,7 @@ func TestSpecs_TaskCitationsResolve(t *testing.T) {
 			}
 		}
 	}
-	sort.Strings(bad)
+	slices.Sort(bad)
 	for _, b := range uniq(bad) {
 		t.Errorf("%s resolves to no (bp) id in specs/*/tasks.md and is not a legacy alias in specs/README.md", b)
 	}

@@ -1,9 +1,10 @@
 package skills
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"fmt"
-	"sort"
+	"slices"
 )
 
 // BundleDigest hashes a bundle's behavior-bearing content in a fixed,
@@ -19,15 +20,11 @@ func BundleDigest(b SkillBundle) []byte {
 	_, _ = fmt.Fprintf(h, "description=%s\n", b.Description)
 	_, _ = fmt.Fprintf(h, "trigger_hint=%s\n", b.TriggerHint)
 
-	toolIDs := append([]string(nil), b.DeclaredToolIDs...)
-	sort.Strings(toolIDs)
-	for _, id := range toolIDs {
+	for _, id := range slices.Sorted(slices.Values(b.DeclaredToolIDs)) {
 		_, _ = fmt.Fprintf(h, "declared_tool_id=%s\n", id)
 	}
 
-	files := append([]BundleFile(nil), b.Files...)
-	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
-	for _, f := range files {
+	for _, f := range slices.SortedFunc(slices.Values(b.Files), func(a, b BundleFile) int { return cmp.Compare(a.Path, b.Path) }) {
 		contentDigest := sha256.Sum256(f.Content)
 		_, _ = fmt.Fprintf(h, "file_path=%s\n", f.Path)
 		_, _ = fmt.Fprintf(h, "file_content_sha256=%x\n", contentDigest)

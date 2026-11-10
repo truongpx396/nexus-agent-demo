@@ -83,7 +83,7 @@ func (c *Control) Fork(ctx context.Context, tenantID, parentSessionID uuid.UUID,
 		trimmed = append(trimmed, e)
 	}
 	if len(trimmed) == 0 {
-		return ForkResult{}, fmt.Errorf("runctl: fork: session %s has no events at or before seq %d", parentSessionID, atSeq)
+		return ForkResult{}, fmt.Errorf("%w: fork: session %s has no events at or before seq %d", ErrInvalidArgument, parentSessionID, atSeq)
 	}
 
 	// The second return value (tool_use EventID -> provider tool_use_id) is

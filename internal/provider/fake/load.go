@@ -3,7 +3,7 @@ package fake
 import (
 	"fmt"
 	"io/fs"
-	"sort"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -24,7 +24,7 @@ func LoadScripts(dir fs.FS) ([]Script, error) {
 		}
 		names = append(names, e.Name())
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 
 	scripts := make([]Script, 0, len(names))
 	for _, name := range names {
