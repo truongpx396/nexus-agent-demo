@@ -1,0 +1,33 @@
+meta {
+  name: Steer run
+  type: http
+  seq: 1
+  tags: [
+    smoke
+  ]
+}
+
+post {
+  url: {{baseUrl}}/v1/runs/{{chatRunId}}/steer
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "input": "and what is that times two?"
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.status: eq steered
+}
+
+docs {
+  Delivers a message to the conversational run in `chatRunId`. A session paused awaiting your next message is continued in place (the message is appended and the continuation queued for a worker); a run that is mid-turn is steered. An open SSE stream picks the continuation up live.
+
+  `409` for a run that has already reached a terminal state, `404` for an unknown run.
+
+  Point it at `runId` instead to steer a one-shot run that is still running.
+}

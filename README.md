@@ -272,6 +272,8 @@ verified claims (a signed-JWT dev issuer stands in for per-tenant OIDC).
 | `GET /healthz` · `GET /readyz` · `GET /metrics` | Liveness · readiness (Postgres, Redis and signerd) · Prometheus metrics |
 | `POST /v1/webhooks/{telegram,zalo,email}/…` | Inbound delivery for the conversational surfaces, deduplicated and session-locked |
 
+Every route above except the webhooks is also a request in the [Bruno collection](bruno/README.md): open `bruno/` in [Bruno](https://www.usebruno.com), paste a `make token` token, and click through the API, or run its `smoke` requests from the command line.
+
 `nexusctl` is a thin client over the same API (`NEXUS_HTTP_ADDR` as a URL, `NEXUS_TOKEN`):
 
 ```text

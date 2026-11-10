@@ -1,0 +1,21 @@
+auth {
+  mode: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  # nexus-agent-demo REST API
+
+  Every route except the `ops` probes needs `Authorization: Bearer <token>`. The collection sends the `token` environment variable; the principal (tenant and user) comes only from that token's verified claims, never from a header.
+
+  Mint one with the dev stack running:
+
+      make -s token
+
+  It prints `tenant_id`, `user_id` and `token`. Paste the token into the `token` secret variable of the `local` environment. Each `make token` mints a **new user**, and `GET /v1/sessions` lists only the token's own runs, so keep the token, or mint with `./bin/nexusd --dev token --tenant=acme --user=<uuid>` to stay the same user.
+
+  Requests chain through runtime variables: `Create run` sets `runId`, `Create run (conversational)` sets `chatRunId`, `List pending approvals` sets `approvalId`, and `Fork run` sets `forkRunId`. See README.md in this folder.
+}

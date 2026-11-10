@@ -1,0 +1,38 @@
+meta {
+  name: Request content access grant
+  type: http
+  seq: 1
+  tags: [
+    smoke
+  ]
+}
+
+post {
+  url: {{baseUrl}}/v1/sessions/{{runId}}/content-access-grants
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "grantee_id": "{{granteeId}}",
+    "reason": "support investigation",
+    "ttl_seconds": 300
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.grant_id: isString
+  res.body.grantee_id: eq {{granteeId}}
+}
+
+docs {
+  Grants the user in `granteeId` expiring, audited access to the plaintext of the session in `runId`. This is the only path to a run's content outside the run's own user, and every grant and every read produces its own audit receipt.
+
+  - `grantee_id` (required): a user id. Set the `granteeId` environment variable; to try the flow with one token, use your own `user_id` from `make token`.
+  - `reason` (required)
+  - `ttl_seconds`: how long the grant lasts; omitted or non-positive means one hour
+
+  `400` for a `grantee_id` that is not a uuid or an empty `reason`.
+}

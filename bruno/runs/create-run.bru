@@ -1,0 +1,44 @@
+meta {
+  name: Create run
+  type: http
+  seq: 1
+  tags: [
+    smoke
+  ]
+}
+
+post {
+  url: {{baseUrl}}/v1/runs
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "input": "what is 21 * 2?",
+    "autonomy": "supervised"
+  }
+}
+
+assert {
+  res.status: eq 202
+  res.body.run_id: isString
+}
+
+script:post-response {
+  bru.setVar("runId", res.body.run_id);
+}
+
+docs {
+  Starts a one-task run and answers `202` with `{"run_id": "..."}`. The run id is saved to `runId` for the requests that follow.
+
+  Body:
+
+  - `input` (required)
+  - `autonomy`: `read_only` | `supervised` (default) | `autonomous`
+  - `budget_usd`: per-task hard ceiling as a decimal string, e.g. `"0.05"`. Never a number: money is not a float.
+  - `data_label`, `difficulty`: optional routing hints
+  - `conversational`: see `Create run (conversational)`
+
+  `400` for a missing `input`, an unknown `autonomy`, or a session that is not admitted.
+}

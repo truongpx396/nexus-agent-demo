@@ -27,6 +27,8 @@ Run locally: `make up && make migrate && make seed && make run`, then, in anothe
 
 Web: `cd web && npm ci && npm run dev | lint | build` (oxlint, `tsc -b`).
 
+API client: `bruno/` is a [Bruno](https://www.usebruno.com) collection of every REST route plus the probes (`bruno/README.md` has the setup and the `npx @usebruno/cli … --tags smoke` command). Nothing checks it against the code, so when you add, rename or change a route's request or response, update its `.bru` file in the same change.
+
 **Trap:** a stray Docker container (`nexus-agent-demo-nexusd-1`) can publish :8085 and silently shadow the native `nexusd` — symptoms look like real regressions (404 on a new route, 401 on a fresh token). Check `docker ps` before assuming a code change broke something. A stack reset: `docker compose -f deploy/docker-compose.yml down -v`, regenerate `.dev/*.key`, `make up && make migrate && make seed`.
 
 ## Governing documents

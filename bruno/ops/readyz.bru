@@ -1,0 +1,23 @@
+meta {
+  name: Readiness (readyz)
+  type: http
+  seq: 2
+  tags: [
+    smoke
+  ]
+}
+
+get {
+  url: {{baseUrl}}/readyz
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body: eq ok
+}
+
+docs {
+  Readiness probe, unauthenticated. `200` only when Postgres, Redis and its queue consumer group, and signerd are all reachable; otherwise `503` naming the dependency that is not.
+}

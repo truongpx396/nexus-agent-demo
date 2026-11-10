@@ -1,0 +1,20 @@
+meta {
+  name: Get approval
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/v1/approvals/{{approvalId}}
+  body: none
+  auth: inherit
+}
+
+assert {
+  res.status: eq 200
+  res.body.approval_id: eq {{approvalId}}
+}
+
+docs {
+  One approval with its decision-ready `context`. Needs a pending approval in `approvalId` (see `List pending approvals`). `404` for an unknown id.
+}
