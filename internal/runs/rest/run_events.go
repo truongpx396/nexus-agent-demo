@@ -6,42 +6,24 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/runs"
 	restkit "github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
 )
 
-// eventDTO is what an SSE frame's data carries: enough structure to render
-// a client-side view, plus Body — the decrypted payload for the run's own
-// audience (constitution: "audience-gated run output" is a distinct signal
-// class from content-free telemetry; internal/obs never carries this).
-// EventThought never gets a Body: reasoning is "round-tripped, never shown"
-// (internal/provider's doc comment) even to the run's own audience.
-type eventDTO struct {
-	EventID   string          `json:"event_id"`
-	Seq       int64           `json:"seq"`
-	Type      string          `json:"type"`
-	Actor     string          `json:"actor"`
-	ToolID    *string         `json:"tool_id,omitempty"`
-	PairRef   *string         `json:"pair_ref,omitempty"`
-	ModelID   *string         `json:"model_id,omitempty"`
-	CreatedAt string          `json:"created_at"`
-	Body      json.RawMessage `json:"body,omitempty"`
-}
-
-func (h *Handler) handleEvents(c *gin.Context) {
+// StreamRunEvents is GET /v1/runs/{id}/events. An SSE frame's data is a
+// RunEvent: enough structure to render a client-side view, plus Body — the
+// decrypted payload for the run's own audience (constitution: "audience-gated
+// run output" is a distinct signal class from content-free telemetry;
+// internal/obs never carries this). EventThought never gets a Body: reasoning
+// is "round-tripped, never shown" (internal/provider's doc comment) even to
+// the run's own audience.
+func (h *Handler) StreamRunEvents(c *gin.Context, id RunID) {
 	tenantID, userID, ok := restkit.Principal(c)
 	if !ok {
-		return
-	}
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		restkit.Error(c, "invalid run id", http.StatusBadRequest)
 		return
 	}
 	if _, ok := h.ownedRun(c, tenantID, userID, id); !ok {
@@ -127,22 +109,19 @@ func (h *Handler) handleEvents(c *gin.Context) {
 }
 
 // toEventDTO decrypts one event's payload for display to the run's own
-// audience (the principal check in handleEvents has already established this
+// audience (the principal check in StreamRunEvents has already established this
 // request IS that audience). The opener is per-request, so a key unwrapped for
 // one event is reused for the rest of the same session.
-func toEventDTO(ctx context.Context, opener runs.EventOpener, e eventlog.Event) (eventDTO, error) {
-	dto := eventDTO{
-		EventID:   e.EventID.String(),
+func toEventDTO(ctx context.Context, opener runs.EventOpener, e eventlog.Event) (RunEvent, error) {
+	dto := RunEvent{
+		EventID:   e.EventID,
 		Seq:       e.Seq,
 		Type:      string(e.Type),
 		Actor:     string(e.Actor),
 		ToolID:    e.ToolID,
+		PairRef:   e.PairRef,
 		ModelID:   e.ModelID,
-		CreatedAt: e.CreatedAt.Format(time.RFC3339Nano),
-	}
-	if e.PairRef != nil {
-		ref := e.PairRef.String()
-		dto.PairRef = &ref
+		CreatedAt: e.CreatedAt,
 	}
 	if e.Type == eventlog.EventThought {
 		return dto, nil // never shown, even to the run's own audience
@@ -150,7 +129,7 @@ func toEventDTO(ctx context.Context, opener runs.EventOpener, e eventlog.Event) 
 
 	plaintext, err := opener.Open(ctx, e)
 	if err != nil {
-		return eventDTO{}, err
+		return RunEvent{}, err
 	}
 	dto.Body = json.RawMessage(plaintext)
 	return dto, nil

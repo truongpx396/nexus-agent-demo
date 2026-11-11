@@ -32,7 +32,7 @@ import (
 type Handler struct {
 	// Launcher admits and starts a run (runs.Service in production): the one
 	// definition of session admission, key provisioning and run start that
-	// every surface shares. Mandatory: a nil Launcher fails handleCreateRun
+	// every surface shares. Mandatory: a nil Launcher fails CreateRun
 	// closed (500) rather than panic.
 	Launcher runs.Launcher
 	// Reader is the read side of runs (runs.Reader): run rows and their
@@ -88,7 +88,15 @@ type Handler struct {
 	broker *broker
 }
 
-var _ restkit.Module = (*Handler)(nil)
+var (
+	_ restkit.Module  = (*Handler)(nil)
+	_ ServerInterface = (*Handler)(nil)
+)
+
+// The routes, the request and response models and ServerInterface are generated
+// from the operations tagged "runs" in api/openapi.yaml (api.gen.go).
+//
+//go:generate go tool oapi-codegen -config oapi-codegen.yaml ../../../api/openapi.yaml
 
 // EventBus is the minimal publish surface broker.go/run_create.go need —
 // cmd/nexusd wires a *redis.Client-backed implementation (Redis Pub/Sub, a
@@ -130,8 +138,5 @@ func NewHandler(launcher runs.Launcher, reader runs.Reader) *Handler {
 
 // Routes implements restkit.Module.
 func (h *Handler) Routes(r restkit.Router) {
-	r.POST("/v1/runs", h.handleCreateRun)
-	r.GET("/v1/runs/:id", h.handleGetRun)
-	r.GET("/v1/runs/:id/events", h.handleEvents)
-	r.GET("/v1/sessions", h.handleListSessions)
+	RegisterHandlersWithOptions(r.Authenticated(), h, GinServerOptions{ErrorHandler: restkit.ParamError})
 }

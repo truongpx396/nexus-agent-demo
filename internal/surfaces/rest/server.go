@@ -10,6 +10,11 @@
 // that mount on it: Server.Handler returns a plain http.Handler, so cmd/nexusd,
 // the webhooks and the probes outside the REST API stay on net/http.
 //
+// The routes are described once, in api/openapi.yaml, and oapi-codegen turns the
+// operations a feature owns into that feature's models and its ServerInterface
+// (api.gen.go beside its handlers). A feature's Routes registers the generated
+// interface on Router.Authenticated.
+//
 // A handler is a thin translator only: it decodes the request, calls its
 // feature's use case, and encodes what comes back. It holds no agent control
 // flow of its own (constitution Principle I), and this package never imports the
@@ -27,6 +32,7 @@ package rest
 import (
 	"errors"
 	"net/http"
+	"regexp"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -39,8 +45,8 @@ type Module interface {
 	Routes(r Router)
 }
 
-// Router is what a Module registers its routes on. The only way to add a route is
-// GET or POST, and both authenticate it.
+// Router is what a Module registers its routes on. Every way to add a route
+// (GET, POST, and the router Authenticated returns) authenticates it.
 type Router struct {
 	engine *gin.Engine
 	srv    *Server
@@ -53,6 +59,15 @@ func (r Router) GET(path string, h gin.HandlerFunc) { r.handle(http.MethodGet, p
 // POST registers h for POST path, behind the bearer-token check and the
 // request-body bound.
 func (r Router) POST(path string, h gin.HandlerFunc) { r.handle(http.MethodPost, path, h) }
+
+// Authenticated returns the router a generated server registers on
+// (RegisterHandlersWithOptions in a feature's api.gen.go, built from
+// api/openapi.yaml). It is a Gin route group that carries the same bearer-token
+// check and body bound GET and POST attach, so a route registered on it cannot
+// skip either, and a path no module mounts still gets the engine's own 404.
+func (r Router) Authenticated() gin.IRouter {
+	return r.engine.Group("", r.srv.authenticate(), boundBody)
+}
 
 // handle attaches authentication and the body bound to the one route rather than
 // to the engine (engine.Use), so a path no module mounts still gets the router's
@@ -86,6 +101,13 @@ func DecodeJSON(c *gin.Context, v any) bool {
 	return true
 }
 
+// ParamError is the ErrorHandler of a generated server's options
+// (GinServerOptions.ErrorHandler): a path parameter that does not parse answers
+// err's one-line message with status, in plain text like every other error here.
+func ParamError(c *gin.Context, err error, status int) {
+	Error(c, err.Error(), status)
+}
+
 // Error answers with msg as a plain-text body and status, and ends the handler
 // chain. It is http.Error for a Gin handler: the same Content-Type, nosniff
 // header and trailing newline every client of this API already sees.
@@ -116,6 +138,30 @@ func NewServer(verifier PrincipalVerifier, modules ...Module) *Server {
 // individually wrapped in authenticate (README task 13.1) — an unregistered
 // path still gets the router's own 404 without needing a token first.
 func (s *Server) Handler() http.Handler {
+	return withCORS(s.engine())
+}
+
+// Route is one method and path a Server answers. The path is in OpenAPI's
+// syntax ("/v1/approvals/{id}"), so it compares directly with api/openapi.yaml.
+type Route struct {
+	Method, Path string
+}
+
+var pathParam = regexp.MustCompile(`:([A-Za-z_][A-Za-z0-9_]*)`)
+
+// Routes lists every route the modules mount. It exists so a test can hold
+// api/openapi.yaml to what is actually served, in both directions.
+func (s *Server) Routes() []Route {
+	infos := s.engine().Routes()
+	routes := make([]Route, len(infos))
+	for i, ri := range infos {
+		routes[i] = Route{Method: ri.Method, Path: pathParam.ReplaceAllString(ri.Path, "{$1}")}
+	}
+	return routes
+}
+
+// engine builds the Gin engine with every module's routes mounted.
+func (s *Server) engine() *gin.Engine {
 	// Release mode: debug mode prints every route to stdout, outside the
 	// structured log.
 	gin.SetMode(gin.ReleaseMode)
@@ -132,7 +178,7 @@ func (s *Server) Handler() http.Handler {
 	for _, m := range s.modules {
 		m.Routes(r)
 	}
-	return withCORS(engine)
+	return engine
 }
 
 // withCORS lets a browser-based client (web/, typically served from a

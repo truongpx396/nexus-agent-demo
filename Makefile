@@ -1,4 +1,4 @@
-.PHONY: up down build run signerd token test lint pr-size spec-gate migrate seed eval eval-baseline verify-chain erase dashboard go-live web-build docker-build docker-up docker-down ollama-pull llm-up langfuse-up langfuse-lite-up llm-down agentic-up agentic-down observability-up observability-down tempo-up profiling-up pprof-cpu pprof-heap pprof-goroutine
+.PHONY: up down build run signerd token test lint generate pr-size spec-gate migrate seed eval eval-baseline verify-chain erase dashboard go-live web-build docker-build docker-up docker-down ollama-pull llm-up langfuse-up langfuse-lite-up llm-down agentic-up agentic-down observability-up observability-down tempo-up profiling-up pprof-cpu pprof-heap pprof-goroutine
 
 TENANT ?= acme
 # nexusd's own pprof listener (obs.StartPprofServer, NEXUS_PPROF_ADDR) --
@@ -59,6 +59,9 @@ token: build ## mint a dev bearer token (TENANT=name, default acme) for curl/nex
 
 test: ## unit + property tests (no external services required)
 	go test ./...
+
+generate: ## regenerate every feature's REST models and ServerInterface (internal/*/rest/api.gen.go) from api/openapi.yaml with oapi-codegen, which go.mod pins as a `tool` -- commit the result; CI's build job fails when it is stale
+	go generate ./...
 
 lint: ## static analysis; CI pins golangci-lint in .github/workflows/ci.yml and also passes --build-tags=integration, which this omits (see CLAUDE.md)
 	golangci-lint run ./...

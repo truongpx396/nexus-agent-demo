@@ -2,7 +2,6 @@ package rest
 
 import (
 	"net/http"
-	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -15,20 +14,11 @@ import (
 // previous listing, or the browser's own recentRuns cache).
 const listSessionsLimit = 200
 
-// sessionSummary is GET /v1/sessions' own per-thread shape -- deliberately
-// smaller than getRunResponse (no forked_from/plan/team columns): a sidebar
-// needs just enough to render and sort a session list, not the full row.
-type sessionSummary struct {
-	RunID          string    `json:"run_id"`
-	Status         string    `json:"status"`
-	TerminalReason *string   `json:"terminal_reason,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
-	AutonomyLevel  string    `json:"autonomy_level"`
-}
-
-// handleListSessions is GET /v1/sessions: the calling principal's own root
-// sessions, newest first -- the web UI's session sidebar.
-func (h *Handler) handleListSessions(c *gin.Context) {
+// ListSessions is GET /v1/sessions: the calling principal's own root sessions,
+// newest first -- the web UI's session sidebar. SessionSummary is deliberately
+// smaller than Run (no forked_from/plan/team columns): a sidebar needs just
+// enough to render and sort a session list, not the full row.
+func (h *Handler) ListSessions(c *gin.Context) {
 	tenantID, userID, ok := restkit.Principal(c)
 	if !ok {
 		return
@@ -40,10 +30,10 @@ func (h *Handler) handleListSessions(c *gin.Context) {
 		return
 	}
 
-	views := make([]sessionSummary, len(runList))
+	views := make([]SessionSummary, len(runList))
 	for i, run := range runList {
-		views[i] = sessionSummary{
-			RunID: run.RunID.String(), Status: run.Status, TerminalReason: run.TerminalReason,
+		views[i] = SessionSummary{
+			RunID: run.RunID, Status: run.Status, TerminalReason: run.TerminalReason,
 			CreatedAt: run.CreatedAt, AutonomyLevel: run.AutonomyLevel,
 		}
 	}

@@ -2,6 +2,7 @@ package rest
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -22,6 +23,8 @@ type fakeStore struct {
 	issueErr   error
 	listErr    error
 	historyErr error
+	history    []contentaccess.EventDTO // what History returns; one event when nil
+	noHistory  bool                     // History returns nothing at all
 }
 
 func (f *fakeStore) Issue(_ context.Context, gr contentaccess.Grant) (contentaccess.Grant, error) {
@@ -34,6 +37,12 @@ func (f *fakeStore) RecordRefusal(context.Context, uuid.UUID, uuid.UUID, uuid.UU
 	return nil
 }
 func (f *fakeStore) History(context.Context, uuid.UUID, uuid.UUID) ([]contentaccess.EventDTO, error) {
+	switch {
+	case f.noHistory:
+		return nil, f.historyErr
+	case f.history != nil:
+		return f.history, f.historyErr
+	}
 	return []contentaccess.EventDTO{{Seq: 1}}, f.historyErr
 }
 func (f *fakeStore) RecordAccess(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, int) error {
@@ -79,5 +88,73 @@ func TestRequestGrant_ANonStorageErrorIsNotEchoed(t *testing.T) {
 	rec := resttest.Do(t, serve(&fakeStore{issueErr: errors.New("pq: connection 10.0.0.7 refused")}), http.MethodPost, path, body)
 	if rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "10.0.0.7") {
 		t.Errorf("a failed grant = %d %q, want a 500 that omits the cause", rec.Code, rec.Body)
+	}
+}
+
+// The events come back under the capitalised keys contentaccess.EventDTO has
+// always been encoded with (api/openapi.yaml's GrantedEvent records that), and an
+// empty history is an array a client can iterate, not null.
+func TestReadUnderGrant_RendersEventsUnderTheirDocumentedKeysAndAnEmptyHistoryAsAnArray(t *testing.T) {
+	path := "/v1/sessions/" + uuid.New().String() + "/content-access-grants/read"
+	valid := []contentaccess.Grant{{ExpiresAt: time.Now().Add(time.Hour)}}
+	id, at := uuid.New(), time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+
+	rec := resttest.Do(t, serve(&fakeStore{grants: valid, history: []contentaccess.EventDTO{
+		{EventID: id, Seq: 3, Type: "content", Body: json.RawMessage(`{"text":"hi"}`), CreatedAt: at},
+		{Seq: 4, Type: "thought"},
+	}}), http.MethodGet, path, "")
+	var events []map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &events); err != nil || len(events) != 2 {
+		t.Fatalf("body %q: %v, want two events", rec.Body, err)
+	}
+	for _, key := range []string{"EventID", "Seq", "Type", "Body", "CreatedAt"} {
+		if _, ok := events[0][key]; !ok {
+			t.Errorf("event has no %q key: %q", key, events[0])
+		}
+	}
+	if got := string(events[0]["EventID"]); got != `"`+id.String()+`"` {
+		t.Errorf("EventID = %s, want %q", got, id)
+	}
+	if got := string(events[0]["Body"]); got != `{"text":"hi"}` {
+		t.Errorf("Body = %s, want the decrypted payload as it is", got)
+	}
+	if got := string(events[1]["Body"]); got != "null" {
+		t.Errorf("a missing Body = %s, want null", got)
+	}
+
+	empty := resttest.Do(t, serve(&fakeStore{grants: valid, noHistory: true}), http.MethodGet, path, "")
+	if got := strings.TrimSpace(empty.Body.String()); got != "[]" {
+		t.Errorf("an empty history rendered %q, want []", got)
+	}
+}
+
+func TestRequestGrant_AnswersTheGrantAndRefusesWhatItCannotAct(t *testing.T) {
+	session, grantee := uuid.New(), uuid.New()
+	path := "/v1/sessions/" + session.String() + "/content-access-grants"
+
+	rec := resttest.Do(t, serve(&fakeStore{}), http.MethodPost, path, `{"grantee_id":"`+grantee.String()+`","reason":"support ticket","ttl_seconds":60}`)
+	var grant struct {
+		GrantID   uuid.UUID `json:"grant_id"`
+		SessionID uuid.UUID `json:"session_id"`
+		GranteeID uuid.UUID `json:"grantee_id"`
+		Reason    string    `json:"reason"`
+		ExpiresAt time.Time `json:"expires_at"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &grant); err != nil || rec.Code != http.StatusCreated {
+		t.Fatalf("a grant = %d %q (%v), want 201 and the grant", rec.Code, rec.Body, err)
+	}
+	if grant.SessionID != session || grant.GranteeID != grantee || grant.Reason != "support ticket" || grant.GrantID == uuid.Nil || !grant.ExpiresAt.After(time.Now()) {
+		t.Errorf("grant = %+v, want the session, grantee and reason asked for, a grant id and an expiry ahead", grant)
+	}
+
+	for name, tc := range map[string]struct{ path, body string }{
+		"no grantee_id":                   {path, `{"reason":"x"}`},
+		"a grantee_id that is not a uuid": {path, `{"grantee_id":"nobody","reason":"x"}`},
+		"no reason":                       {path, `{"grantee_id":"` + grantee.String() + `"}`},
+		"a session id that is not a uuid": {"/v1/sessions/nope/content-access-grants", `{"grantee_id":"` + grantee.String() + `","reason":"x"}`},
+	} {
+		if rec := resttest.Do(t, serve(&fakeStore{}), http.MethodPost, tc.path, tc.body); rec.Code != http.StatusBadRequest {
+			t.Errorf("%s = %d (%s), want 400", name, rec.Code, rec.Body)
+		}
 	}
 }

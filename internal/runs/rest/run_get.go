@@ -12,20 +12,10 @@ import (
 	restkit "github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
 )
 
-type getRunResponse struct {
-	RunID          string  `json:"run_id"`
-	Status         string  `json:"status"`
-	TerminalReason *string `json:"terminal_reason,omitempty"`
-}
-
-func (h *Handler) handleGetRun(c *gin.Context) {
+// GetRun is GET /v1/runs/{id}.
+func (h *Handler) GetRun(c *gin.Context, id RunID) {
 	tenantID, userID, ok := restkit.Principal(c)
 	if !ok {
-		return
-	}
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		restkit.Error(c, "invalid run id", http.StatusBadRequest)
 		return
 	}
 
@@ -34,7 +24,7 @@ func (h *Handler) handleGetRun(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, getRunResponse{RunID: run.RunID.String(), Status: run.Status, TerminalReason: run.TerminalReason})
+	c.JSON(http.StatusOK, Run{RunID: run.RunID, Status: run.Status, TerminalReason: run.TerminalReason})
 }
 
 // ownedRun loads run id for the calling principal, writing the error response
