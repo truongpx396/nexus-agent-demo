@@ -28,9 +28,16 @@ type EventLog interface {
 
 	// SetStatus writes the session's status, and its terminal reason once the
 	// run has one. The session row is a projection of the log, never a second
-	// source of truth; the kernel calls this right after appending the event
-	// that justifies the change.
+	// source of truth. Use it for a change no event justifies (a run starting
+	// or resuming); when an event justifies the change, use AppendAndSetStatus.
 	SetStatus(ctx context.Context, tenantID, sessionID uuid.UUID, status string, terminalReason *string) error
+
+	// AppendAndSetStatus is Append and SetStatus in one atomic operation: the
+	// event and the status it justifies commit together or not at all. Done as
+	// two calls, a crash between them leaves a terminal event on a session still
+	// marked running, which orphan recovery then drives again, or a suspension
+	// event on a session still marked running.
+	AppendAndSetStatus(ctx context.Context, e eventlog.Event, status string, terminalReason *string) (eventlog.Event, error)
 
 	// RecordSuspension durably records the approval the run just suspended on
 	// (SuspendRequest), so an approval_requested event is never left without a

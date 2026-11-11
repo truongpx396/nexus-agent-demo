@@ -325,3 +325,35 @@ func TestRun_ALogWithoutAnAutonomyReaderLeavesTheConfiguredLevel(t *testing.T) {
 		t.Fatalf("tool calls ran under %q, want the configured supervised", spy.levels)
 	}
 }
+
+// refusesTerminalWrites fails only the atomic append-and-status, the call a
+// terminal event goes through.
+type refusesTerminalWrites struct {
+	*inmem.Log
+	err error
+}
+
+func (f refusesTerminalWrites) AppendAndSetStatus(context.Context, eventlog.Event, string, *string) (eventlog.Event, error) {
+	return eventlog.Event{}, f.err
+}
+
+// A terminal event is written together with the status it justifies. Written as
+// two calls, a failure between them leaves a finished run marked running, and
+// orphan recovery then drives it again.
+func TestRun_ATerminalEventAndItsStatusAreOneWrite(t *testing.T) {
+	log := inmem.New()
+	errDisk := errors.New("disk full")
+	r := newRigWithLog(log, refusesTerminalWrites{Log: log, err: errDisk}, toolFunc(func(kernel.ToolUseRequest) kernel.ToolResult {
+		return kernel.ToolResult{}
+	}), finalTurn)
+
+	if _, err := r.run(t); !errors.Is(err, errDisk) {
+		t.Fatalf("Run error = %v, want it to wrap the log's error", err)
+	}
+	if n := len(ofType(log.Events(r.sessionID), eventlog.EventTerminal)); n != 0 {
+		t.Fatalf("%d terminal events were recorded though the atomic write failed: the event went in on its own", n)
+	}
+	if st, ok := log.Status(r.sessionID); ok && st.Value == eventlog.SessionStatusCompleted {
+		t.Fatalf("status = %q though the terminal write failed", st.Value)
+	}
+}

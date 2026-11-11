@@ -69,6 +69,18 @@ func (l *Log) Append(_ context.Context, e eventlog.Event) (eventlog.Event, error
 	return e, nil
 }
 
+// AppendAndSetStatus records e and the status together, or neither.
+func (l *Log) AppendAndSetStatus(ctx context.Context, e eventlog.Event, status string, terminalReason *string) (eventlog.Event, error) {
+	out, err := l.Append(ctx, e)
+	if err != nil {
+		return eventlog.Event{}, err
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.status[e.SessionID] = Status{Value: status, TerminalReason: terminalReason}
+	return out, nil
+}
+
 func (l *Log) SetStatus(_ context.Context, _, sessionID uuid.UUID, status string, terminalReason *string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()

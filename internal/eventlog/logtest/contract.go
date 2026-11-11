@@ -183,4 +183,39 @@ func Run(t *testing.T, s Subject) {
 			t.Fatalf("CurrentAutonomy = %q, want read_only", got)
 		}
 	})
+
+	t.Run("AppendAndSetStatus writes the event and the status it justifies together", func(t *testing.T) {
+		tenantID, sessionID := s.NewSession(t)
+		why := "completed"
+		got, err := s.Log.AppendAndSetStatus(ctx, event(tenantID, sessionID, eventlog.EventTerminal, "t"), eventlog.SessionStatusCompleted, &why)
+		if err != nil {
+			t.Fatalf("AppendAndSetStatus: %v", err)
+		}
+		if got.Seq != 1 {
+			t.Errorf("Seq = %d, want 1", got.Seq)
+		}
+		if evs := s.Events(t, tenantID, sessionID); len(evs) != 1 || evs[0].Type != eventlog.EventTerminal {
+			t.Errorf("events = %d, want the one terminal event", len(evs))
+		}
+		if st, reason := s.Status(t, tenantID, sessionID); st != eventlog.SessionStatusCompleted || reason == nil || *reason != why {
+			t.Errorf("status = %q reason=%v, want completed/%q", st, reason, why)
+		}
+	})
+
+	t.Run("AppendAndSetStatus leaves the status alone when the event is refused", func(t *testing.T) {
+		tenantID, sessionID := s.NewSession(t)
+		if err := s.Log.SetStatus(ctx, tenantID, sessionID, eventlog.SessionStatusRunning, nil); err != nil {
+			t.Fatalf("SetStatus: %v", err)
+		}
+		bad := event(tenantID, sessionID, eventlog.EventType("not_an_event_type"), "x")
+		if _, err := s.Log.AppendAndSetStatus(ctx, bad, eventlog.SessionStatusFailed, nil); err == nil {
+			t.Fatal("an event outside the taxonomy was accepted")
+		}
+		if st, _ := s.Status(t, tenantID, sessionID); st != eventlog.SessionStatusRunning {
+			t.Errorf("status = %q after a refused event, want running: the status must not move without its event", st)
+		}
+		if evs := s.Events(t, tenantID, sessionID); len(evs) != 0 {
+			t.Errorf("%d events recorded for a refused append", len(evs))
+		}
+	})
 }

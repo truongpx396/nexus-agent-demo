@@ -121,6 +121,35 @@ type budgetDecisionPayload struct {
 }
 
 func (k *Kernel) appendEvent(ctx context.Context, st *RunState, typ eventlog.EventType, actor eventlog.Actor, toolID *string, pairRef *uuid.UUID, modelID *string, payload any) (eventlog.Event, error) {
+	e, err := sealedEvent(st, typ, actor, toolID, pairRef, modelID, payload)
+	if err != nil {
+		return eventlog.Event{}, err
+	}
+	out, err := k.Log.Append(ctx, e)
+	if err != nil {
+		return eventlog.Event{}, fmt.Errorf("append %s: %w", typ, err)
+	}
+	st.History = append(st.History, out)
+	return out, nil
+}
+
+// appendEventAndStatus appends an event and writes the status it justifies as
+// one atomic operation (EventLog.AppendAndSetStatus).
+func (k *Kernel) appendEventAndStatus(ctx context.Context, st *RunState, typ eventlog.EventType, actor eventlog.Actor, toolID *string, pairRef *uuid.UUID, modelID *string, payload any, status string, terminalReason *string) (eventlog.Event, error) {
+	e, err := sealedEvent(st, typ, actor, toolID, pairRef, modelID, payload)
+	if err != nil {
+		return eventlog.Event{}, err
+	}
+	out, err := k.Log.AppendAndSetStatus(ctx, e, status, terminalReason)
+	if err != nil {
+		return eventlog.Event{}, fmt.Errorf("append %s and set status %s: %w", typ, status, err)
+	}
+	st.History = append(st.History, out)
+	return out, nil
+}
+
+// sealedEvent marshals and seals payload into an event ready to append.
+func sealedEvent(st *RunState, typ eventlog.EventType, actor eventlog.Actor, toolID *string, pairRef *uuid.UUID, modelID *string, payload any) (eventlog.Event, error) {
 	plaintext, err := json.Marshal(payload)
 	if err != nil {
 		return eventlog.Event{}, fmt.Errorf("marshal %s payload: %w", typ, err)
@@ -129,7 +158,7 @@ func (k *Kernel) appendEvent(ctx context.Context, st *RunState, typ eventlog.Eve
 	if err != nil {
 		return eventlog.Event{}, fmt.Errorf("seal %s payload: %w", typ, err)
 	}
-	e := eventlog.Event{
+	return eventlog.Event{
 		EventID:       uuid.New(),
 		SessionID:     st.SessionID,
 		TenantID:      st.TenantID,
@@ -142,13 +171,7 @@ func (k *Kernel) appendEvent(ctx context.Context, st *RunState, typ eventlog.Eve
 		ToolID:        toolID,
 		PairRef:       pairRef,
 		ModelID:       modelID,
-	}
-	out, err := k.Log.Append(ctx, e)
-	if err != nil {
-		return eventlog.Event{}, fmt.Errorf("append %s: %w", typ, err)
-	}
-	st.History = append(st.History, out)
-	return out, nil
+	}, nil
 }
 
 func (k *Kernel) appendContent(ctx context.Context, st *RunState, modelID, text string) (eventlog.Event, error) {
@@ -176,14 +199,6 @@ func (k *Kernel) appendToolResult(ctx context.Context, st *RunState, pairRef uui
 	return k.appendEvent(ctx, st, eventlog.EventToolResult, actor, toolID, &ref, nil, toolResultPayload(result))
 }
 
-func (k *Kernel) appendApprovalRequested(ctx context.Context, st *RunState, toolID *string, reason, askKind string) (eventlog.Event, error) {
-	tid := ""
-	if toolID != nil {
-		tid = *toolID
-	}
-	return k.appendEvent(ctx, st, eventlog.EventApprovalRequested, eventlog.ActorSystem, toolID, nil, nil, approvalRequestedPayload{ToolID: tid, Reason: reason, AskKind: askKind})
-}
-
 // appendBudgetDecision appends the eventlog.EventBudgetDecision every Reserve
 // resolution produces (README task 4.6 — every resolution, including
 // DecisionSkip), regardless of whether the reservation was ultimately
@@ -202,10 +217,6 @@ func (k *Kernel) appendBudgetDecision(ctx context.Context, st *RunState, res cos
 		payload.BudgetID = res.Decision.BudgetID.String()
 	}
 	return k.appendEvent(ctx, st, eventlog.EventBudgetDecision, eventlog.ActorSystem, nil, nil, nil, payload)
-}
-
-func (k *Kernel) appendTerminal(ctx context.Context, st *RunState, payload terminalEventPayload) (eventlog.Event, error) {
-	return k.appendEvent(ctx, st, eventlog.EventTerminal, eventlog.ActorSystem, nil, nil, nil, payload)
 }
 
 func (k *Kernel) updateStatus(ctx context.Context, st *RunState, status string, terminalReason *string) error {
