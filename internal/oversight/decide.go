@@ -3,91 +3,78 @@ package oversight
 import (
 	"context"
 	"encoding/json"
-	"iter"
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
+	"github.com/rs/zerolog/log"
 )
 
-// Outcome summarizes what deciding an approval actually did: the session the
-// decision resumed and how many events the resumed run appended. It does not
-// repeat the run's status, which the run's own read endpoint answers; it is only
-// the synchronous acknowledgment that the resume happened. Err is set, and the
-// counts stop, when the resumed run failed part-way.
+// Decider decides one approval. *Approvals satisfies it.
+type Decider interface {
+	Grant(ctx context.Context, tenantID, approvalID uuid.UUID, decidedBy string) (Approval, error)
+	GrantModified(ctx context.Context, tenantID, approvalID uuid.UUID, decidedBy string, modifiedInput json.RawMessage) (Approval, error)
+	Deny(ctx context.Context, tenantID, approvalID uuid.UUID, decidedBy, reason string) (Approval, error)
+}
+
+// ResumeScheduler hands a decided approval to whatever drives runs, so the run it
+// suspended continues. cmd/nexusd implements it by enqueueing a job: the resumed
+// run then takes the same session lock, publishes to the same event bus, and is
+// retried and recovered the same way as every other run, instead of running
+// inside an HTTP request that holds no lock, publishes nothing and dies with the
+// connection.
+type ResumeScheduler interface {
+	ScheduleResume(ctx context.Context, tenantID, sessionID, approvalID uuid.UUID) error
+}
+
+// Outcome is what deciding an approval did. The decision itself is durable. The
+// resume is scheduled, not waited for: Resuming says whether it was handed to
+// the queue.
 type Outcome struct {
-	SessionID      string
-	EventsAppended int
-	Err            string
+	ApprovalID uuid.UUID
+	SessionID  uuid.UUID
+
+	// Resuming is false when the decision was recorded but the hand-off failed.
+	// That is not lost work: the decision stays on the approval, and recovery
+	// resumes a suspended run whose approval was decided and never resumed.
+	Resuming bool
 }
 
-// ResumeSource is the part of Resumer a decision needs: resuming a suspended run
-// with a grant, a modified grant or a denial, as a stream of the events the run
-// appends. *Resumer satisfies it.
-type ResumeSource interface {
-	Grant(ctx context.Context, tenantID, approvalID uuid.UUID, decidedBy string) iter.Seq2[eventlog.Event, error]
-	GrantModified(ctx context.Context, tenantID, approvalID uuid.UUID, decidedBy string, modifiedInput json.RawMessage) iter.Seq2[eventlog.Event, error]
-	Deny(ctx context.Context, tenantID, approvalID uuid.UUID, decidedBy, reason string) iter.Seq2[eventlog.Event, error]
-}
-
-// SettledNotifier is told when a decision's resume has left a session as far
-// along as it will go (runctl.Control.NotifySettled). The session an approval
-// resumed may also be a delegation's child or a team member, and whoever cares
-// is an observer behind this, so oversight neither names nor imports them.
-type SettledNotifier interface {
-	NotifySettled(ctx context.Context, tenantID, sessionID uuid.UUID)
-}
-
-// Decisions decides approvals: it resumes the suspended run and waits for it to
-// finish or suspend again. Unlike a fresh run, whose caller gets a stream back
-// at once, an approval decision's caller waits for the resumed run, which is the
-// trade the approval endpoints make for a response that says what happened.
+// Decisions decides approvals and schedules the resume of the run each one
+// suspended.
 type Decisions struct {
-	Resume ResumeSource
-	// Settled is optional: nil means nothing is told when a resume settles.
-	Settled SettledNotifier
+	Approvals Decider
+	Resume    ResumeScheduler
 }
 
-// Grant approves an approval as proposed and resumes the run.
-func (d Decisions) Grant(ctx context.Context, tenantID, approvalID uuid.UUID, decidedBy string) Outcome {
-	return d.settle(ctx, tenantID, drain(d.Resume.Grant(ctx, tenantID, approvalID, decidedBy)))
+// Grant approves an approval as proposed.
+func (d Decisions) Grant(ctx context.Context, tenantID, approvalID uuid.UUID, decidedBy string) (Outcome, error) {
+	ap, err := d.Approvals.Grant(ctx, tenantID, approvalID, decidedBy)
+	return d.schedule(ctx, ap, err)
 }
 
-// GrantModified approves an approval with the approver's substitute for the
-// tool input and resumes the run.
-func (d Decisions) GrantModified(ctx context.Context, tenantID, approvalID uuid.UUID, decidedBy string, modifiedInput json.RawMessage) Outcome {
-	return d.settle(ctx, tenantID, drain(d.Resume.GrantModified(ctx, tenantID, approvalID, decidedBy, modifiedInput)))
+// GrantModified approves an approval with the approver's substitute for the tool
+// input, which re-binds the digest the call is executed against.
+func (d Decisions) GrantModified(ctx context.Context, tenantID, approvalID uuid.UUID, decidedBy string, modifiedInput json.RawMessage) (Outcome, error) {
+	ap, err := d.Approvals.GrantModified(ctx, tenantID, approvalID, decidedBy, modifiedInput)
+	return d.schedule(ctx, ap, err)
 }
 
-// Deny refuses an approval and resumes the run with the refusal.
-func (d Decisions) Deny(ctx context.Context, tenantID, approvalID uuid.UUID, decidedBy, reason string) Outcome {
-	return d.settle(ctx, tenantID, drain(d.Resume.Deny(ctx, tenantID, approvalID, decidedBy, reason)))
+// Deny refuses an approval.
+func (d Decisions) Deny(ctx context.Context, tenantID, approvalID uuid.UUID, decidedBy, reason string) (Outcome, error) {
+	ap, err := d.Approvals.Deny(ctx, tenantID, approvalID, decidedBy, reason)
+	return d.schedule(ctx, ap, err)
 }
 
-// settle is the approval path's counterpart of the queue worker's: a session an
-// ordinary tool approval just resumed may also be a delegation's child (README
-// task 8.10) or a team member (task 9.9). A failed resume settles nothing.
-func (d Decisions) settle(ctx context.Context, tenantID uuid.UUID, out Outcome) Outcome {
-	if d.Settled == nil || out.Err != "" || out.SessionID == "" {
-		return out
+func (d Decisions) schedule(ctx context.Context, ap Approval, err error) (Outcome, error) {
+	if err != nil {
+		return Outcome{}, err
 	}
-	if sessionID, err := uuid.Parse(out.SessionID); err == nil {
-		d.Settled.NotifySettled(ctx, tenantID, sessionID)
+	out := Outcome{ApprovalID: ap.ApprovalID, SessionID: ap.SessionID}
+	if serr := d.Resume.ScheduleResume(ctx, ap.TenantID, ap.SessionID, ap.ApprovalID); serr != nil {
+		log.Error().Err(serr).Any("approval_id", ap.ApprovalID).Any("session_id", ap.SessionID).
+			Msg("oversight: approval decided but its resume could not be queued; recovery will pick it up")
+		return out, nil
 	}
-	return out
-}
-
-// drain fully consumes a resume stream into an Outcome, stopping at the first
-// error the run yields.
-func drain(events iter.Seq2[eventlog.Event, error]) Outcome {
-	var out Outcome
-	for ev, err := range events {
-		if err != nil {
-			out.Err = err.Error()
-			return out
-		}
-		out.SessionID = ev.SessionID.String()
-		out.EventsAppended++
-	}
-	return out
+	out.Resuming = true
+	return out, nil
 }

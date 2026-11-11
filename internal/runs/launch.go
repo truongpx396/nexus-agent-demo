@@ -3,6 +3,7 @@ package runs
 import (
 	"context"
 	"fmt"
+	"maps"
 
 	"github.com/google/uuid"
 
@@ -91,6 +92,33 @@ type Service struct {
 	// CatalogManifestDigest is folded into every new session's harness
 	// digest, so a session records exactly which tool catalog it ran under.
 	CatalogManifestDigest []byte
+
+	// ServedModel maps the model the router chose to the model the configured
+	// provider will actually call (provider.ServedModel). The session is
+	// admitted, priced and recorded under the served model, because the cost
+	// ceiling has to be enforced against the model that is on the bill. Nil
+	// leaves the routed model as it is.
+	ServedModel func(routed string) string
+}
+
+// served rewrites a routing decision to the model the run will be served by and
+// keeps what the router chose in the recorded reason, so "why this model" stays
+// answerable from the session row.
+func (s *Service) served(route provider.RouteDecision) provider.RouteDecision {
+	if s.ServedModel == nil {
+		return route
+	}
+	served := s.ServedModel(route.ModelID)
+	if served == "" || served == route.ModelID {
+		return route
+	}
+	reason := maps.Clone(route.Reason)
+	if reason == nil {
+		reason = map[string]string{}
+	}
+	reason["routed_model_id"] = route.ModelID
+	reason["served_by"] = "the provider is bound to " + served
+	return provider.RouteDecision{ModelID: served, Reason: reason}
 }
 
 var _ Launcher = (*Service)(nil)
@@ -108,7 +136,7 @@ func (s *Service) Launch(ctx context.Context, req LaunchRequest) (Launched, erro
 	if req.Autonomy == "" {
 		req.Autonomy = "supervised"
 	}
-	route := provider.Route(req.DataLabel, req.Difficulty)
+	route := s.served(provider.Route(req.DataLabel, req.Difficulty))
 
 	sessionID := uuid.New()
 	digest := harness.Digest(harness.Config{

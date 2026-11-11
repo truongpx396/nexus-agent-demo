@@ -318,7 +318,7 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 
 		switch Classify(toolUses, contentText.String()) {
 		case ClassificationToolCalls:
-			execCtx := ExecContext{TenantID: st.TenantID, SessionID: st.SessionID, AutonomyLevel: cfg.AutonomyLevel}
+			execCtx := ExecContext{TenantID: st.TenantID, SessionID: st.SessionID, AutonomyLevel: k.currentAutonomy(ctx, st, cfg)}
 			// Every tool_result this turn produces before any suspend/
 			// terminate below is grouped into ONE "tool" role Message,
 			// appended once after the loop — the mirror image of

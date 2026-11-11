@@ -116,7 +116,7 @@ func (g *Gate) Reserve(ctx context.Context, req ReserveRequest) (Reservation, er
 
 	if sessBudget != nil {
 		g.mu.Lock()
-		g.sessionState[req.SessionID] = sessionCeilState{budget: sessBudget, spent: tentativeSessionSpent}
+		g.sessionState[req.SessionID] = sessionCeilState{budget: sessBudget, spent: tentativeSessionSpent, used: g.now()}
 		g.mu.Unlock()
 	}
 

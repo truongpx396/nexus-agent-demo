@@ -154,6 +154,16 @@ func TestPostgresEventLog_SatisfiesTheEventLogContract(t *testing.T) {
 			}
 			return sess.Status, sess.TerminalReason
 		},
+		SetAutonomy: func(t *testing.T, tenantID, sessionID uuid.UUID, level string) {
+			t.Helper()
+			err := st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+				_, uerr := tx.Exec(ctx, `UPDATE sessions SET autonomy_level = $2 WHERE session_id = $1`, sessionID, level)
+				return uerr
+			})
+			if err != nil {
+				t.Fatalf("set autonomy: %v", err)
+			}
+		},
 	})
 }
 
@@ -202,6 +212,60 @@ func TestPostgresEventLog_ReceiptFailureRollsBackTheEvent(t *testing.T) {
 	}
 	if got.Seq != 1 {
 		t.Fatalf("Seq = %d after a rolled-back append, want 1 (the failed attempt must not consume a sequence number)", got.Seq)
+	}
+}
+
+// The status projection commits with the event that justifies it. If the receipt
+// cannot be signed the event rolls back, and the status must go with it: a status
+// that moved without its event is a session nothing in the log explains.
+func TestPostgresEventLog_AppendAndSetStatusRollsBackTheStatusWithTheEvent(t *testing.T) {
+	pool, cleanup := setupPostgresAndPgBouncer(t)
+	t.Cleanup(cleanup)
+	st := store.New(pool)
+	ctx := context.Background()
+
+	tenantID, sessionID := uuid.New(), uuid.New()
+	if err := insertTenant(ctx, st, tenantID); err != nil {
+		t.Fatalf("insert tenant: %v", err)
+	}
+	if err := st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+		return store.CreateSession(ctx, tx, eventlog.Session{
+			SessionID: sessionID, SessionKey: sessionID.String(), TenantID: tenantID,
+			SurfaceID: "test", UserID: uuid.New(), AgentVersion: 1,
+			HarnessDigest: []byte("d"), DataLabel: "internal", RouteModelID: "fake", AutonomyLevel: "supervised",
+		})
+	}); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	errReceipt := errors.New("signer unreachable")
+	signer := &flakySigner{fakeSigner: newFakeSigner(t), err: errReceipt}
+	signer.failing.Store(true)
+	log := postgres.New(st, postgres.Hooks{Chain: auditpg.NewChain(signer)})
+
+	why := "completed"
+	e := eventlog.Event{
+		EventID: uuid.New(), SessionID: sessionID, TenantID: tenantID, SchemaVersion: eventlog.CurrentSchemaVersion,
+		Type: eventlog.EventTerminal, Payload: []byte("p"), PayloadDigest: []byte("d"), KeyID: "k", Actor: eventlog.ActorSystem,
+	}
+	if _, err := log.AppendAndSetStatus(ctx, e, eventlog.SessionStatusCompleted, &why); !errors.Is(err, errReceipt) {
+		t.Fatalf("AppendAndSetStatus with an unreachable signer = %v, want %v", err, errReceipt)
+	}
+
+	var sess eventlog.Session
+	var events []eventlog.Event
+	if err := st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+		var gerr error
+		if sess, gerr = store.GetSession(ctx, tx, sessionID); gerr != nil {
+			return gerr
+		}
+		events, gerr = store.ListEvents(ctx, tx, sessionID)
+		return gerr
+	}); err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if sess.Status != eventlog.SessionStatusQueued || sess.TerminalReason != nil || len(events) != 0 {
+		t.Fatalf("after the rollback: status %q reason %v with %d events, want the session untouched", sess.Status, sess.TerminalReason, len(events))
 	}
 }
 

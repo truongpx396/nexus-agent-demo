@@ -212,3 +212,43 @@ func TestLaunch_FailuresStopTheSequenceAtTheFailingStep(t *testing.T) {
 		})
 	}
 }
+
+// The model a run is priced and recorded under has to be the one its provider
+// calls. The router's choice is kept in the reason, so "why this model" is still
+// answerable from the session row.
+func TestLaunch_AdmitsAndStartsTheRunUnderTheModelTheProviderServes(t *testing.T) {
+	r := newRig(t)
+	r.svc.ServedModel = func(string) string { return "claude-sonnet-5" }
+
+	if _, err := r.svc.Launch(context.Background(), runs.LaunchRequest{
+		TenantID: uuid.New(), UserID: uuid.New(), SurfaceID: "rest", Input: "hi",
+		DataLabel: provider.DataLabelPublic, Difficulty: provider.DifficultySimple, // routes to haiku
+	}); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+
+	if r.admit.got.RouteModelID != "claude-sonnet-5" || r.starter.got.ModelID != "claude-sonnet-5" {
+		t.Fatalf("admitted %q and started %q, want both under the served claude-sonnet-5", r.admit.got.RouteModelID, r.starter.got.ModelID)
+	}
+	if got := r.admit.got.RouteReason["routed_model_id"]; got != "claude-haiku-4-5" {
+		t.Fatalf("route reason %v does not keep the router's own choice", r.admit.got.RouteReason)
+	}
+}
+
+func TestLaunch_AProviderWithNoModelOfItsOwnLeavesTheRoutedModel(t *testing.T) {
+	r := newRig(t)
+	r.svc.ServedModel = func(routed string) string { return routed }
+
+	if _, err := r.svc.Launch(context.Background(), runs.LaunchRequest{
+		TenantID: uuid.New(), UserID: uuid.New(), SurfaceID: "rest", Input: "hi",
+		DataLabel: provider.DataLabelPublic, Difficulty: provider.DifficultySimple,
+	}); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if r.admit.got.RouteModelID != "claude-haiku-4-5" {
+		t.Fatalf("admitted %q, want the routed claude-haiku-4-5", r.admit.got.RouteModelID)
+	}
+	if _, ok := r.admit.got.RouteReason["routed_model_id"]; ok {
+		t.Fatalf("a run served as routed carries a rewrite note: %v", r.admit.got.RouteReason)
+	}
+}

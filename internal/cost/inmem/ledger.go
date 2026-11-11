@@ -68,6 +68,18 @@ func (l *Ledger) SeedBudget(tenantID uuid.UUID, scope cost.BudgetScope, scopeRef
 	return b
 }
 
+// SetCeiling changes a budget's ceiling in place, the way an operator raising a
+// tenant's limit does.
+func (l *Ledger) SetCeiling(tenantID, budgetID uuid.UUID, ceiling cost.Money) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for i := range l.budgets[tenantID] {
+		if l.budgets[tenantID][i].ID == budgetID {
+			l.budgets[tenantID][i].Ceiling = ceiling
+		}
+	}
+}
+
 // FailOn makes every later call to the named Ledger method (for example
 // "RecordDecision") return err; a nil err clears it. This is how tests
 // reach the Gate's fail-closed paths.

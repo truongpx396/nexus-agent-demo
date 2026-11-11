@@ -62,7 +62,7 @@ export function ApprovalDetail() {
         }
       }
       const res = await grantApproval(settings, id, modified);
-      setOutcome(`granted — session ${res.session_id}, ${res.events_appended} event(s) appended${res.error ? `, error: ${res.error}` : ""}`);
+      setOutcome(`granted — session ${res.session_id} is ${res.status === "resuming" ? "resuming" : "waiting to resume"}`);
       await refresh();
     } catch (err) {
       setOutcome(null);
@@ -78,7 +78,7 @@ export function ApprovalDetail() {
     setOutcome(null);
     try {
       const res = await denyApproval(settings, id, denyReason);
-      setOutcome(`denied — session ${res.session_id}, ${res.events_appended} event(s) appended${res.error ? `, error: ${res.error}` : ""}`);
+      setOutcome(`denied — session ${res.session_id} is ${res.status === "resuming" ? "ending" : "waiting to resume"}`);
       await refresh();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));

@@ -2,6 +2,7 @@ package cost
 
 import (
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -96,6 +97,17 @@ type GateConfig struct {
 	// over — resolves DecisionDegrade instead of DecisionAllow. Integer
 	// percent, never a float (this package's own ban, money_notfloat_test.go).
 	DegradeThresholdPercent int64
+
+	// CacheTTL is how long a tenant's price book and tenant-scoped budget are
+	// used before the Gate reads them again. Both used to be cached for the life
+	// of the process, so an operator who raised a ceiling or added a price had to
+	// restart every nexusd for it to count. Zero means the default (one minute);
+	// a negative value never refreshes. A refresh that fails keeps serving the
+	// last good value and logs, so a database blip is not a cost refusal.
+	CacheTTL time.Duration
+
+	// Now is the clock, for tests. Nil means time.Now.
+	Now func() time.Time
 }
 
 func (c GateConfig) withDefaults() GateConfig {
@@ -113,6 +125,9 @@ func (c GateConfig) withDefaults() GateConfig {
 	}
 	if c.DegradeThresholdPercent <= 0 {
 		c.DegradeThresholdPercent = 80
+	}
+	if c.CacheTTL == 0 {
+		c.CacheTTL = time.Minute
 	}
 	return c
 }
@@ -145,15 +160,26 @@ type Gate struct {
 	cfg      GateConfig
 
 	mu           sync.Mutex
-	priceBooks   map[uuid.UUID]*PriceBook // by tenant
+	priceBooks   map[uuid.UUID]cached[*PriceBook] // by tenant
 	sessionState map[uuid.UUID]sessionCeilState
-	tenantCache  map[uuid.UUID]*Budget // by tenant; a cached nil means "looked up, none exists"
-	armed        map[uuid.UUID]bool    // budget IDs already Arm()-ed this process
+	tenantCache  map[uuid.UUID]cached[*Budget] // by tenant; a cached nil means "looked up, none exists"
+	armed        map[uuid.UUID]bool            // budget IDs already Arm()-ed this process
 }
 
+// cached is a value read from the ledger and when it was read.
+type cached[T any] struct {
+	value  T
+	loaded time.Time
+}
+
+// sessionCeilState is what the Gate knows of one session's ceiling. spent is
+// rebuilt from the ledger the first time this process sees the session and kept
+// current by Reserve and Reconcile; used is when it was last touched, which is
+// what SweepIdle goes by.
 type sessionCeilState struct {
 	budget *Budget
 	spent  Money
+	used   time.Time
 }
 
 // NewGate builds a Gate over its two ports. counters may be nil for a
@@ -167,9 +193,9 @@ func NewGate(ledger Ledger, counters Counters, meters *Registry, cfg GateConfig)
 		counters:     counters,
 		meters:       meters,
 		cfg:          cfg.withDefaults(),
-		priceBooks:   map[uuid.UUID]*PriceBook{},
+		priceBooks:   map[uuid.UUID]cached[*PriceBook]{},
 		sessionState: map[uuid.UUID]sessionCeilState{},
-		tenantCache:  map[uuid.UUID]*Budget{},
+		tenantCache:  map[uuid.UUID]cached[*Budget]{},
 		armed:        map[uuid.UUID]bool{},
 	}
 }

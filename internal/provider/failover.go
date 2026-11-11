@@ -60,6 +60,25 @@ type failoverProvider struct {
 	providers []Provider
 }
 
+// BoundModel implements ModelBound when every provider in the chain serves the
+// same model, so a run is priced correctly whichever one answers. Chains that
+// mix models report none: a call could be served by any of them.
+func (f *failoverProvider) BoundModel() string {
+	var model string
+	for i, p := range f.providers {
+		b, ok := p.(ModelBound)
+		if !ok {
+			return ""
+		}
+		m := b.BoundModel()
+		if m == "" || (i > 0 && m != model) {
+			return ""
+		}
+		model = m
+	}
+	return model
+}
+
 func (f *failoverProvider) Stream(ctx context.Context, p Prompt, tools []ToolSchema, rc RunContext) (Stream, error) {
 	if len(f.providers) == 0 {
 		return nil, errors.New("failover: no providers configured")

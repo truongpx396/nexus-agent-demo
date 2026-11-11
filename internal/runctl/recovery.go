@@ -2,6 +2,7 @@ package runctl
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -10,11 +11,16 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/queue"
 )
 
-// Orphan is a session the database still says is running.
+// Orphan is a session some durable record says needs a worker and none has:
+// one the database still says is running, or one whose approval was decided
+// and never resumed. Kind and Payload say which job to enqueue; an empty Kind
+// is a resume.
 type Orphan struct {
 	TenantID   uuid.UUID
 	SessionID  uuid.UUID
 	SessionKey string
+	Kind       queue.Kind
+	Payload    json.RawMessage
 }
 
 // Liveness says whether a worker is driving a session right now. The Redis
@@ -43,7 +49,11 @@ func RecoverOrphans(ctx context.Context, pass string, candidates []Orphan, live 
 			skippedLive++
 			continue
 		}
-		if _, err := port.Enqueue(ctx, queue.Job{TenantID: c.TenantID, SessionID: c.SessionID, SessionKey: c.SessionKey, Kind: queue.KindResume}); err != nil {
+		kind := c.Kind
+		if kind == "" {
+			kind = queue.KindResume
+		}
+		if _, err := port.Enqueue(ctx, queue.Job{TenantID: c.TenantID, SessionID: c.SessionID, SessionKey: c.SessionKey, Kind: kind, Payload: c.Payload}); err != nil {
 			log.Error().Err(err).Any("session_id", c.SessionID).Msg("runctl: enqueue resume for orphaned session failed")
 			continue
 		}

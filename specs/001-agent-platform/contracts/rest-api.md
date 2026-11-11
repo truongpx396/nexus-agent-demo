@@ -61,8 +61,10 @@ Optional-port routes are mounted only when their port is non-nil (`Oversight`, `
 ### `ApprovalView`
 
 `{approval_id, session_id, tool_id, ask_kind, status, context, expires_at, created_at}` — `context` is the decision-ready package
-(recipient/subject/attachment **digests**, effect class — never a bare identifier). Grant/deny/resume return
-`{session_id, events_appended, error?}`.
+(recipient/subject/attachment **digests**, effect class — never a bare identifier). Grant and deny record the decision, queue
+the resume of the suspended run and answer `202 {approval_id, session_id, status}`, where `status` is `resuming` once the run is
+queued and `decided` if the hand-off failed (recovery resumes it); `404` for an approval that is not there and `409` for one no
+longer pending. The run's events arrive on the run's SSE stream like any other run's.
 
 ## 3. SSE: `GET /v1/runs/{id}/events`
 

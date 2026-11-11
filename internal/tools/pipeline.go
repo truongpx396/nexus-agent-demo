@@ -180,11 +180,28 @@ func NewPipeline(cfg PipelineConfig) *Pipeline {
 	return &Pipeline{cfg: cfg, sessions: map[uuid.UUID]*sessionState{}}
 }
 
+// tighten moves the session's autonomy toward read_only when level is tighter
+// than what is pinned, and does nothing otherwise. An empty or unrecognised
+// level is ignored, so a read-only caller such as TaintStateFor cannot tighten a
+// session by accident, and no caller can widen one: autonomy only ratchets
+// tighter (internal/permissions.Autonomy). Call it with taintMu held, the lock
+// the permission chain resolves under.
+func (s *sessionState) tighten(level string) {
+	if level == "" {
+		return
+	}
+	target, err := permissions.ParseAutonomyLevel(level)
+	if err != nil || target >= s.autonomy.Level() {
+		return
+	}
+	_ = s.autonomy.Tighten(target) // cannot fail: target is tighter
+}
+
 // stateFor returns (creating on first use) the per-session state for
 // sessionID, pinning autonomy from autonomyLevel the first time this
-// session is seen. Every subsequent call ignores autonomyLevel — Pin is a
-// one-time thing (internal/permissions.Autonomy's own doc comment); a
-// session's autonomy only ever moves via Tighten from here on.
+// session is seen. Pin is a one-time thing (internal/permissions.Autonomy's own
+// doc comment): a later call never widens it, and tightening goes through
+// sessionState.tighten, which the callers that hold the session's lock use.
 func (p *Pipeline) stateFor(sessionID uuid.UUID, autonomyLevel string) *sessionState {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -266,6 +283,7 @@ func (p *Pipeline) SeedTaint(sessionID uuid.UUID, autonomyLevel string, engaged 
 	state := p.stateFor(sessionID, autonomyLevel)
 	state.taintMu.Lock()
 	defer state.taintMu.Unlock()
+	state.tighten(autonomyLevel)
 	for i, e := range engaged {
 		if e {
 			state.taintState.Engaged[i] = true

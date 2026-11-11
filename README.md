@@ -267,7 +267,7 @@ verified claims (a signed-JWT dev issuer stands in for per-tenant OIDC).
 | `GET /v1/sessions` | The caller's runs |
 | `POST /v1/runs/{id}/cancel` · `/steer` · `/autonomy` · `/fork` | Run control. Autonomy only ever tightens; a fork replays to a sequence number and disables external effects |
 | `GET /v1/approvals` · `GET /v1/approvals/{id}` | Pending approvals with their decision-ready context |
-| `POST /v1/approvals/{id}/grant` · `/deny` | Decide an approval; a grant may carry a modified input, which re-binds the digest |
+| `POST /v1/approvals/{id}/grant` · `/deny` | Decide an approval; a grant may carry a modified input, which re-binds the digest. `202` once the decision is recorded: the run then resumes on a worker, and its events arrive on the run's SSE stream |
 | `POST /v1/sessions/{id}/content-access-grants` · `GET …/content-access-grants/read` | Audited, expiring access to plaintext outside the run's own audience |
 | `GET /healthz` · `GET /readyz` · `GET /metrics` | Liveness · readiness (Postgres, Redis and signerd) · Prometheus metrics |
 | `POST /v1/webhooks/{telegram,zalo,email}/…` | Inbound delivery for the conversational surfaces, deduplicated and session-locked |

@@ -37,19 +37,20 @@ type fakeDecisions struct {
 	modified   json.RawMessage
 	reason     string
 	outcome    oversight.Outcome
+	err        error
 }
 
-func (f *fakeDecisions) Grant(_ context.Context, _, approvalID uuid.UUID, decidedBy string) oversight.Outcome {
+func (f *fakeDecisions) Grant(_ context.Context, _, approvalID uuid.UUID, decidedBy string) (oversight.Outcome, error) {
 	f.called, f.approvalID, f.decidedBy = "grant", approvalID, decidedBy
-	return f.outcome
+	return f.outcome, f.err
 }
-func (f *fakeDecisions) GrantModified(_ context.Context, _, approvalID uuid.UUID, decidedBy string, modified json.RawMessage) oversight.Outcome {
+func (f *fakeDecisions) GrantModified(_ context.Context, _, approvalID uuid.UUID, decidedBy string, modified json.RawMessage) (oversight.Outcome, error) {
 	f.called, f.approvalID, f.decidedBy, f.modified = "grant_modified", approvalID, decidedBy, modified
-	return f.outcome
+	return f.outcome, f.err
 }
-func (f *fakeDecisions) Deny(_ context.Context, _, approvalID uuid.UUID, decidedBy, reason string) oversight.Outcome {
+func (f *fakeDecisions) Deny(_ context.Context, _, approvalID uuid.UUID, decidedBy, reason string) (oversight.Outcome, error) {
 	f.called, f.approvalID, f.decidedBy, f.reason = "deny", approvalID, decidedBy, reason
-	return f.outcome
+	return f.outcome, f.err
 }
 
 func serve(userID uuid.UUID, a ApprovalSource, d DecisionSource) http.Handler {
@@ -112,19 +113,19 @@ func TestGetApproval_DistinguishesABadIDFromAMissingApproval(t *testing.T) {
 }
 
 func TestGrantApproval_DecidesAsTheCallerAndOnlyModifiesWhenGivenAnInput(t *testing.T) {
-	user, id := uuid.New(), uuid.New()
+	user, id, session := uuid.New(), uuid.New(), uuid.New()
 
-	plain := &fakeDecisions{outcome: oversight.Outcome{SessionID: "s1", EventsAppended: 4}}
+	plain := &fakeDecisions{outcome: oversight.Outcome{ApprovalID: id, SessionID: session, Resuming: true}}
 	rec := resttest.Do(t, serve(user, fakeApprovals{}, plain), http.MethodPost, "/v1/approvals/"+id.String()+"/grant", "")
-	if rec.Code != http.StatusOK || plain.called != "grant" || plain.approvalID != id {
+	if rec.Code != http.StatusAccepted || plain.called != "grant" || plain.approvalID != id {
 		t.Fatalf("plain grant: status %d, decision %q for %s", rec.Code, plain.called, plain.approvalID)
 	}
 	if plain.decidedBy != user.String() {
 		t.Errorf("decidedBy = %q, want the authenticated user %q: a decision is attributed to whoever the token says, never to the request body", plain.decidedBy, user)
 	}
-	var out ResumeOutcome
-	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || out.SessionID != "s1" || out.EventsAppended != 4 {
-		t.Errorf("response %q = %+v, want the decision's outcome", rec.Body, out)
+	var out DecisionResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || out.SessionID != session.String() || out.ApprovalID != id.String() || out.Status != StatusResuming {
+		t.Errorf("response %q = %+v, want the approval and session named and the run resuming", rec.Body, out)
 	}
 
 	modified := &fakeDecisions{}
@@ -143,7 +144,38 @@ func TestDenyApproval_CarriesTheReason(t *testing.T) {
 	user, id := uuid.New(), uuid.New()
 	d := &fakeDecisions{}
 	rec := resttest.Do(t, serve(user, fakeApprovals{}, d), http.MethodPost, "/v1/approvals/"+id.String()+"/deny", `{"reason":"wrong recipient"}`)
-	if rec.Code != http.StatusOK || d.called != "deny" || d.reason != "wrong recipient" || d.decidedBy != user.String() {
+	if rec.Code != http.StatusAccepted || d.called != "deny" || d.reason != "wrong recipient" || d.decidedBy != user.String() {
 		t.Errorf("deny: status %d, decision %q reason %q by %q", rec.Code, d.called, d.reason, d.decidedBy)
+	}
+}
+
+// A decision whose hand-off to the queue failed is still a recorded decision, so
+// it is answered 202, and the status says the run is not yet resuming.
+func TestDecision_ADecisionWhoseHandOffFailedIsStillAccepted(t *testing.T) {
+	id := uuid.New()
+	d := &fakeDecisions{outcome: oversight.Outcome{ApprovalID: id, SessionID: uuid.New(), Resuming: false}}
+	rec := resttest.Do(t, serve(uuid.New(), fakeApprovals{}, d), http.MethodPost, "/v1/approvals/"+id.String()+"/grant", "")
+	var out DecisionResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || rec.Code != http.StatusAccepted || out.Status != StatusDecided {
+		t.Fatalf("status %d body %q, want 202 and status %q", rec.Code, rec.Body, StatusDecided)
+	}
+}
+
+func TestDecision_TellsAMissingApprovalFromOneAlreadyDecidedFromAFailure(t *testing.T) {
+	id := uuid.New()
+	post := func(err error) (int, string) {
+		d := &fakeDecisions{err: err}
+		rec := resttest.Do(t, serve(uuid.New(), fakeApprovals{}, d), http.MethodPost, "/v1/approvals/"+id.String()+"/grant", "")
+		return rec.Code, rec.Body.String()
+	}
+	if code, _ := post(oversight.ErrNotFound); code != http.StatusNotFound {
+		t.Errorf("a missing approval = %d, want 404", code)
+	}
+	if code, body := post(oversight.ApprovalNotPendingError{ApprovalID: id, Status: oversight.ApprovalGranted}); code != http.StatusConflict || !strings.Contains(body, "granted") {
+		t.Errorf("an approval already decided = %d %q, want 409 saying what it is", code, body)
+	}
+	code, body := post(errors.New("dial tcp 10.0.0.7:5432: connection refused"))
+	if code != http.StatusInternalServerError || strings.Contains(body, "10.0.0.7") {
+		t.Errorf("an infrastructure failure = %d %q, want an opaque 500", code, body)
 	}
 }

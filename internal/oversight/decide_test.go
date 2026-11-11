@@ -4,117 +4,113 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"iter"
 	"testing"
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
 )
 
-// fakeResume yields a fixed stream for whichever decision is asked and records
-// which one it was.
-type fakeResume struct {
-	events []eventlog.Event
-	err    error // yielded after events
-	called string
+// fakeDecider returns a fixed approval for whichever decision is taken and
+// records which one it was.
+type fakeDecider struct {
+	approval oversight.Approval
+	err      error
+	called   string
+	modified json.RawMessage
+	reason   string
 }
 
-func (f *fakeResume) stream() iter.Seq2[eventlog.Event, error] {
-	return func(yield func(eventlog.Event, error) bool) {
-		for _, e := range f.events {
-			if !yield(e, nil) {
-				return
-			}
-		}
-		if f.err != nil {
-			yield(eventlog.Event{}, f.err)
-		}
-	}
-}
-
-func (f *fakeResume) Grant(context.Context, uuid.UUID, uuid.UUID, string) iter.Seq2[eventlog.Event, error] {
+func (f *fakeDecider) Grant(context.Context, uuid.UUID, uuid.UUID, string) (oversight.Approval, error) {
 	f.called = "grant"
-	return f.stream()
-}
-func (f *fakeResume) GrantModified(context.Context, uuid.UUID, uuid.UUID, string, json.RawMessage) iter.Seq2[eventlog.Event, error] {
-	f.called = "grant_modified"
-	return f.stream()
-}
-func (f *fakeResume) Deny(context.Context, uuid.UUID, uuid.UUID, string, string) iter.Seq2[eventlog.Event, error] {
-	f.called = "deny"
-	return f.stream()
+	return f.approval, f.err
 }
 
-type fakeSettled struct{ told []uuid.UUID }
-
-func (f *fakeSettled) NotifySettled(_ context.Context, _, sessionID uuid.UUID) {
-	f.told = append(f.told, sessionID)
+func (f *fakeDecider) GrantModified(_ context.Context, _, _ uuid.UUID, _ string, modified json.RawMessage) (oversight.Approval, error) {
+	f.called, f.modified = "grant_modified", modified
+	return f.approval, f.err
 }
 
-func eventsFor(session uuid.UUID, n int) []eventlog.Event {
-	out := make([]eventlog.Event, n)
-	for i := range out {
-		out[i] = eventlog.Event{SessionID: session}
-	}
-	return out
+func (f *fakeDecider) Deny(_ context.Context, _, _ uuid.UUID, _, reason string) (oversight.Approval, error) {
+	f.called, f.reason = "deny", reason
+	return f.approval, f.err
 }
 
-func TestDecisions_EachDecisionResumesWithItsOwnKindAndCountsTheEvents(t *testing.T) {
-	session := uuid.New()
-	ctx, tenantID, approvalID := context.Background(), uuid.New(), uuid.New()
+// fakeScheduler records the resumes it was asked to schedule.
+type fakeScheduler struct {
+	err  error
+	got  []uuid.UUID // the session of each scheduled resume
+	appr []uuid.UUID
+}
 
+func (f *fakeScheduler) ScheduleResume(_ context.Context, _, sessionID, approvalID uuid.UUID) error {
+	f.got = append(f.got, sessionID)
+	f.appr = append(f.appr, approvalID)
+	return f.err
+}
+
+func decided(tenant uuid.UUID) oversight.Approval {
+	return oversight.Approval{ApprovalID: uuid.New(), TenantID: tenant, SessionID: uuid.New()}
+}
+
+func TestDecisions_EachDecisionIsRecordedThenItsResumeIsScheduled(t *testing.T) {
+	ctx, tenant := context.Background(), uuid.New()
 	for _, tc := range []struct {
 		want string
-		run  func(d oversight.Decisions) oversight.Outcome
+		run  func(d oversight.Decisions) (oversight.Outcome, error)
 	}{
-		{"grant", func(d oversight.Decisions) oversight.Outcome { return d.Grant(ctx, tenantID, approvalID, "alice") }},
-		{"grant_modified", func(d oversight.Decisions) oversight.Outcome {
-			return d.GrantModified(ctx, tenantID, approvalID, "alice", json.RawMessage(`{"to":"bob"}`))
+		{"grant", func(d oversight.Decisions) (oversight.Outcome, error) {
+			return d.Grant(ctx, tenant, uuid.New(), "alice")
 		}},
-		{"deny", func(d oversight.Decisions) oversight.Outcome { return d.Deny(ctx, tenantID, approvalID, "alice", "no") }},
+		{"grant_modified", func(d oversight.Decisions) (oversight.Outcome, error) {
+			return d.GrantModified(ctx, tenant, uuid.New(), "alice", json.RawMessage(`{"to":"bob"}`))
+		}},
+		{"deny", func(d oversight.Decisions) (oversight.Outcome, error) {
+			return d.Deny(ctx, tenant, uuid.New(), "alice", "no")
+		}},
 	} {
-		src := &fakeResume{events: eventsFor(session, 3)}
-		out := tc.run(oversight.Decisions{Resume: src})
-		if src.called != tc.want {
-			t.Errorf("%s: resumed with %q", tc.want, src.called)
+		ap := decided(tenant)
+		decider, sched := &fakeDecider{approval: ap}, &fakeScheduler{}
+		out, err := tc.run(oversight.Decisions{Approvals: decider, Resume: sched})
+		if err != nil {
+			t.Fatalf("%s: %v", tc.want, err)
 		}
-		if out.SessionID != session.String() || out.EventsAppended != 3 || out.Err != "" {
-			t.Errorf("%s: outcome = %+v, want session %s with 3 events and no error", tc.want, out, session)
+		if decider.called != tc.want {
+			t.Errorf("%s: decided with %q", tc.want, decider.called)
+		}
+		if len(sched.got) != 1 || sched.got[0] != ap.SessionID || sched.appr[0] != ap.ApprovalID {
+			t.Errorf("%s: scheduled %v for approvals %v, want the one resume of the approval's own session", tc.want, sched.got, sched.appr)
+		}
+		if !out.Resuming || out.SessionID != ap.SessionID || out.ApprovalID != ap.ApprovalID {
+			t.Errorf("%s: outcome = %+v, want it to name the approval and its session and say it is resuming", tc.want, out)
 		}
 	}
 }
 
-func TestDecisions_TellsTheObserversOnlyWhenTheResumeSucceeded(t *testing.T) {
-	session := uuid.New()
-	ctx, tenantID, approvalID := context.Background(), uuid.New(), uuid.New()
-
-	ok := &fakeSettled{}
-	oversight.Decisions{Resume: &fakeResume{events: eventsFor(session, 2)}, Settled: ok}.Grant(ctx, tenantID, approvalID, "alice")
-	if len(ok.told) != 1 || ok.told[0] != session {
-		t.Errorf("a clean resume told %v, want exactly the resumed session", ok.told)
+// A decision that was not recorded must not wake the run: an approval already
+// decided, or one that is not there, resumes nothing.
+func TestDecisions_ARefusedDecisionSchedulesNothing(t *testing.T) {
+	notPending := oversight.ApprovalNotPendingError{ApprovalID: uuid.New(), Status: oversight.ApprovalGranted}
+	sched := &fakeScheduler{}
+	_, err := oversight.Decisions{Approvals: &fakeDecider{err: notPending}, Resume: sched}.Grant(context.Background(), uuid.New(), uuid.New(), "alice")
+	if !errors.Is(err, notPending) {
+		t.Fatalf("err = %v, want the refusal passed through", err)
 	}
-
-	failed := &fakeSettled{}
-	out := oversight.Decisions{Resume: &fakeResume{events: eventsFor(session, 1), err: errors.New("provider down")}, Settled: failed}.Grant(ctx, tenantID, approvalID, "alice")
-	if out.Err != "provider down" {
-		t.Errorf("Err = %q, want the run's own error", out.Err)
-	}
-	if len(failed.told) != 0 {
-		t.Errorf("a failed resume told %v: it settled nothing", failed.told)
-	}
-
-	empty := &fakeSettled{}
-	oversight.Decisions{Resume: &fakeResume{}, Settled: empty}.Deny(ctx, tenantID, approvalID, "alice", "no")
-	if len(empty.told) != 0 {
-		t.Errorf("a resume that produced no events told %v: there is no session to name", empty.told)
+	if len(sched.got) != 0 {
+		t.Fatalf("scheduled %v after a refused decision", sched.got)
 	}
 }
 
-func TestDecisions_NilSettledIsValid(t *testing.T) {
-	out := oversight.Decisions{Resume: &fakeResume{events: eventsFor(uuid.New(), 1)}}.Grant(context.Background(), uuid.New(), uuid.New(), "alice")
-	if out.EventsAppended != 1 {
-		t.Errorf("outcome = %+v, want the one event counted", out)
+// The decision is durable once it commits. If the hand-off to the queue fails the
+// caller still gets an answer, and recovery resumes the run.
+func TestDecisions_AFailedHandOffKeepsTheDecisionAndSaysTheRunIsNotResuming(t *testing.T) {
+	ap := decided(uuid.New())
+	out, err := oversight.Decisions{Approvals: &fakeDecider{approval: ap}, Resume: &fakeScheduler{err: errors.New("redis down")}}.
+		Grant(context.Background(), ap.TenantID, ap.ApprovalID, "alice")
+	if err != nil {
+		t.Fatalf("a recorded decision was reported as failed: %v", err)
+	}
+	if out.Resuming || out.SessionID != ap.SessionID {
+		t.Fatalf("outcome = %+v, want the session named and Resuming false", out)
 	}
 }

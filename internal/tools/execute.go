@@ -117,6 +117,7 @@ func (p *Pipeline) Execute(ctx context.Context, inv Invocation) ExecuteResult {
 	// session-key serial lock Phase 6 (README task 6.2) ships for real.
 	state := p.stateFor(inv.SessionID, inv.AutonomyLevel)
 	state.taintMu.Lock()
+	state.tighten(inv.AutonomyLevel) // a level tightened since this session was first seen
 	before := state.taintState.Engaged
 	req := permissions.Request{
 		ToolID:      ref.String(),

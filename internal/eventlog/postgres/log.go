@@ -56,7 +56,10 @@ type Log struct {
 	hooks Hooks
 }
 
-var _ kernel.EventLog = (*Log)(nil)
+var (
+	_ kernel.EventLog       = (*Log)(nil)
+	_ kernel.AutonomyReader = (*Log)(nil)
+)
 
 // New returns a Log over st with the given collaborators.
 func New(st *store.Store, hooks Hooks) *Log {
@@ -69,15 +72,40 @@ func (l *Log) Append(ctx context.Context, e eventlog.Event) (eventlog.Event, err
 	var out eventlog.Event
 	err := l.store.InTenantTx(ctx, e.TenantID, func(ctx context.Context, tx pgx.Tx) error {
 		var aerr error
-		out, aerr = store.Append(ctx, tx, e)
-		if aerr != nil {
+		out, aerr = l.appendIn(ctx, tx, e)
+		return aerr
+	})
+	if err != nil {
+		return eventlog.Event{}, err
+	}
+	return out, nil
+}
+
+// appendIn inserts e and, when a chain is wired, extends the audit chain for it,
+// inside tx.
+func (l *Log) appendIn(ctx context.Context, tx pgx.Tx, e eventlog.Event) (eventlog.Event, error) {
+	out, err := store.Append(ctx, tx, e)
+	if err != nil {
+		return eventlog.Event{}, err
+	}
+	if l.hooks.Chain != nil {
+		if _, cerr := l.hooks.Chain.Append(ctx, tx, out.TenantID, out.SessionID, out.Seq, out.EventID, string(out.Type), out.PayloadDigest); cerr != nil {
+			return eventlog.Event{}, cerr
+		}
+	}
+	return out, nil
+}
+
+// AppendAndSetStatus appends e, extends its audit receipt and writes the status
+// projection in one transaction.
+func (l *Log) AppendAndSetStatus(ctx context.Context, e eventlog.Event, status string, terminalReason *string) (eventlog.Event, error) {
+	var out eventlog.Event
+	err := l.store.InTenantTx(ctx, e.TenantID, func(ctx context.Context, tx pgx.Tx) error {
+		var aerr error
+		if out, aerr = l.appendIn(ctx, tx, e); aerr != nil {
 			return aerr
 		}
-		if l.hooks.Chain != nil {
-			_, cerr := l.hooks.Chain.Append(ctx, tx, out.TenantID, out.SessionID, out.Seq, out.EventID, string(out.Type), out.PayloadDigest)
-			return cerr
-		}
-		return nil
+		return store.UpdateSessionStatus(ctx, tx, e.SessionID, status, terminalReason)
 	})
 	if err != nil {
 		return eventlog.Event{}, err
@@ -90,6 +118,18 @@ func (l *Log) SetStatus(ctx context.Context, tenantID, sessionID uuid.UUID, stat
 	return l.store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		return store.UpdateSessionStatus(ctx, tx, sessionID, status, terminalReason)
 	})
+}
+
+// CurrentAutonomy reads the session's autonomy level, so a tightening made while
+// a run is in flight reaches its next tool call.
+func (l *Log) CurrentAutonomy(ctx context.Context, tenantID, sessionID uuid.UUID) (string, error) {
+	var level string
+	err := l.store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+		var gerr error
+		level, gerr = store.SessionAutonomy(ctx, tx, sessionID)
+		return gerr
+	})
+	return level, err
 }
 
 // RecordSuspension runs the approval hook, or does nothing when none is wired.

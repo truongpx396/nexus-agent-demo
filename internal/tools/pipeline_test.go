@@ -233,6 +233,36 @@ func TestPipeline_AutonomyDeniesMutatingAtReadOnly(t *testing.T) {
 	}
 }
 
+// A session's autonomy is pinned when the pipeline first sees it and only ever
+// tightens. A level an operator tightened mid-run reaches the next call, a looser
+// level from a stale caller changes nothing, and a caller with no opinion (the
+// empty level) cannot tighten a session by accident.
+func TestPipeline_ALevelTightenedAfterTheFirstCallTakesEffectAndNothingWidensIt(t *testing.T) {
+	tool := newFakeTool("platform", "shell", EffectClassMutating)
+	h := newHarness(t, tool)
+	p := h.pipeline()
+	inv := h.invocation("autonomous", `{"cmd":"echo hi"}`)
+
+	if got := p.Execute(context.Background(), inv); got.IsError {
+		t.Fatalf("an autonomous session's first call = %+v, want it to run", got)
+	}
+
+	inv.AutonomyLevel = "read_only"
+	if got := p.Execute(context.Background(), inv); !got.PermissionDenied {
+		t.Fatalf("after tightening to read_only, Execute() = %+v, want PermissionDenied", got)
+	}
+
+	for _, stale := range []string{"autonomous", "supervised", ""} {
+		inv.AutonomyLevel = stale
+		if got := p.Execute(context.Background(), inv); !got.PermissionDenied {
+			t.Fatalf("a call carrying level %q widened a read_only session: %+v", stale, got)
+		}
+	}
+	if tool.callCount != 1 {
+		t.Fatalf("tool called %d times, want exactly the one call made before the tightening", tool.callCount)
+	}
+}
+
 // TestPipeline_SupervisedAsksForMutating is the Phase 3 "governed agent"
 // demo behavior: a mutating effect at supervised autonomy suspends on an
 // approval (README.md §5's Phase 3 demo line), surfaced here as
@@ -620,11 +650,18 @@ func TestPipeline_SeedTaint_CorrectlyPinsAutonomyForANewSession(t *testing.T) {
 	// exactly the resume-after-restart case this method exists for.
 	p.SeedTaint(sessionID, "autonomous", [3]bool{})
 
-	inv := h.invocation("read_only", `{}`) // deliberately wrong: stateFor's own "Pin is a one-time thing" contract means this must be ignored, since SeedTaint already pinned it
+	inv := h.invocation("autonomous", `{}`)
 	inv.SessionID = sessionID
 	got := p.Execute(context.Background(), inv)
 	if got.PermissionDenied {
 		t.Fatalf("Execute() = %+v, want NOT denied -- SeedTaint should have pinned autonomous, not left this session to fail closed to read_only's own deny-every-non-read-only-effect behavior", got)
+	}
+
+	// A caller with no opinion (the empty level FoldTaint and TaintStateFor pass)
+	// must not tighten the session either: only a real, tighter level does.
+	inv.AutonomyLevel = ""
+	if got := p.Execute(context.Background(), inv); got.PermissionDenied {
+		t.Fatalf("an empty autonomy level tightened a pinned session: %+v", got)
 	}
 }
 

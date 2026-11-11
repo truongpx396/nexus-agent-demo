@@ -312,3 +312,34 @@ func TestRedisStreams_UnparseableEntryIsDeadLetteredNotRetriedForever(t *testing
 		t.Fatalf("lease after the malformed entry: job=%v ok=%v err=%v, want job %s", got.JobID, ok, err, good.JobID)
 	}
 }
+
+// A job's payload has to survive the stream, and a retry: an approval job is
+// only the approval's id, and a worker that leases it with the payload gone cannot
+// know which approval to resume.
+func TestRedisStreams_APayloadSurvivesLeaseAndARetry(t *testing.T) {
+	q, _ := newTestQueue(t)
+	ctx := context.Background()
+
+	job := newTestJob()
+	job.Kind = queue.KindApproval
+	job.Payload = []byte(`{"approval_id":"7d0c1f0e-1c1a-4e0a-9d1c-0f6f6f6f6f6f"}`)
+	if _, err := q.Enqueue(ctx, job); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+
+	leased, ok := leaseWithin(t, q, "w1", 3*time.Second)
+	if !ok {
+		t.Fatal("nothing to lease")
+	}
+	if leased.Kind != queue.KindApproval || string(leased.Payload) != string(job.Payload) {
+		t.Fatalf("leased %q payload %q, want the approval job exactly as enqueued", leased.Kind, leased.Payload)
+	}
+
+	if err := q.Fail(ctx, leased.JobID, "boom", false, time.Now()); err != nil {
+		t.Fatalf("Fail: %v", err)
+	}
+	again, ok := leaseWithin(t, q, "w2", 3*time.Second)
+	if !ok || string(again.Payload) != string(job.Payload) {
+		t.Fatalf("after a retry: leased=%v payload %q, want the payload kept", ok, again.Payload)
+	}
+}

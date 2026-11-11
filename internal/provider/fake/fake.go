@@ -103,7 +103,14 @@ func New(scripts ...Script) *Provider {
 	return &Provider{scripts: scripts}
 }
 
-func (p *Provider) Stream(_ context.Context, _ provider.Prompt, _ []provider.ToolSchema, _ provider.RunContext) (provider.Stream, error) {
+// Stream first checks the prompt the way a hosted model API would, so a
+// transcript with an unpaired or duplicated tool result fails here, in a
+// deterministic test, instead of as a 400 from a real provider. The check runs
+// before a script is consumed, so a rejected prompt does not advance the replay.
+func (p *Provider) Stream(_ context.Context, pr provider.Prompt, _ []provider.ToolSchema, _ provider.RunContext) (provider.Stream, error) {
+	if err := provider.ValidateTranscript(pr.Messages); err != nil {
+		return nil, fmt.Errorf("fake provider: %w", err)
+	}
 	p.mu.Lock()
 	if p.idx >= len(p.scripts) {
 		p.mu.Unlock()

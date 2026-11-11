@@ -363,3 +363,81 @@ func TestRun_AFailureToRecordTheSuspensionIsSurfaced(t *testing.T) {
 		t.Fatalf("Run error %q does not say the suspension could not be recorded", err)
 	}
 }
+
+// levelSpy records the autonomy level each tool call ran under, and tightens the
+// session after the first one, the way an operator's tighten-autonomy request
+// does while a run is in flight.
+type levelSpy struct {
+	log    *inmem.Log
+	levels []string
+}
+
+func (s *levelSpy) Execute(_ context.Context, _ kernel.ToolUseRequest, rc kernel.ExecContext) kernel.ToolResult {
+	s.levels = append(s.levels, rc.AutonomyLevel)
+	s.log.SetAutonomy(rc.SessionID, "read_only")
+	return kernel.ToolResult{Output: json.RawMessage(`{}`)}
+}
+
+func TestRun_ATighteningMadeMidRunReachesTheNextToolCall(t *testing.T) {
+	log := inmem.New()
+	spy := &levelSpy{log: log}
+	secondTurn := fake.Script{Chunks: []fake.ChunkSpec{
+		{Kind: "tool_use", ToolUseID: "tu2", ToolName: "platform/echo@v1", Input: `{}`},
+		{Kind: "done", Done: "stop"},
+	}}
+	r := newRigWithLog(log, log, spy, toolTurn, secondTurn, finalTurn)
+
+	if _, err := r.run(t); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"supervised", "read_only"}
+	if len(spy.levels) != len(want) || spy.levels[0] != want[0] || spy.levels[1] != want[1] {
+		t.Fatalf("tool calls ran under %q, want %q: the second call must see the tightening", spy.levels, want)
+	}
+}
+
+// A log that cannot say leaves the run on the level it was configured with.
+func TestRun_ALogWithoutAnAutonomyReaderLeavesTheConfiguredLevel(t *testing.T) {
+	log := inmem.New()
+	spy := &levelSpy{log: log}
+	r := newRigWithLog(log, struct{ kernel.EventLog }{log}, spy, toolTurn, finalTurn)
+
+	if _, err := r.run(t); err != nil {
+		t.Fatal(err)
+	}
+	if len(spy.levels) != 1 || spy.levels[0] != "supervised" {
+		t.Fatalf("tool calls ran under %q, want the configured supervised", spy.levels)
+	}
+}
+
+// refusesTerminalWrites fails only the atomic append-and-status, the call a
+// terminal event goes through.
+type refusesTerminalWrites struct {
+	*inmem.Log
+	err error
+}
+
+func (f refusesTerminalWrites) AppendAndSetStatus(context.Context, eventlog.Event, string, *string) (eventlog.Event, error) {
+	return eventlog.Event{}, f.err
+}
+
+// A terminal event is written together with the status it justifies. Written as
+// two calls, a failure between them leaves a finished run marked running, and
+// orphan recovery then drives it again.
+func TestRun_ATerminalEventAndItsStatusAreOneWrite(t *testing.T) {
+	log := inmem.New()
+	errDisk := errors.New("disk full")
+	r := newRigWithLog(log, refusesTerminalWrites{Log: log, err: errDisk}, toolFunc(func(kernel.ToolUseRequest) kernel.ToolResult {
+		return kernel.ToolResult{}
+	}), finalTurn)
+
+	if _, err := r.run(t); !errors.Is(err, errDisk) {
+		t.Fatalf("Run error = %v, want it to wrap the log's error", err)
+	}
+	if n := len(ofType(log.Events(r.sessionID), eventlog.EventTerminal)); n != 0 {
+		t.Fatalf("%d terminal events were recorded though the atomic write failed: the event went in on its own", n)
+	}
+	if st, ok := log.Status(r.sessionID); ok && st.Value == eventlog.SessionStatusCompleted {
+		t.Fatalf("status = %q though the terminal write failed", st.Value)
+	}
+}

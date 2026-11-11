@@ -173,7 +173,7 @@ header to build by hand.
 |---|---|---|
 | `NEXUS_PROVIDER=litellm` | `fake` | Route model calls through `internal/provider/litellm` instead of the fake/Anthropic adapters |
 | `NEXUS_LITELLM_BASE_URL` | `http://localhost:4100` | LiteLLM proxy address (host port 4100, not LiteLLM's own default 4000 — see Caveats) |
-| `NEXUS_LITELLM_MODEL` | `qwen2.5-local` | Must match `deploy/litellm/config.yaml`'s `model_name` |
+| `NEXUS_LITELLM_MODEL` | `qwen2.5-local` | Must match `deploy/litellm/config.yaml`'s `model_name`. Runs are priced under this model, and `make seed` prices it at zero (a local model is free), so run `make seed` again after changing it. If LiteLLM fronts a paid model, insert its real rates into `price_book` instead |
 | `NEXUS_LITELLM_API_KEY` | unset | Optional; a local unauthenticated proxy needs none |
 | `NEXUS_OTLP_ENDPOINT` | unset (stdout spans) | `host:port` of any OTLP/HTTP collector — Langfuse's self-hosted `langfuse-web` (full profile), or any other. Mutually exclusive with `NEXUS_LANGFUSE_HOST` below — set only one |
 | `NEXUS_OTLP_URL_PATH` | OTel default (`/v1/traces`) | Langfuse's OTLP ingestion path is `/api/public/otel/v1/traces`, not the default |

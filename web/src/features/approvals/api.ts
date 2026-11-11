@@ -1,7 +1,7 @@
 // Human oversight: the REST client for internal/oversight/rest.
 import { request } from "../../shared/api/client";
 import type { Settings } from "../../shared/settings/settings";
-import type { ApprovalView, ResumeOutcome } from "./types";
+import type { ApprovalView, DecisionResponse } from "./types";
 
 export function listApprovals(s: Settings): Promise<ApprovalView[]> {
   return request<ApprovalView[]>(s, "/v1/approvals");
@@ -15,16 +15,16 @@ export function grantApproval(
   s: Settings,
   id: string,
   modifiedInput?: unknown,
-): Promise<ResumeOutcome> {
+): Promise<DecisionResponse> {
   const body = modifiedInput !== undefined ? JSON.stringify({ modified_input: modifiedInput }) : undefined;
-  return request<ResumeOutcome>(s, `/v1/approvals/${id}/grant`, {
+  return request<DecisionResponse>(s, `/v1/approvals/${id}/grant`, {
     method: "POST",
     body,
   });
 }
 
-export function denyApproval(s: Settings, id: string, reason: string): Promise<ResumeOutcome> {
-  return request<ResumeOutcome>(s, `/v1/approvals/${id}/deny`, {
+export function denyApproval(s: Settings, id: string, reason: string): Promise<DecisionResponse> {
+  return request<DecisionResponse>(s, `/v1/approvals/${id}/deny`, {
     method: "POST",
     body: JSON.stringify({ reason }),
   });

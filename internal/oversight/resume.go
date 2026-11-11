@@ -74,10 +74,55 @@ func (r *Resumer) Deny(ctx context.Context, tenantID, approvalID uuid.UUID, deci
 	return r.resume(ctx, tenantID, ap, kernel.ApprovalDecisionDenied, ap.Context.Input, reason)
 }
 
+// ErrNotDecided is returned by ResumeDecided for an approval that has no decision
+// to act on (still pending, expired or invalidated). Retrying cannot change that.
+var ErrNotDecided = errors.New("oversight: approval has no decision to resume")
+
+// ResumeDecided resumes the run an approval suspended, acting on the decision
+// already recorded on it. A queue worker calls it after Decisions has decided
+// and scheduled it. It is safe to call twice, and safe after a crash part-way:
+// a call that already has its real result (a second tool_result beside the
+// placeholder the suspension left) has been resumed, and nothing is done.
+func (r *Resumer) ResumeDecided(ctx context.Context, tenantID, approvalID uuid.UUID) iter.Seq2[eventlog.Event, error] {
+	ap, err := r.Approvals.Get(ctx, tenantID, approvalID)
+	if err != nil {
+		return errSeq(err)
+	}
+	var decision kernel.ApprovalDecisionKind
+	switch ap.Status {
+	case ApprovalGranted:
+		decision = kernel.ApprovalDecisionGranted
+	case ApprovalGrantedModified:
+		decision = kernel.ApprovalDecisionGrantedModified
+	case ApprovalDenied:
+		decision = kernel.ApprovalDecisionDenied
+	case ApprovalPending, ApprovalExpired, ApprovalInvalidated:
+		return errSeq(fmt.Errorf("%w: approval %s is %s", ErrNotDecided, approvalID, ap.Status))
+	default:
+		return errSeq(fmt.Errorf("%w: approval %s has unknown status %q", ErrNotDecided, approvalID, ap.Status))
+	}
+	return r.resume(ctx, tenantID, ap, decision, ap.Context.Input, ap.Reason)
+}
+
+// answered reports whether a call already has its real result: the suspension
+// leaves one placeholder tool_result, and the resume appends the second.
+func answered(history []eventlog.Event, toolUseEventID uuid.UUID) bool {
+	n := 0
+	for _, e := range history {
+		if e.Type == eventlog.EventToolResult && e.PairRef != nil && *e.PairRef == toolUseEventID {
+			n++
+		}
+	}
+	return n > 1
+}
+
 func (r *Resumer) resume(ctx context.Context, tenantID uuid.UUID, ap Approval, decision kernel.ApprovalDecisionKind, originalInput json.RawMessage, reason string) iter.Seq2[eventlog.Event, error] {
 	st, sess, err := r.loadRunState(ctx, tenantID, ap.SessionID)
 	if err != nil {
 		return errSeq(err)
+	}
+	if answered(st.History, ap.ToolUseEventID) {
+		return func(func(eventlog.Event, error) bool) {} // already resumed: nothing to do
 	}
 	cfg := runstate.ConfigFor(sess, kernel.RunConfig{System: r.System, Catalog: r.Catalog, MaxTurns: r.MaxTurns})
 
