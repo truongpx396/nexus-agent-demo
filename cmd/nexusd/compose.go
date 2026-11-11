@@ -164,6 +164,7 @@ func buildServices(in *infra, prov provider.Provider, spanExp spanExporter) (*se
 		Keys:                  runspg.Keys{Store: st, KeyStore: keyStore},
 		Starter:               starter,
 		CatalogManifestDigest: catalogManifestDigest,
+		ServedModel:           func(routed string) string { return provider.ServedModel(prov, routed) },
 	}
 
 	return &services{

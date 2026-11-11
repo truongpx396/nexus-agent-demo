@@ -11,6 +11,8 @@ package anthropic
 import (
 	"net/http"
 	"time"
+
+	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 )
 
 const (
@@ -30,6 +32,11 @@ type Provider struct {
 	Client    *http.Client // defaults to a client with a response-header timeout (defaultClient)
 	MaxTokens int          // defaults to defaultMaxTokens
 }
+
+var _ provider.ModelBound = (*Provider)(nil)
+
+// BoundModel implements provider.ModelBound: every call goes to p.Model.
+func (p *Provider) BoundModel() string { return p.Model }
 
 func New(apiKey, model string) *Provider {
 	return &Provider{APIKey: apiKey, Model: model}

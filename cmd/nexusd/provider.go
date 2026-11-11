@@ -28,6 +28,13 @@ import (
 // run against internal/provider/fake regardless of this switch
 // (constitution Principle IX) — this only controls what a live `nexusd run`
 // talks to.
+// The models a hosted or local provider serves when its model is not set. The
+// seed command prices the same ones, so these must stay in one place.
+const (
+	defaultAnthropicModel = "claude-sonnet-5"
+	defaultLiteLLMModel   = "qwen2.5-local"
+)
+
 func newProvider() (provider.Provider, error) {
 	switch envOr("NEXUS_PROVIDER", "fake") {
 	case "anthropic":
@@ -35,11 +42,11 @@ func newProvider() (provider.Provider, error) {
 		if apiKey == "" {
 			return nil, errors.New("NEXUS_PROVIDER=anthropic requires ANTHROPIC_API_KEY")
 		}
-		model := envOr("NEXUS_ANTHROPIC_MODEL", "claude-sonnet-5")
+		model := envOr("NEXUS_ANTHROPIC_MODEL", defaultAnthropicModel)
 		return anthropic.New(apiKey, model), nil
 	case "litellm":
 		baseURL := envOr("NEXUS_LITELLM_BASE_URL", "http://localhost:4100")
-		model := envOr("NEXUS_LITELLM_MODEL", "qwen2.5-local")
+		model := envOr("NEXUS_LITELLM_MODEL", defaultLiteLLMModel)
 		apiKey := os.Getenv("NEXUS_LITELLM_API_KEY") // optional; empty is fine for a local, unauthenticated proxy
 		return litellm.New(baseURL, model, apiKey), nil
 	case "fake":
