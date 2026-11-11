@@ -36,16 +36,20 @@ type Log struct {
 
 	mu          sync.Mutex
 	events      map[uuid.UUID][]eventlog.Event
+	autonomy    map[uuid.UUID]string
 	status      map[uuid.UUID]Status
 	suspensions []kernel.SuspendRequest
 	delegations []kernel.DelegateSuspendRequest
 }
 
-var _ kernel.EventLog = (*Log)(nil)
+var (
+	_ kernel.EventLog       = (*Log)(nil)
+	_ kernel.AutonomyReader = (*Log)(nil)
+)
 
 // New returns an empty Log.
 func New() *Log {
-	return &Log{events: map[uuid.UUID][]eventlog.Event{}, status: map[uuid.UUID]Status{}}
+	return &Log{events: map[uuid.UUID][]eventlog.Event{}, status: map[uuid.UUID]Status{}, autonomy: map[uuid.UUID]string{}}
 }
 
 func (l *Log) Append(_ context.Context, e eventlog.Event) (eventlog.Event, error) {
@@ -84,6 +88,22 @@ func (l *Log) RecordDelegation(_ context.Context, req kernel.DelegateSuspendRequ
 	defer l.mu.Unlock()
 	l.delegations = append(l.delegations, req)
 	return nil
+}
+
+// SetAutonomy pins sessionID at level, the way runctl.TightenAutonomy does on
+// the session row.
+func (l *Log) SetAutonomy(sessionID uuid.UUID, level string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.autonomy[sessionID] = level
+}
+
+// CurrentAutonomy implements kernel.AutonomyReader. A session nobody pinned
+// reports the empty level, which the kernel reads as "use the configured one".
+func (l *Log) CurrentAutonomy(_ context.Context, _, sessionID uuid.UUID) (string, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.autonomy[sessionID], nil
 }
 
 // Events returns a copy of sessionID's events in sequence order.

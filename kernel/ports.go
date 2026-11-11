@@ -42,3 +42,14 @@ type EventLog interface {
 	// nothing to record returns nil.
 	RecordDelegation(ctx context.Context, req DelegateSuspendRequest) error
 }
+
+// AutonomyReader is an optional part of an EventLog: it says what autonomy
+// level the session is pinned at right now. RunConfig carries the level the
+// run started with, and a run can last for hours; an operator who tightens a
+// session mid-run (runctl.TightenAutonomy) changes the session row, so a run
+// that never asks would keep acting under the looser level. The level only
+// ever tightens, so reading it before each batch of tool calls is enough. A log
+// without it leaves the run on its configured level.
+type AutonomyReader interface {
+	CurrentAutonomy(ctx context.Context, tenantID, sessionID uuid.UUID) (string, error)
+}

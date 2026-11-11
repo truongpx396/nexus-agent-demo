@@ -32,6 +32,10 @@ type Subject struct {
 
 	// Status returns sessionID's status projection as persisted.
 	Status func(t *testing.T, tenantID, sessionID uuid.UUID) (status string, terminalReason *string)
+
+	// SetAutonomy pins sessionID at level the way run control does. Optional:
+	// without it, the kernel.AutonomyReader case is skipped.
+	SetAutonomy func(t *testing.T, tenantID, sessionID uuid.UUID, level string)
 }
 
 func event(tenantID, sessionID uuid.UUID, typ eventlog.EventType, payload string) eventlog.Event {
@@ -161,6 +165,22 @@ func Run(t *testing.T, s Subject) {
 			ToolID: "platform/delegate@v1", ChildSessionID: uuid.New(),
 		}); err != nil {
 			t.Errorf("RecordDelegation: %v", err)
+		}
+	})
+
+	t.Run("CurrentAutonomy follows the level the session is pinned at", func(t *testing.T) {
+		reader, ok := s.Log.(kernel.AutonomyReader)
+		if !ok || s.SetAutonomy == nil {
+			t.Skip("the adapter does not implement kernel.AutonomyReader")
+		}
+		tenantID, sessionID := s.NewSession(t)
+		s.SetAutonomy(t, tenantID, sessionID, "read_only")
+		got, err := reader.CurrentAutonomy(ctx, tenantID, sessionID)
+		if err != nil {
+			t.Fatalf("CurrentAutonomy: %v", err)
+		}
+		if got != "read_only" {
+			t.Fatalf("CurrentAutonomy = %q, want read_only", got)
 		}
 	})
 }

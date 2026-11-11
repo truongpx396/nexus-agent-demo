@@ -55,7 +55,10 @@ type Log struct {
 	hooks Hooks
 }
 
-var _ kernel.EventLog = (*Log)(nil)
+var (
+	_ kernel.EventLog       = (*Log)(nil)
+	_ kernel.AutonomyReader = (*Log)(nil)
+)
 
 // New returns a Log over st with the given collaborators.
 func New(st *store.Store, hooks Hooks) *Log {
@@ -89,6 +92,18 @@ func (l *Log) SetStatus(ctx context.Context, tenantID, sessionID uuid.UUID, stat
 	return l.store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		return store.UpdateSessionStatus(ctx, tx, sessionID, status, terminalReason)
 	})
+}
+
+// CurrentAutonomy reads the session's autonomy level, so a tightening made while
+// a run is in flight reaches its next tool call.
+func (l *Log) CurrentAutonomy(ctx context.Context, tenantID, sessionID uuid.UUID) (string, error) {
+	var level string
+	err := l.store.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+		var gerr error
+		level, gerr = store.SessionAutonomy(ctx, tx, sessionID)
+		return gerr
+	})
+	return level, err
 }
 
 // RecordSuspension runs the approval hook, or does nothing when none is wired.

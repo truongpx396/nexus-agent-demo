@@ -77,6 +77,16 @@ func TestPostgresEventLog_SatisfiesTheEventLogContract(t *testing.T) {
 			}
 			return sess.Status, sess.TerminalReason
 		},
+		SetAutonomy: func(t *testing.T, tenantID, sessionID uuid.UUID, level string) {
+			t.Helper()
+			err := st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+				_, uerr := tx.Exec(ctx, `UPDATE sessions SET autonomy_level = $2 WHERE session_id = $1`, sessionID, level)
+				return uerr
+			})
+			if err != nil {
+				t.Fatalf("set autonomy: %v", err)
+			}
+		},
 	})
 }
 

@@ -279,3 +279,50 @@ func TestRun_AFailureToRecordTheSuspensionIsSurfaced(t *testing.T) {
 		t.Fatalf("Run error %q does not say the suspension could not be recorded", err)
 	}
 }
+
+// levelSpy records the autonomy level each tool call ran under, and tightens the
+// session after the first one, the way an operator's tighten-autonomy request
+// does while a run is in flight.
+type levelSpy struct {
+	log    *inmem.Log
+	tenant uuid.UUID
+	levels []string
+}
+
+func (s *levelSpy) Execute(_ context.Context, _ kernel.ToolUseRequest, rc kernel.ExecContext) kernel.ToolResult {
+	s.levels = append(s.levels, rc.AutonomyLevel)
+	s.log.SetAutonomy(rc.SessionID, "read_only")
+	return kernel.ToolResult{Output: json.RawMessage(`{}`)}
+}
+
+func TestRun_ATighteningMadeMidRunReachesTheNextToolCall(t *testing.T) {
+	log := inmem.New()
+	spy := &levelSpy{log: log}
+	secondTurn := fake.Script{Chunks: []fake.ChunkSpec{
+		{Kind: "tool_use", ToolUseID: "tu2", ToolName: "platform/echo@v1", Input: `{}`},
+		{Kind: "done", Done: "stop"},
+	}}
+	r := newRigWithLog(log, log, spy, toolTurn, secondTurn, finalTurn)
+
+	if _, err := r.run(t); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"supervised", "read_only"}
+	if len(spy.levels) != len(want) || spy.levels[0] != want[0] || spy.levels[1] != want[1] {
+		t.Fatalf("tool calls ran under %q, want %q: the second call must see the tightening", spy.levels, want)
+	}
+}
+
+// A log that cannot say leaves the run on the level it was configured with.
+func TestRun_ALogWithoutAnAutonomyReaderLeavesTheConfiguredLevel(t *testing.T) {
+	log := inmem.New()
+	spy := &levelSpy{log: log}
+	r := newRigWithLog(log, struct{ kernel.EventLog }{log}, spy, toolTurn, finalTurn)
+
+	if _, err := r.run(t); err != nil {
+		t.Fatal(err)
+	}
+	if len(spy.levels) != 1 || spy.levels[0] != "supervised" {
+		t.Fatalf("tool calls ran under %q, want the configured supervised", spy.levels)
+	}
+}

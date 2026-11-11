@@ -26,5 +26,6 @@ func TestLog_SatisfiesTheEventLogContract(t *testing.T) {
 			}
 			return s.Value, s.TerminalReason
 		},
+		SetAutonomy: func(_ *testing.T, _, sessionID uuid.UUID, level string) { log.SetAutonomy(sessionID, level) },
 	})
 }
