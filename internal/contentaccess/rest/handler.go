@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/contentaccess"
@@ -26,8 +27,8 @@ var _ restkit.Module = Handler{}
 
 // Routes implements restkit.Module.
 func (h Handler) Routes(r restkit.Router) {
-	r.Handle("POST /v1/sessions/{id}/content-access-grants", h.handleRequestContentAccessGrant)
-	r.Handle("GET /v1/sessions/{id}/content-access-grants/read", h.handleReadUnderGrant)
+	r.POST("/v1/sessions/:id/content-access-grants", h.handleRequestContentAccessGrant)
+	r.GET("/v1/sessions/:id/content-access-grants/read", h.handleReadUnderGrant)
 }
 
 // Content access grants (README task 5.11) — the only path to plaintext
@@ -51,49 +52,49 @@ type grantView struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
-func (h Handler) handleRequestContentAccessGrant(w http.ResponseWriter, r *http.Request) {
-	tenantID, _, ok := restkit.Principal(w, r)
+func (h Handler) handleRequestContentAccessGrant(c *gin.Context) {
+	tenantID, _, ok := restkit.Principal(c)
 	if !ok {
 		return
 	}
-	sessionID, err := uuid.Parse(r.PathValue("id"))
+	sessionID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		http.Error(w, "invalid session id", http.StatusBadRequest)
+		restkit.Error(c, "invalid session id", http.StatusBadRequest)
 		return
 	}
 	var req requestGrantRequest
-	if !restkit.DecodeJSON(w, r, &req) {
+	if !restkit.DecodeJSON(c, &req) {
 		return
 	}
 	granteeID, err := uuid.Parse(req.GranteeID)
 	if err != nil {
-		http.Error(w, `"grantee_id" is invalid`, http.StatusBadRequest)
+		restkit.Error(c, `"grantee_id" is invalid`, http.StatusBadRequest)
 		return
 	}
 	if req.Reason == "" {
-		http.Error(w, `"reason" is required`, http.StatusBadRequest)
+		restkit.Error(c, `"reason" is required`, http.StatusBadRequest)
 		return
 	}
 
-	gr, err := h.Grants.RequestGrant(r.Context(), tenantID, sessionID, granteeID, req.Reason, time.Duration(req.TTLSeconds)*time.Second)
+	gr, err := h.Grants.RequestGrant(c.Request.Context(), tenantID, sessionID, granteeID, req.Reason, time.Duration(req.TTLSeconds)*time.Second)
 	if err != nil {
-		restkit.ServerError(w, r, "request grant", err)
+		restkit.ServerError(c, "request grant", err)
 		return
 	}
-	restkit.WriteJSON(w, http.StatusCreated, grantView{
+	c.JSON(http.StatusCreated, grantView{
 		GrantID: gr.GrantID.String(), SessionID: gr.SessionID.String(), GranteeID: gr.GranteeID.String(),
 		Reason: gr.Reason, ExpiresAt: gr.ExpiresAt,
 	})
 }
 
-func (h Handler) handleReadUnderGrant(w http.ResponseWriter, r *http.Request) {
-	tenantID, userID, ok := restkit.Principal(w, r)
+func (h Handler) handleReadUnderGrant(c *gin.Context) {
+	tenantID, userID, ok := restkit.Principal(c)
 	if !ok {
 		return
 	}
-	sessionID, err := uuid.Parse(r.PathValue("id"))
+	sessionID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		http.Error(w, "invalid session id", http.StatusBadRequest)
+		restkit.Error(c, "invalid session id", http.StatusBadRequest)
 		return
 	}
 
@@ -101,14 +102,14 @@ func (h Handler) handleReadUnderGrant(w http.ResponseWriter, r *http.Request) {
 	// handleRequestContentAccessGrant, where an admin names a DIFFERENT
 	// principal to authorize, a read is always "show ME what I was
 	// granted," never "show me what someone else was granted."
-	dtos, err := h.Grants.Read(r.Context(), tenantID, sessionID, userID)
+	dtos, err := h.Grants.Read(c.Request.Context(), tenantID, sessionID, userID)
 	if errors.Is(err, contentaccess.ErrNoGrant) {
-		http.Error(w, "no valid content access grant", http.StatusForbidden)
+		restkit.Error(c, "no valid content access grant", http.StatusForbidden)
 		return
 	}
 	if err != nil {
-		restkit.ServerError(w, r, "read under grant", err)
+		restkit.ServerError(c, "read under grant", err)
 		return
 	}
-	restkit.WriteJSON(w, http.StatusOK, dtos)
+	c.JSON(http.StatusOK, dtos)
 }

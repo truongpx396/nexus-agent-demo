@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
@@ -44,10 +45,10 @@ var _ restkit.Module = Handler{}
 
 // Routes implements restkit.Module.
 func (h Handler) Routes(r restkit.Router) {
-	r.Handle("GET /v1/approvals", h.handleListApprovals)
-	r.Handle("GET /v1/approvals/{id}", h.handleGetApproval)
-	r.Handle("POST /v1/approvals/{id}/grant", h.handleGrantApproval)
-	r.Handle("POST /v1/approvals/{id}/deny", h.handleDenyApproval)
+	r.GET("/v1/approvals", h.handleListApprovals)
+	r.GET("/v1/approvals/:id", h.handleGetApproval)
+	r.POST("/v1/approvals/:id/grant", h.handleGrantApproval)
+	r.POST("/v1/approvals/:id/deny", h.handleDenyApproval)
 }
 
 // ApprovalView is what this surface exposes for one approval. Context is the
@@ -91,43 +92,43 @@ func toResumeOutcome(o oversight.Outcome) ResumeOutcome {
 	return ResumeOutcome{SessionID: o.SessionID, EventsAppended: o.EventsAppended, Err: o.Err}
 }
 
-func (h Handler) handleListApprovals(w http.ResponseWriter, r *http.Request) {
-	tenantID, _, ok := restkit.Principal(w, r)
+func (h Handler) handleListApprovals(c *gin.Context) {
+	tenantID, _, ok := restkit.Principal(c)
 	if !ok {
 		return
 	}
-	approvals, err := h.Approvals.ListPending(r.Context(), tenantID)
+	approvals, err := h.Approvals.ListPending(c.Request.Context(), tenantID)
 	if err != nil {
-		restkit.ServerError(w, r, "list approvals", err)
+		restkit.ServerError(c, "list approvals", err)
 		return
 	}
 	views := make([]ApprovalView, len(approvals))
 	for i, ap := range approvals {
 		views[i] = toApprovalView(ap)
 	}
-	restkit.WriteJSON(w, http.StatusOK, views)
+	c.JSON(http.StatusOK, views)
 }
 
-func (h Handler) handleGetApproval(w http.ResponseWriter, r *http.Request) {
-	tenantID, _, ok := restkit.Principal(w, r)
+func (h Handler) handleGetApproval(c *gin.Context) {
+	tenantID, _, ok := restkit.Principal(c)
 	if !ok {
 		return
 	}
-	id, err := uuid.Parse(r.PathValue("id"))
+	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		http.Error(w, "invalid approval id", http.StatusBadRequest)
+		restkit.Error(c, "invalid approval id", http.StatusBadRequest)
 		return
 	}
-	ap, err := h.Approvals.Get(r.Context(), tenantID, id)
+	ap, err := h.Approvals.Get(c.Request.Context(), tenantID, id)
 	if errors.Is(err, oversight.ErrNotFound) {
-		http.Error(w, "approval not found", http.StatusNotFound)
+		restkit.Error(c, "approval not found", http.StatusNotFound)
 		return
 	}
 	if err != nil {
-		restkit.ServerError(w, r, "get approval", err)
+		restkit.ServerError(c, "get approval", err)
 		return
 	}
-	restkit.WriteJSON(w, http.StatusOK, toApprovalView(ap))
+	c.JSON(http.StatusOK, toApprovalView(ap))
 }
 
 type grantApprovalRequest struct {
@@ -137,52 +138,52 @@ type grantApprovalRequest struct {
 	ModifiedInput json.RawMessage `json:"modified_input,omitempty"`
 }
 
-func (h Handler) handleGrantApproval(w http.ResponseWriter, r *http.Request) {
-	tenantID, userID, ok := restkit.Principal(w, r)
+func (h Handler) handleGrantApproval(c *gin.Context) {
+	tenantID, userID, ok := restkit.Principal(c)
 	if !ok {
 		return
 	}
-	id, err := uuid.Parse(r.PathValue("id"))
+	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		http.Error(w, "invalid approval id", http.StatusBadRequest)
+		restkit.Error(c, "invalid approval id", http.StatusBadRequest)
 		return
 	}
 	var req grantApprovalRequest
-	if r.ContentLength != 0 {
-		if !restkit.DecodeJSON(w, r, &req) {
+	if c.Request.ContentLength != 0 {
+		if !restkit.DecodeJSON(c, &req) {
 			return
 		}
 	}
 
 	var outcome oversight.Outcome
 	if len(req.ModifiedInput) > 0 {
-		outcome = h.Decisions.GrantModified(r.Context(), tenantID, id, userID.String(), req.ModifiedInput)
+		outcome = h.Decisions.GrantModified(c.Request.Context(), tenantID, id, userID.String(), req.ModifiedInput)
 	} else {
-		outcome = h.Decisions.Grant(r.Context(), tenantID, id, userID.String())
+		outcome = h.Decisions.Grant(c.Request.Context(), tenantID, id, userID.String())
 	}
-	restkit.WriteJSON(w, http.StatusOK, toResumeOutcome(outcome))
+	c.JSON(http.StatusOK, toResumeOutcome(outcome))
 }
 
 type denyApprovalRequest struct {
 	Reason string `json:"reason"`
 }
 
-func (h Handler) handleDenyApproval(w http.ResponseWriter, r *http.Request) {
-	tenantID, userID, ok := restkit.Principal(w, r)
+func (h Handler) handleDenyApproval(c *gin.Context) {
+	tenantID, userID, ok := restkit.Principal(c)
 	if !ok {
 		return
 	}
-	id, err := uuid.Parse(r.PathValue("id"))
+	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		http.Error(w, "invalid approval id", http.StatusBadRequest)
+		restkit.Error(c, "invalid approval id", http.StatusBadRequest)
 		return
 	}
 	var req denyApprovalRequest
-	if r.ContentLength != 0 {
-		if !restkit.DecodeJSON(w, r, &req) {
+	if c.Request.ContentLength != 0 {
+		if !restkit.DecodeJSON(c, &req) {
 			return
 		}
 	}
 
-	restkit.WriteJSON(w, http.StatusOK, toResumeOutcome(h.Decisions.Deny(r.Context(), tenantID, id, userID.String(), req.Reason)))
+	c.JSON(http.StatusOK, toResumeOutcome(h.Decisions.Deny(c.Request.Context(), tenantID, id, userID.String(), req.Reason)))
 }

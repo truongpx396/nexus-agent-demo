@@ -130,8 +130,8 @@ func NewHandler(launcher runs.Launcher, reader runs.Reader) *Handler {
 
 // Routes implements restkit.Module.
 func (h *Handler) Routes(r restkit.Router) {
-	r.Handle("POST /v1/runs", h.handleCreateRun)
-	r.Handle("GET /v1/runs/{id}", h.handleGetRun)
-	r.Handle("GET /v1/runs/{id}/events", h.handleEvents)
-	r.Handle("GET /v1/sessions", h.handleListSessions)
+	r.POST("/v1/runs", h.handleCreateRun)
+	r.GET("/v1/runs/:id", h.handleGetRun)
+	r.GET("/v1/runs/:id/events", h.handleEvents)
+	r.GET("/v1/sessions", h.handleListSessions)
 }

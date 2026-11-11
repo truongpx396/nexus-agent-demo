@@ -82,7 +82,7 @@ func TestListApprovals_RendersEachPendingApprovalAndAnEmptyListAsAnArray(t *test
 	}
 
 	empty := resttest.Do(t, serve(uuid.New(), fakeApprovals{}, &fakeDecisions{}), http.MethodGet, "/v1/approvals", "")
-	if got := empty.Body.String(); got != "[]\n" {
+	if got := strings.TrimSpace(empty.Body.String()); got != "[]" {
 		t.Errorf("an empty list rendered %q, want [] (clients iterate it)", got)
 	}
 

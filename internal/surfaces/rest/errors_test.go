@@ -6,13 +6,17 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/gin-gonic/gin"
 )
 
 func TestServerError_AnswersGenericallyAndKeepsTheCauseOutOfTheBody(t *testing.T) {
 	cause := errors.New(`ERROR: relation "events" does not exist (SQLSTATE 42P01) at 10.0.0.7:5432`)
 	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/runs/x", nil)
 
-	ServerError(rec, httptest.NewRequest(http.MethodGet, "/v1/runs/x", nil), "load run", cause)
+	ServerError(c, "load run", cause)
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500", rec.Code)

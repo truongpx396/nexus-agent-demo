@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/gin-gonic/gin"
+
 	restkit "github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
 )
 
@@ -26,15 +28,15 @@ type sessionSummary struct {
 
 // handleListSessions is GET /v1/sessions: the calling principal's own root
 // sessions, newest first -- the web UI's session sidebar.
-func (h *Handler) handleListSessions(w http.ResponseWriter, r *http.Request) {
-	tenantID, userID, ok := restkit.Principal(w, r)
+func (h *Handler) handleListSessions(c *gin.Context) {
+	tenantID, userID, ok := restkit.Principal(c)
 	if !ok {
 		return
 	}
 
-	runList, err := h.Reader.ListRuns(r.Context(), tenantID, userID, listSessionsLimit)
+	runList, err := h.Reader.ListRuns(c.Request.Context(), tenantID, userID, listSessionsLimit)
 	if err != nil {
-		restkit.ServerError(w, r, "list sessions", err)
+		restkit.ServerError(c, "list sessions", err)
 		return
 	}
 
@@ -45,5 +47,5 @@ func (h *Handler) handleListSessions(w http.ResponseWriter, r *http.Request) {
 			CreatedAt: run.CreatedAt, AutonomyLevel: run.AutonomyLevel,
 		}
 	}
-	restkit.WriteJSON(w, http.StatusOK, views)
+	c.JSON(http.StatusOK, views)
 }

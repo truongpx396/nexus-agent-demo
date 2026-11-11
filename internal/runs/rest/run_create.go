@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 
@@ -48,24 +49,25 @@ type createRunResponse struct {
 	RunID string `json:"run_id"`
 }
 
-func (h *Handler) handleCreateRun(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handleCreateRun(c *gin.Context) {
 	// Task 7.13: the turn-submitting principal, resolved fresh from THIS
-	// request — resolvePrincipal reads the same headers principal() does,
-	// typed as capability.Principal, since starting a run is the clearest
+	// request — ResolvePrincipal reads the same verified principal Principal
+	// does, typed as capability.Principal, since starting a run is the clearest
 	// "submitting one turn" action this surface has.
-	principal, perr := restkit.ResolvePrincipal(r)
+	principal, perr := restkit.ResolvePrincipal(c)
 	if perr != nil {
-		http.Error(w, perr.Error(), http.StatusUnauthorized)
+		restkit.Error(c, perr.Error(), http.StatusUnauthorized)
 		return
 	}
 	tenantID, userID := principal.TenantID, principal.UserID
+	ctx := c.Request.Context()
 
 	var req createRunRequest
-	if !restkit.DecodeJSON(w, r, &req) {
+	if !restkit.DecodeJSON(c, &req) {
 		return
 	}
 	if req.Input == "" {
-		http.Error(w, `"input" is required`, http.StatusBadRequest)
+		restkit.Error(c, `"input" is required`, http.StatusBadRequest)
 		return
 	}
 	autonomy := req.Autonomy
@@ -75,16 +77,16 @@ func (h *Handler) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 	case "read_only", "supervised", "autonomous":
 		// valid
 	default:
-		http.Error(w, `"autonomy" must be one of "read_only", "supervised", "autonomous"`, http.StatusBadRequest)
+		restkit.Error(c, `"autonomy" must be one of "read_only", "supervised", "autonomous"`, http.StatusBadRequest)
 		return
 	}
 
 	var skillSetDigest []byte
 	if h.Skills != nil {
 		var derr error
-		skillSetDigest, derr = h.Skills.Digest(r.Context(), tenantID)
+		skillSetDigest, derr = h.Skills.Digest(ctx, tenantID)
 		if derr != nil {
-			restkit.ServerError(w, r, "resolve skill set digest", derr)
+			restkit.ServerError(c, "resolve skill set digest", derr)
 			return
 		}
 	}
@@ -98,18 +100,18 @@ func (h *Handler) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 	var mcpCatalogDigest []byte
 	if h.MCP != nil {
 		var derr error
-		mcpCatalog, mcpCatalogDigest, derr = h.MCP.Resolve(r.Context(), tenantID, userID)
+		mcpCatalog, mcpCatalogDigest, derr = h.MCP.Resolve(ctx, tenantID, userID)
 		if derr != nil {
-			restkit.ServerError(w, r, "resolve MCP catalog", derr)
+			restkit.ServerError(c, "resolve MCP catalog", derr)
 			return
 		}
 	}
 
 	if h.Launcher == nil {
-		http.Error(w, "server misconfigured: no run launcher wired", http.StatusInternalServerError)
+		restkit.Error(c, "server misconfigured: no run launcher wired", http.StatusInternalServerError)
 		return
 	}
-	launched, err := h.Launcher.Launch(r.Context(), runs.LaunchRequest{
+	launched, err := h.Launcher.Launch(ctx, runs.LaunchRequest{
 		TenantID: tenantID, UserID: userID, SurfaceID: "rest", Input: req.Input,
 		DataLabel: provider.DataLabel(req.DataLabel), Difficulty: provider.Difficulty(req.Difficulty), Autonomy: autonomy,
 		BudgetUSD: req.BudgetUSD, Conversational: req.Conversational,
@@ -118,17 +120,15 @@ func (h *Handler) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 	var notAdmitted *runs.NotAdmittedError
 	switch {
 	case errors.As(err, &notAdmitted):
-		http.Error(w, "create run: "+notAdmitted.Reason, http.StatusBadRequest)
+		restkit.Error(c, "create run: "+notAdmitted.Reason, http.StatusBadRequest)
 		return
 	case err != nil:
-		restkit.ServerError(w, r, "create run", err)
+		restkit.ServerError(c, "create run", err)
 		return
 	}
 	go h.publishUntilDone(tenantID, launched.SessionID, launched.Events)
 
-	w.Header().Set("content-type", "application/json")
-	w.WriteHeader(http.StatusAccepted)
-	_ = json.NewEncoder(w).Encode(createRunResponse{RunID: launched.SessionID.String()})
+	c.JSON(http.StatusAccepted, createRunResponse{RunID: launched.SessionID.String()})
 }
 
 // publishUntilDone drains the runs.Starter's event channel, publishing each

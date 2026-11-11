@@ -16,7 +16,7 @@ import (
 // that make it up, which the kit itself must not import.
 
 // TestDescriptor_StreamingRouteIsWired checks Descriptor's SupportsStreaming
-// claim against the actual mux, not just a struct literal. A 404 here would
+// claim against the actual router, not just a struct literal. A 404 here would
 // mean the capability declaration and the real route registration have drifted
 // apart.
 func TestDescriptor_StreamingRouteIsWired(t *testing.T) {

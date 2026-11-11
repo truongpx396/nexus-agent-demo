@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
@@ -32,29 +34,27 @@ type eventDTO struct {
 	Body      json.RawMessage `json:"body,omitempty"`
 }
 
-func (h *Handler) handleEvents(w http.ResponseWriter, r *http.Request) {
-	tenantID, userID, ok := restkit.Principal(w, r)
+func (h *Handler) handleEvents(c *gin.Context) {
+	tenantID, userID, ok := restkit.Principal(c)
 	if !ok {
 		return
 	}
-	id, err := uuid.Parse(r.PathValue("id"))
+	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		http.Error(w, "invalid run id", http.StatusBadRequest)
+		restkit.Error(c, "invalid run id", http.StatusBadRequest)
 		return
 	}
-	if _, ok := h.ownedRun(w, r, tenantID, userID, id); !ok {
+	if _, ok := h.ownedRun(c, tenantID, userID, id); !ok {
 		return
 	}
 
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("content-type", "text/event-stream")
-	w.Header().Set("cache-control", "no-cache")
-	w.Header().Set("connection", "keep-alive")
-	w.WriteHeader(http.StatusOK)
+	// c.Writer is always a Flusher (gin.ResponseWriter embeds http.Flusher), so
+	// there is no "streaming unsupported" case to refuse here.
+	w, ctx := c.Writer, c.Request.Context()
+	c.Header("content-type", "text/event-stream")
+	c.Header("cache-control", "no-cache")
+	c.Header("connection", "keep-alive")
+	c.Status(http.StatusOK)
 
 	// Subscribe BEFORE replaying history, so nothing published between the
 	// subscribe call and the replay finishing is missed. That ordering, on
@@ -69,21 +69,21 @@ func (h *Handler) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 	opener := h.Reader.EventOpener(tenantID)
 	write := func(e eventlog.Event) bool {
-		dto, derr := toEventDTO(r.Context(), opener, e)
+		dto, derr := toEventDTO(ctx, opener, e)
 		if derr != nil {
 			writeSSEFrame(w, "error", map[string]string{"error": derr.Error()})
-			flusher.Flush()
+			w.Flush()
 			return false
 		}
 		writeSSEFrame(w, string(e.Type), dto)
-		flusher.Flush()
+		w.Flush()
 		return e.Type != eventlog.EventTerminal
 	}
 
-	history, err := h.Reader.Events(r.Context(), tenantID, id)
+	history, err := h.Reader.Events(ctx, tenantID, id)
 	if err != nil {
 		writeSSEFrame(w, "error", map[string]string{"error": err.Error()})
-		flusher.Flush()
+		w.Flush()
 		return
 	}
 	var lastSeq int64
@@ -96,7 +96,7 @@ func (h *Handler) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 	for {
 		select {
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
 		case p, chOK := <-ch:
 			if !chOK {
@@ -108,7 +108,7 @@ func (h *Handler) handleEvents(w http.ResponseWriter, r *http.Request) {
 				// comment). The durable event it previews still arrives
 				// right behind it on this same channel.
 				writeSSEFrame(w, "delta", p.Delta)
-				flusher.Flush()
+				w.Flush()
 				continue
 			}
 			if p.Err == nil && p.Event.Seq <= lastSeq {
@@ -116,7 +116,7 @@ func (h *Handler) handleEvents(w http.ResponseWriter, r *http.Request) {
 			}
 			if p.Err != nil {
 				writeSSEFrame(w, "error", map[string]string{"error": p.Err.Error()})
-				flusher.Flush()
+				w.Flush()
 				return
 			}
 			if !write(p.Event) {
@@ -156,7 +156,7 @@ func toEventDTO(ctx context.Context, opener runs.EventOpener, e eventlog.Event) 
 	return dto, nil
 }
 
-func writeSSEFrame(w http.ResponseWriter, event string, data any) {
+func writeSSEFrame(w io.Writer, event string, data any) {
 	raw, err := json.Marshal(data)
 	if err != nil {
 		raw = []byte(`{"error":"failed to marshal event"}`)

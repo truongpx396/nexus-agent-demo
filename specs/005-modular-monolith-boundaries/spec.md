@@ -95,7 +95,7 @@ This is a refactor with almost no change in behaviour (the two exceptions are na
 
 **Acceptance Scenarios**:
 
-1. **Given** the REST surface, **When** a route is registered, **Then** it is registered through `Router.Handle` and so authenticated, and a path whose module is not mounted answers 404 without asking for a token.
+1. **Given** the REST surface, **When** a route is registered, **Then** it is registered through `Router.GET` or `Router.POST` and so authenticated, and a path whose module is not mounted answers 404 without asking for a token.
 2. **Given** an approval decision, **When** the resumed run settles, **Then** `oversight.Decisions` tells the settled observers once, and only if the resume succeeded.
 3. **Given** a message to a session, **When** it is paused in `awaiting_input`, **Then** `runctl.Control.Send` continues the conversation, and otherwise steers; the handler reads no session.
 4. **Given** the delegate tool, **When** its bounds change in `delegate`, **Then** the tool changes with them, because it uses `delegate.MaxDepth/MaxConcurrent/MaxPerRun`.
@@ -126,7 +126,7 @@ This is a refactor with almost no change in behaviour (the two exceptions are na
 - **FR-006**: Every import of one non-adapter package by another MUST be listed in `allowedFeatureImports`.
 - **FR-007**: Every path that drives a session to a stop MUST report it through `runctl.Control.NotifySettled`, and an observer MUST be a no-op for a session it does not recognise.
 - **FR-009**: Every table a migration leaves in place MUST be listed with one owning feature, and SQL naming a table MUST be inside its owner's package tree. The `sessions` and `events` tables MUST list each package that may touch them, with the reason; the `reporting` read model MAY read any table and MUST NOT write one.
-- **FR-010**: A feature reachable over HTTP or by the model MUST carry that binding in the feature (`<feature>/rest`, `<feature>/tool`). A REST module MUST register routes only through the kit's authenticating `Router.Handle`. A binding MUST NOT import storage or the kernel directly, and MUST declare its imports in `allowedFeatureImports`.
+- **FR-010**: A feature reachable over HTTP or by the model MUST carry that binding in the feature (`<feature>/rest`, `<feature>/tool`). A REST module MUST register routes only through the kit's authenticating `Router.GET` or `Router.POST` (the kit is built on Gin; a handler takes a `*gin.Context`). A binding MUST NOT import storage or the kernel directly, and MUST declare its imports in `allowedFeatureImports`.
 - **FR-011**: `connectors` MUST speak OAuth2 only through its `Authorizer` port, with the protocol library linked by `connectors/oauth2` alone. A skill script MUST run only through the run's sandbox and MUST be refused where there is none.
 - **FR-012**: The event log's suspend and delegate hooks MUST NOT take a transaction. Every event type MUST name an owning package, and a log MUST refuse to append a type outside the taxonomy.
 - **FR-013**: The web app MUST be packaged by feature, mirroring the backend, and the integration tests MUST be named for the feature they exercise, not the build phase that introduced them.

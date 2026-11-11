@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
 	restkit "github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
@@ -16,22 +17,22 @@ import (
 type echoModule struct{}
 
 func (echoModule) Routes(r restkit.Router) {
-	r.Handle("POST /echo", func(w http.ResponseWriter, req *http.Request) {
+	r.POST("/echo", func(c *gin.Context) {
 		var body struct {
 			Text string `json:"text"`
 		}
-		if !restkit.DecodeJSON(w, req, &body) {
+		if !restkit.DecodeJSON(c, &body) {
 			return
 		}
-		restkit.WriteJSON(w, http.StatusOK, map[string]string{"text": body.Text})
+		c.JSON(http.StatusOK, map[string]string{"text": body.Text})
 	})
 	// A handler that ignores DecodeJSON and reads the body itself is bounded too.
-	r.Handle("POST /raw", func(w http.ResponseWriter, req *http.Request) {
-		if _, err := io.ReadAll(req.Body); err != nil {
-			http.Error(w, "too large", http.StatusRequestEntityTooLarge)
+	r.POST("/raw", func(c *gin.Context) {
+		if _, err := io.ReadAll(c.Request.Body); err != nil {
+			restkit.Error(c, "too large", http.StatusRequestEntityTooLarge)
 			return
 		}
-		w.WriteHeader(http.StatusOK)
+		c.Status(http.StatusOK)
 	})
 }
 
