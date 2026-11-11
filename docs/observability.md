@@ -369,6 +369,7 @@ flag to start them in the first place).
 | `NEXUS_PPROF_BLOCK_RATE` | `0` (off) | `runtime.SetBlockProfileRate`'s own parameter — nonzero also adds `block_count`/`block_duration` to what Pyroscope uploads and makes `/debug/pprof/block` non-empty. |
 | `NEXUS_PPROF_ADDR` | `127.0.0.1:6060` for `make run`; `0.0.0.0:6060` (published loopback-only) for `make docker-up`; unset (no listener) otherwise | `nexusd`'s on-demand `net/http/pprof` listener address — a SEPARATE listener from the main REST/webhook mux, see "On-demand profiling: pprof" above. `make pprof-cpu`/`pprof-heap`/`pprof-goroutine` target `127.0.0.1:6060` by default, working against either path unmodified. |
 | `NEXUS_SIGNERD_PPROF_ADDR` | `127.0.0.1:6061` for `make signerd`/`make run`; `0.0.0.0:6061` (published loopback-only) for `make docker-up`; unset otherwise | Same as `NEXUS_PPROF_ADDR`, for `signerd` — a distinct env var since both processes may run on the same host at once and can't share a bind address. |
+| `NEXUS_QUEUE_WORKERS` | `2` (1 to 64) | How many queue workers `nexusd` runs, which is also its ceiling on concurrently driven runs. `/metrics` reports it as `nexus_queue_workers`, beside `nexus_queue_jobs{state=queued\|leased\|delayed\|dead}` and `nexus_queue_oldest_job_age_seconds`: a growing `queued` with a climbing age is workers falling behind. |
 
 `docker-label-exporter` (task 17.15) takes two of its own, set in
 `docker-compose.observability.yml`'s own service block rather than here —

@@ -67,7 +67,7 @@ func newMux(in *infra, svc *services, restAPI http.Handler) http.Handler {
 	// a load balancer or Kubernetes probe has no bearer token to send.
 	mux.HandleFunc("GET /healthz", handleHealthz)
 	mux.HandleFunc("GET /readyz", handleReadyz(in.pool, in.redis, in.signer))
-	mux.HandleFunc("GET /metrics", handleMetrics(reportingpg.New(in.st)))
+	mux.HandleFunc("GET /metrics", handleMetrics(reportingpg.New(in.st), in.queue))
 	mux.Handle("/v1/webhooks/telegram/", telegramSrv.Handler())
 	mux.Handle("/v1/webhooks/zalo/", zaloSrv.Handler())
 	mux.Handle("/v1/webhooks/email/", emailSrv.Handler())

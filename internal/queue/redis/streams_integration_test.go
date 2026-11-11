@@ -85,6 +85,44 @@ func leaseWithin(t *testing.T, q *Streams, owner string, d time.Duration) (queue
 	}
 }
 
+// Stats tells a queued job from a leased one, counts the delayed and the dead, and
+// ages the oldest entry, which is what an operator watches to see the workers
+// falling behind.
+func TestRedisStreams_StatsCountsEachState(t *testing.T) {
+	q, _ := newTestQueue(t)
+	ctx := context.Background()
+
+	if st, err := q.Stats(ctx); err != nil || st != (queue.Stats{}) {
+		t.Fatalf("an empty queue reports %+v, %v, want all zero", st, err)
+	}
+
+	for range 3 {
+		if _, err := q.Enqueue(ctx, newTestJob()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	leased, ok := leaseWithin(t, q, "w1", 3*time.Second)
+	if !ok {
+		t.Fatal("nothing to lease")
+	}
+	time.Sleep(1100 * time.Millisecond)
+
+	st, err := q.Stats(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Queued != 2 || st.Leased != 1 || st.Delayed != 0 || st.Dead != 0 || st.OldestAge < time.Second {
+		t.Fatalf("Stats = %+v, want 2 queued, 1 leased, none delayed or dead, and the oldest at least a second old", st)
+	}
+
+	if err := q.Fail(ctx, leased.JobID, "boom", true, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := q.Stats(ctx); st.Dead != 1 || st.Leased != 0 || st.Queued != 2 {
+		t.Fatalf("after a permanent failure Stats = %+v, want one dead, none leased, two queued", st)
+	}
+}
+
 // XACK alone removes an entry from the pending list but leaves it in the
 // stream, so without XDEL every completed job would sit in
 // nexus:queue:jobs forever.

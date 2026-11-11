@@ -73,6 +73,25 @@ type Job struct {
 	CreatedAt      time.Time
 }
 
+// Stats is a snapshot of how much work the queue holds, for the metrics endpoint.
+type Stats struct {
+	// Queued jobs are waiting for a worker; Leased ones are being worked on.
+	Queued, Leased int64
+	// Delayed jobs are waiting out a retry backoff.
+	Delayed int64
+	// Dead jobs failed for good and are kept for an operator to inspect.
+	Dead int64
+	// OldestAge is how long the oldest job still on the stream (queued or leased)
+	// has been there. Zero when the stream is empty.
+	OldestAge time.Duration
+}
+
+// Stater is the optional part of a Port that reports its depth. A queue that
+// cannot says nothing, and the metrics endpoint then omits the queue gauges.
+type Stater interface {
+	Stats(ctx context.Context) (Stats, error)
+}
+
 // Port is the queue's own abstract interface (mirrors internal/cost.
 // BudgetGate / kernel.ToolExecutor's own decoupling idiom): RedisStreams
 // (redis_streams.go) is the demo's own adapter — NATS JetStream remains
