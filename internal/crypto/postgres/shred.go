@@ -9,15 +9,18 @@ import (
 )
 
 // Shred marks one key permanently, irreversibly unusable — the erasure act
-// itself (README.md §5, task 5.4, FR-080): the row and its wrapped
-// ciphertext stay (so a verifier can prove a key was destroyed, not merely
-// forgotten), but Unwrap (internal/crypto/postgres/keystore.go) now always returns
-// crypto.ErrKeyShredded for it. This is exactly the status flip
+// itself (README.md §5, task 5.4, FR-080): the row stays (so a verifier can prove
+// a key was destroyed, not merely forgotten: its status and shredded_at say so)
+// but its wrapped key is emptied in the same statement, so nothing is left to
+// unwrap with the KEK, and Unwrap (internal/crypto/postgres/keystore.go) always
+// returns crypto.ErrKeyShredded for it. A backup or WAL taken before the shred
+// still holds the old bytes: the only complete remedy for those is retiring the
+// KEK they were wrapped under. This is exactly the status flip
 // keystore_integration_test.go's TestKeyStore_UnwrapAfterShredFails already
 // exercised by hand, promoted to the real implementation it named.
 func Shred(ctx context.Context, tx pgx.Tx, keyID string) error {
 	tag, err := tx.Exec(ctx,
-		`UPDATE encryption_keys SET status = 'shredded', shredded_at = now() WHERE key_id = $1 AND status = 'active'`,
+		`UPDATE encryption_keys SET status = 'shredded', shredded_at = now(), wrapped_dek = '\x' WHERE key_id = $1 AND status = 'active'`,
 		keyID,
 	)
 	if err != nil {
@@ -35,7 +38,7 @@ func Shred(ctx context.Context, tx pgx.Tx, keyID string) error {
 // erasure is "every session's key," not a single row.
 func ShredTenant(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) ([]string, error) {
 	rows, err := tx.Query(ctx,
-		`UPDATE encryption_keys SET status = 'shredded', shredded_at = now()
+		`UPDATE encryption_keys SET status = 'shredded', shredded_at = now(), wrapped_dek = '\x'
 		 WHERE tenant_id = $1 AND status = 'active' RETURNING key_id`,
 		tenantID,
 	)

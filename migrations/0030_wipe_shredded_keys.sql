@@ -1,0 +1,14 @@
+-- Shredding a key used to flip encryption_keys.status to 'shredded' and keep
+-- wrapped_dek (see 0004): the row proved the key was retired, and KeyStore.Unwrap
+-- refused it. The bytes stayed, though, so anyone with database access and the KEK
+-- could still unwrap them and read what the key sealed. Irreversibility rested on
+-- that status check alone.
+--
+-- Shred now empties wrapped_dek in the same statement that sets the status
+-- (internal/crypto/postgres/shred.go). This brings keys shredded before that change
+-- to the same state. The status and shredded_at still prove the key was retired; the
+-- column stays NOT NULL, so an empty bytea is what "destroyed" looks like.
+--
+-- Data only, so old and new code run against it together: nothing reads wrapped_dek
+-- of a shredded key, because Unwrap checks the status first.
+UPDATE encryption_keys SET wrapped_dek = '\x' WHERE status = 'shredded';

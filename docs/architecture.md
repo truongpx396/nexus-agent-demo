@@ -829,7 +829,7 @@ sequenceDiagram
     Op->>CLI: nexusd erase --tenant=name, or --session=id
     CLI->>PG: one tenant-scoped transaction
     CLI->>E: EraseTenant or EraseSession
-    E->>PG: UPDATE encryption_keys SET status = shredded
+    E->>PG: UPDATE encryption_keys SET status = shredded and wrapped_dek empty
     E->>PG: find the sessions those keys sealed
     E->>PG: delete the derived artifacts of those sessions
     loop each affected session
@@ -840,7 +840,7 @@ sequenceDiagram
     Note over PG: event rows stay. Structure, payload_digest and the audit chain are intact,<br/>so replay and verify-chain still work. KeyStore.Unwrap now returns ErrKeyShredded.
 ```
 
-The row and its `wrapped_dek` stay on purpose, so a verifier can prove a key was retired. See [observation 3](#where-the-code-differs-from-the-docs) for what that does and does not guarantee.
+The row stays so a verifier can prove a key was retired, but its `wrapped_dek` is emptied in the same statement, so there is nothing left to unwrap. A database backup taken before the shred still holds the old bytes; see [observation 3](#where-the-code-differs-from-the-docs).
 
 Source: [`cmd/nexusd/cli_erase.go`](../cmd/nexusd/cli_erase.go), [`internal/crypto/postgres/erase.go`](../internal/crypto/postgres/erase.go), [`internal/crypto/postgres/shred.go`](../internal/crypto/postgres/shred.go), [`migrations/0004_encryption_keys.sql`](../migrations/0004_encryption_keys.sql).
 
@@ -854,7 +854,7 @@ Found while drawing the diagrams above. **Checked** means a test or a reproducti
 |---|---|---|---|
 | 1 | An approval decision resumes the run in the HTTP request (`Decisions` → `Resumer` → `Kernel.Resume`) and drains it. Nothing on that path calls `PublishEvent`. Event-bus delivery, the approval notification and the terminal span all live there, so a connected SSE client and a Telegram, Zalo or email conversation get no live events from the resumed turns, a second approval raised in the same run sends no notification, and a run that ends on this path emits no `run.terminal` span. A reconnect replays the history from Postgres. | `internal/oversight/decide.go`, `internal/oversight/rest/handler.go`, `internal/runs/rest/broker.go`; `PublishEvent` has two callers, both elsewhere | read |
 | 2 | After an approved call, the next model prompt holds two `tool_result` blocks for one `tool_use`: the `awaiting_approval` placeholder the kernel appended at suspension, and the real result appended on resume. Nothing filters the placeholder in `Rehydrate`, in `Resume` or in the Anthropic request builder. The scripted provider ignores prompts, so no test sees it. Whether a hosted model accepts that shape was not tried. | a throwaway kernel test with a recording provider: the prompt after a grant held 2 blocks for `tu1`, want 1 | checked against the scripted provider |
-| 3 | Erasure sets `encryption_keys.status = 'shredded'` and keeps `wrapped_dek`. `Unwrap` refuses a shredded key, but the wrapped bytes remain, so anyone with database access and the KEK file could still unwrap them. Irreversibility rests on that status check and on the KEK, not on the key being gone. The README says the DEK "is destroyed". | `internal/crypto/postgres/shred.go`, `keystore.go`, `migrations/0004_encryption_keys.sql`; no code ever clears `wrapped_dek` | read |
+| 3 | **Fixed.** Erasure used to set `encryption_keys.status = 'shredded'` and keep `wrapped_dek`, so anyone with database access and the KEK file could still unwrap what the key sealed: irreversibility rested on the status check alone. Shredding now empties `wrapped_dek` in the same statement, and migration 0030 does the same for keys shredded earlier. The row stays as proof the key was retired. A backup or WAL taken before the shred still holds the old bytes, and only retiring the KEK they were wrapped under removes those. | `internal/crypto/postgres/shred.go`, `migrations/0030_wipe_shredded_keys.sql` | checked: integration tests for both |
 | 4 | A DEK is minted per session (and per OAuth connection and per cron schedule), not once per tenant. The README says "a KEK wraps per-tenant DEKs". Tenant erasure shreds all of a tenant's active keys; `--session` shreds one session's. | `NewDEK` call sites in `runs`, `delegate`, `teams`, `runctl/fork`, `connectors`, `cron` | read |
 | 5 | The README and CLAUDE.md say the superuser `nexus` role is for migrations only. The running server also opens a pool with the admin DSN (`NEXUS_ADMIN_DATABASE_URL`, falling back to the migrate DSN) for the tenant directory and the orphan scan. | `adminDSN` and its callers in `cmd/nexusd/background.go` | read |
 | 6 | `provider.Route` picks a model id that is stored on the session, used to price the reservation and stamped on events, but it never reaches the provider: `Prompt` and `RunContext` carry no model id, and each adapter is bound to the one model it was configured with. `nexusd` also wraps a single provider, so failover has nothing to fail over to. | `internal/provider/provider.go`, `cmd/nexusd/compose.go`, `internal/provider/anthropic/anthropic.go` | read |
