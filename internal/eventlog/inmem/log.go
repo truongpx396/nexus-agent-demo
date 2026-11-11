@@ -115,3 +115,28 @@ func (l *Log) Delegations() []kernel.DelegateSuspendRequest {
 	defer l.mu.Unlock()
 	return append([]kernel.DelegateSuspendRequest(nil), l.delegations...)
 }
+
+// AppendBatch records every event or none: an event outside the taxonomy, or one
+// FailAppend refuses, rejects the whole batch before anything is written.
+func (l *Log) AppendBatch(_ context.Context, events []eventlog.Event) ([]eventlog.Event, error) {
+	for _, e := range events {
+		if !e.Type.Known() {
+			return nil, eventlog.UnknownTypeError{Type: e.Type}
+		}
+		if l.FailAppend != nil {
+			if err := l.FailAppend(e); err != nil {
+				return nil, err
+			}
+		}
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := make([]eventlog.Event, len(events))
+	for i, e := range events {
+		e.Seq = int64(len(l.events[e.SessionID])) + 1
+		e.CreatedAt = time.Now().UTC()
+		l.events[e.SessionID] = append(l.events[e.SessionID], e)
+		out[i] = e
+	}
+	return out, nil
+}

@@ -41,4 +41,12 @@ type EventLog interface {
 	// the tool_use that gates it (DelegateSuspendRequest). An adapter with
 	// nothing to record returns nil.
 	RecordDelegation(ctx context.Context, req DelegateSuspendRequest) error
+
+	// AppendBatch appends events for one session in order, as one atomic
+	// operation: every one is durable or none is, and the returned events carry
+	// the Seq and CreatedAt the log assigned. It exists for a run's opening
+	// events (one per resident tool, then the memory and the user's message):
+	// written one at a time that is a transaction, an advisory lock, a receipt
+	// and a signer round trip each, all before the caller has its answer.
+	AppendBatch(ctx context.Context, events []eventlog.Event) ([]eventlog.Event, error)
 }
