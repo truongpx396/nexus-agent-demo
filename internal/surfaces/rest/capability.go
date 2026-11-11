@@ -10,7 +10,7 @@ import (
 // Descriptor is this surface's static capability declaration (README task
 // 7.12) — REST can render full structured approval context, accepts
 // structured (JSON) input, and streams a run's events over SSE
-// (internal/runs/rest's handleEvents). Never per-request; a conformance test
+// (internal/runs/rest's StreamRunEvents). Never per-request; a conformance test
 // (capability_test.go) checks these claims against the surface's actual
 // behavior.
 var Descriptor = capability.Descriptor{

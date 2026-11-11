@@ -104,11 +104,11 @@ func TestForkRun_ReportsDigestDivergenceAndHexEncodesTheDigests(t *testing.T) {
 	if rec.Code != http.StatusOK || f.atSeq != 7 || f.overrides.ModelID != "claude-haiku-5-5" {
 		t.Fatalf("fork: status %d at_seq %d overrides %+v", rec.Code, f.atSeq, f.overrides)
 	}
-	var view ForkView
+	var view ForkRunResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &view); err != nil {
 		t.Fatalf("decode %q: %v", rec.Body, err)
 	}
-	if view.SessionID != child.String() || !view.DigestDiverged || view.ParentDigest != hex.EncodeToString([]byte{0xab, 0xcd}) || view.ChildDigest != "0102" {
+	if view.SessionID != child || !view.DigestDiverged || view.ParentDigestHex != hex.EncodeToString([]byte{0xab, 0xcd}) || view.ChildDigestHex != "0102" {
 		t.Errorf("view = %+v, want the child session, the divergence flag and hex digests: a fork must never read as a byte-identical replay", view)
 	}
 }

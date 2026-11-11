@@ -34,14 +34,19 @@ type Handler struct {
 	Control Controller
 }
 
-var _ restkit.Module = Handler{}
+var (
+	_ restkit.Module  = Handler{}
+	_ ServerInterface = Handler{}
+)
+
+// The routes, the request and response models and ServerInterface are generated
+// from the operations tagged "run-control" in api/openapi.yaml (api.gen.go).
+//
+//go:generate go tool oapi-codegen -config oapi-codegen.yaml ../../../api/openapi.yaml
 
 // Routes implements restkit.Module.
 func (h Handler) Routes(r restkit.Router) {
-	r.POST("/v1/runs/:id/cancel", h.handleCancelRun)
-	r.POST("/v1/runs/:id/steer", h.handleSteerRun)
-	r.POST("/v1/runs/:id/autonomy", h.handleTightenAutonomy)
-	r.POST("/v1/runs/:id/fork", h.handleForkRun)
+	RegisterHandlersWithOptions(r.Authenticated(), h, GinServerOptions{ErrorHandler: restkit.ParamError})
 }
 
 // fail answers an error from run control. The session being absent, in a state
@@ -61,32 +66,13 @@ func fail(c *gin.Context, op string, err error) {
 	}
 }
 
-// ForkView is what this surface exposes for one fork — translated from
-// runctl.ForkResult. DigestDiverged is surfaced explicitly and first — task
-// 6.11's own "reports digest divergence rather than presenting it as a
-// reproduction" is a caller-facing guarantee, not just an internal log line.
-type ForkView struct {
-	SessionID      string `json:"session_id"`
-	DigestDiverged bool   `json:"digest_diverged"`
-	ParentDigest   string `json:"parent_digest_hex"`
-	ChildDigest    string `json:"child_digest_hex"`
-}
-
-type cancelRequest struct {
-	Reason string `json:"reason"`
-}
-
-func (h Handler) handleCancelRun(c *gin.Context) {
+// CancelRun is POST /v1/runs/{id}/cancel.
+func (h Handler) CancelRun(c *gin.Context, id RunID) {
 	tenantID, _, ok := restkit.Principal(c)
 	if !ok {
 		return
 	}
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		restkit.Error(c, "invalid run id", http.StatusBadRequest)
-		return
-	}
-	var req cancelRequest
+	var req CancelRunRequest
 	if c.Request.ContentLength != 0 {
 		if !restkit.DecodeJSON(c, &req) {
 			return
@@ -96,31 +82,22 @@ func (h Handler) handleCancelRun(c *gin.Context) {
 		fail(c, "cancel", err)
 		return
 	}
-	c.JSON(http.StatusOK, map[string]string{"status": "aborted"})
+	c.JSON(http.StatusOK, CancelRunResponse{Status: "aborted"})
 }
 
-type steerRequest struct {
-	Input string `json:"input"`
-}
-
-// handleSteerRun delivers a message to a run. A conversational session paused in
+// SteerRun is POST /v1/runs/{id}/steer. It delivers a message to a run. A conversational session paused in
 // awaiting_input isn't mid-run, so there is nothing to steer: Send continues it
 // instead, durably appending the message and queueing the continuation for a
 // worker. An SSE connection that has been open since the run first paused (it
 // never saw a terminal event) picks the continuation up live over the same
 // Redis-backed event bus every other run publishes through, whichever process's
 // worker actually resumes it.
-func (h Handler) handleSteerRun(c *gin.Context) {
+func (h Handler) SteerRun(c *gin.Context, id RunID) {
 	tenantID, _, ok := restkit.Principal(c)
 	if !ok {
 		return
 	}
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		restkit.Error(c, "invalid run id", http.StatusBadRequest)
-		return
-	}
-	var req steerRequest
+	var req SteerRunRequest
 	if !restkit.DecodeJSON(c, &req) {
 		return
 	}
@@ -128,50 +105,35 @@ func (h Handler) handleSteerRun(c *gin.Context) {
 		fail(c, "steer", err)
 		return
 	}
-	c.JSON(http.StatusOK, map[string]string{"status": "steered"})
+	c.JSON(http.StatusOK, SteerRunResponse{Status: "steered"})
 }
 
-type tightenAutonomyRequest struct {
-	Target string `json:"target"`
-}
-
-func (h Handler) handleTightenAutonomy(c *gin.Context) {
+// TightenAutonomy is POST /v1/runs/{id}/autonomy.
+func (h Handler) TightenAutonomy(c *gin.Context, id RunID) {
 	tenantID, _, ok := restkit.Principal(c)
 	if !ok {
 		return
 	}
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		restkit.Error(c, "invalid run id", http.StatusBadRequest)
-		return
-	}
-	var req tightenAutonomyRequest
+	var req TightenAutonomyRequest
 	if !restkit.DecodeJSON(c, &req) {
 		return
 	}
-	if err := h.Control.TightenAutonomy(c.Request.Context(), tenantID, id, req.Target); err != nil {
+	if err := h.Control.TightenAutonomy(c.Request.Context(), tenantID, id, string(req.Target)); err != nil {
 		fail(c, "tighten autonomy", err)
 		return
 	}
-	c.JSON(http.StatusOK, map[string]string{"status": "tightened", "autonomy_level": req.Target})
+	c.JSON(http.StatusOK, TightenAutonomyResponse{Status: "tightened", AutonomyLevel: string(req.Target)})
 }
 
-type forkRequest struct {
-	AtSeq int64  `json:"at_seq"`
-	Model string `json:"model,omitempty"`
-}
-
-func (h Handler) handleForkRun(c *gin.Context) {
+// ForkRun is POST /v1/runs/{id}/fork. DigestDiverged is surfaced explicitly —
+// task 6.11's own "reports digest divergence rather than presenting it as a
+// reproduction" is a caller-facing guarantee, not just an internal log line.
+func (h Handler) ForkRun(c *gin.Context, id RunID) {
 	tenantID, _, ok := restkit.Principal(c)
 	if !ok {
 		return
 	}
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		restkit.Error(c, "invalid run id", http.StatusBadRequest)
-		return
-	}
-	var req forkRequest
+	var req ForkRunRequest
 	if !restkit.DecodeJSON(c, &req) {
 		return
 	}
@@ -180,8 +142,8 @@ func (h Handler) handleForkRun(c *gin.Context) {
 		fail(c, "fork", err)
 		return
 	}
-	c.JSON(http.StatusOK, ForkView{
-		SessionID: result.SessionID.String(), DigestDiverged: result.DigestDiverged,
-		ParentDigest: hex.EncodeToString(result.ParentDigest), ChildDigest: hex.EncodeToString(result.ChildDigest),
+	c.JSON(http.StatusOK, ForkRunResponse{
+		SessionID: result.SessionID, DigestDiverged: result.DigestDiverged,
+		ParentDigestHex: hex.EncodeToString(result.ParentDigest), ChildDigestHex: hex.EncodeToString(result.ChildDigest),
 	})
 }

@@ -63,7 +63,7 @@ type EventBusMessage struct {
 // DeltaDTO is one live, best-effort preview chunk — kernel.Kernel.OnChunk's
 // ChunkEvent, translated for the wire. It is never durable and never
 // replayed from Postgres history the way an ordinary eventlog.Event is
-// (handleEvents' history replay only ever reads eventlog.Event rows) — a
+// (StreamRunEvents' history replay only ever reads eventlog.Event rows) — a
 // subscriber that connects a moment too late simply never sees the ones it
 // missed. That's fine: the durable EventContent/EventToolUse this preview is
 // standing in for still lands right behind it, over the same channel, and
@@ -71,18 +71,19 @@ type EventBusMessage struct {
 // LangChain's on_chat_model_stream chunks have relative to the final
 // assembled message/checkpoint: ephemeral by design, not a weaker copy of
 // the durable record.
-type DeltaDTO struct {
-	Kind      string `json:"kind"`                  // "content" | "tool_use" | "reasoning"
-	Text      string `json:"text,omitempty"`        // Kind == "content" — never set for "reasoning" (see kernel.Kernel.OnChunk's own doc comment)
-	ToolUseID string `json:"tool_use_id,omitempty"` // Kind == "tool_use"
-	ToolName  string `json:"tool_name,omitempty"`   // Kind == "tool_use"
-}
+//
+// The wire shape is api/openapi.yaml's RunDelta, so a `delta` frame of the event
+// stream and the message on the Redis bus are one definition: Kind is "content" |
+// "tool_use" | "reasoning", Text is set only for "content" (never for "reasoning";
+// see kernel.Kernel.OnChunk's own doc comment), ToolUseID and ToolName only for
+// "tool_use".
+type DeltaDTO = RunDelta
 
 // published is one item flowing through the broker: a durably-appended
 // event, the error kernel.Kernel.Run yielded outside its own terminal-event
 // paths (a marshal/seal/append failure, not a modeled TerminalReason), or a
 // live Delta — mutually exclusive with Event/Err, and never carries a Seq,
-// which is exactly what lets handleEvents skip its Seq-based
+// which is exactly what lets StreamRunEvents skip its Seq-based
 // already-replayed check for one of these and forward it unconditionally.
 type published struct {
 	Event eventlog.Event
@@ -95,7 +96,7 @@ type published struct {
 // events — a delivery optimization, not a second source of truth:
 // store.Append is always the durable write, and always happens first
 // (kernel/loop.go). A subscriber that connects after a run has already
-// finished sees nothing here; handleEvents falls back to replaying the log
+// finished sees nothing here; StreamRunEvents falls back to replaying the log
 // from Postgres for that case, and combines the two (subscribe before
 // replay, then discard anything the live channel redelivers that the replay
 // already sent) to make the two sources gapless and duplicate-free together

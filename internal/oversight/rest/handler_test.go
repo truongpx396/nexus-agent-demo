@@ -124,7 +124,7 @@ func TestGrantApproval_DecidesAsTheCallerAndOnlyModifiesWhenGivenAnInput(t *test
 		t.Errorf("decidedBy = %q, want the authenticated user %q: a decision is attributed to whoever the token says, never to the request body", plain.decidedBy, user)
 	}
 	var out DecisionResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || out.SessionID != session.String() || out.ApprovalID != id.String() || out.Status != StatusResuming {
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || out.SessionID != session || out.ApprovalID != id || out.Status != DecisionResponseStatusResuming {
 		t.Errorf("response %q = %+v, want the approval and session named and the run resuming", rec.Body, out)
 	}
 
@@ -156,8 +156,8 @@ func TestDecision_ADecisionWhoseHandOffFailedIsStillAccepted(t *testing.T) {
 	d := &fakeDecisions{outcome: oversight.Outcome{ApprovalID: id, SessionID: uuid.New(), Resuming: false}}
 	rec := resttest.Do(t, serve(uuid.New(), fakeApprovals{}, d), http.MethodPost, "/v1/approvals/"+id.String()+"/grant", "")
 	var out DecisionResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || rec.Code != http.StatusAccepted || out.Status != StatusDecided {
-		t.Fatalf("status %d body %q, want 202 and status %q", rec.Code, rec.Body, StatusDecided)
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || rec.Code != http.StatusAccepted || out.Status != DecisionResponseStatusDecided {
+		t.Fatalf("status %d body %q, want 202 and status %q", rec.Code, rec.Body, DecisionResponseStatusDecided)
 	}
 }
 

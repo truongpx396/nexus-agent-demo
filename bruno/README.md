@@ -56,4 +56,4 @@ npx @usebruno/cli@4.3.0 run -r --env local --tags smoke \
   --env-var granteeId="$(awk '/^user_id:/ {print $2}' <<<"$out")"
 ```
 
-Requests run in folder order, which is what lets `Create run` feed the ones after it. When you change or add a route, add or update its request in the same change.
+Requests run in folder order, which is what lets `Create run` feed the ones after it. When you change or add a route, add or update its request in the same change. The routes themselves are described in [`api/openapi.yaml`](../api/openapi.yaml), which a test holds to the code; this collection is the hand-kept, runnable companion.

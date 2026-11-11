@@ -40,6 +40,15 @@ jobs:
         run: go mod tidy -diff
       - name: downloaded modules match go.sum
         run: go mod verify
+      # The REST models and each feature's ServerInterface are generated from
+      # api/openapi.yaml by the oapi-codegen that go.mod pins as a `tool`. A spec
+      # edit not followed by `make generate` (or a tool bump that changes the
+      # output) fails here instead of leaving the committed code describing a
+      # different API.
+      - name: generated code is up to date
+        run: |
+          go generate ./...
+          git diff --exit-code
 
   lint:
     runs-on: ubuntu-latest

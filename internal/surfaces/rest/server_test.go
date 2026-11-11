@@ -32,7 +32,7 @@ func TestServer_EveryModuleRouteIsAuthenticated(t *testing.T) {
 	h := restkit.NewServer(resttest.Verifier{TenantID: tenantID, UserID: userID}, pingModule{}).Handler()
 
 	// No token: the module cannot opt out of authentication, because the only
-	// way to register a route is Router.GET or Router.POST.
+	// way to register a route is Router.GET, Router.POST or Router.Authenticated.
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ping", nil))
 	if rec.Code != http.StatusUnauthorized {

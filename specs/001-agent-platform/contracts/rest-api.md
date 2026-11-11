@@ -2,6 +2,10 @@
 
 **Plan**: [../plan.md](../plan.md) | **Spec**: FR-026, FR-027, FR-071, FR-079, FR-102, FR-117–FR-124 | **Source**: `internal/surfaces/{rest,cli,telegram,zalo,email}`, `cmd/nexusd/serve.go`
 
+> **The machine-readable contract is [`api/openapi.yaml`](../../../api/openapi.yaml)** ([spec 006](../../006-openapi-contract/spec.md)): every route, body and
+> status below is in it, each feature's handler interface is generated from it, and a test holds it to the mounted routes. This page is the narrative;
+> where the two differ, the spec is right.
+
 Surfaces are **thin translators**: they authenticate, start a run through `runs.Launcher` (admit the session, mint its key, hand it to
 `runs.Starter`, implemented only by `kernelRunStarter`), read runs back through `runs.Reader`, and forward what comes back. They hold no
 control flow and never import `kernel/`; the REST surface imports no database code at all.
@@ -36,7 +40,7 @@ without needing a token (so "404 means unmounted" stays a usable conformance tec
 | `POST /v1/runs/{id}/steer` | `RunCtl` wired | body `{input}` — drained at a turn boundary; on an `awaiting_input` session it **transparently resumes** it |
 | `POST /v1/runs/{id}/autonomy` | `RunCtl` wired | body `{target}` — tighten only |
 | `POST /v1/runs/{id}/fork` | `RunCtl` wired | body `{at_seq, model?}` → `{session_id, digest_diverged, parent_digest_hex, child_digest_hex}` |
-| `GET /v1/approvals`, `GET /v1/approvals/{id}` | `Oversight` wired | `ApprovalView` |
+| `GET /v1/approvals`, `GET /v1/approvals/{id}` | `Oversight` wired | `Approval` |
 | `POST /v1/approvals/{id}/grant` | `Oversight` wired | body `{modified_input?}` — present ⇒ `granted_modified` |
 | `POST /v1/approvals/{id}/deny` | `Oversight` wired | body `{reason}` |
 | `POST /v1/sessions/{id}/content-access-grants` | `Grants` wired | body `{grantee_id, reason, ttl_seconds?}` → **`201`** `{grant_id, session_id, grantee_id, reason, expires_at}` |
@@ -58,7 +62,7 @@ Optional-port routes are mounted only when their port is non-nil (`Oversight`, `
 `400` on invalid JSON, empty `input`, or an invalid `autonomy`. Admission goes through `controlplane.Port.AdmitRun`
 (see [control-plane-v1.md](control-plane-v1.md)); the harness digest is computed and pinned **before** the session is created.
 
-### `ApprovalView`
+### `Approval`
 
 `{approval_id, session_id, tool_id, ask_kind, status, context, expires_at, created_at}` — `context` is the decision-ready package
 (recipient/subject/attachment **digests**, effect class — never a bare identifier). Grant and deny record the decision, queue

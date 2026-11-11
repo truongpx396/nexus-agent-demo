@@ -19,9 +19,10 @@ body:json {
 }
 
 assert {
-  res.status: eq 200
+  res.status: eq 202
+  res.body.approval_id: isString
   res.body.session_id: isString
-  res.body.error: isUndefined
+  res.body.status: isString
 }
 
 docs {

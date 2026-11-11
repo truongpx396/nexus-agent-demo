@@ -21,6 +21,7 @@ import (
 	oversightpg "github.com/truongpx396/nexus-agent-demo/internal/oversight/postgres"
 	oversightrest "github.com/truongpx396/nexus-agent-demo/internal/oversight/rest"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
+	"github.com/truongpx396/nexus-agent-demo/internal/queue"
 	"github.com/truongpx396/nexus-agent-demo/internal/reliability"
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
 	runctlpg "github.com/truongpx396/nexus-agent-demo/internal/runctl/postgres"
@@ -202,13 +203,19 @@ func newRESTAPI(in *infra, svc *services, spanExp spanExporter) (*runsrest.Handl
 	runsAPI.Exporter = spanExp
 	svc.kernel.OnChunk = publishDeltas(runsAPI)
 
-	srv := restkit.NewServer(in.verifier,
+	return runsAPI, restkit.NewServer(in.verifier, restModules(runsAPI, svc, in.queue)...).Handler()
+}
+
+// restModules is every feature's REST module, in the order they mount. A route is
+// served only if its feature's module is here, and api/openapi.yaml describes
+// exactly the routes of these (api_contract_test.go).
+func restModules(runsAPI *runsrest.Handler, svc *services, q queue.Port) []restkit.Module {
+	return []restkit.Module{
 		runsAPI,
-		oversightrest.Handler{Approvals: svc.approvals, Decisions: oversight.Decisions{Approvals: svc.approvals, Resume: approvalScheduler{queue: in.queue}}},
+		oversightrest.Handler{Approvals: svc.approvals, Decisions: oversight.Decisions{Approvals: svc.approvals, Resume: approvalScheduler{queue: q}}},
 		contentrest.Handler{Grants: svc.grants},
 		runctlrest.Handler{Control: svc.ctl},
-	)
-	return runsAPI, srv.Handler()
+	}
 }
 
 // publishDeltas is the kernel's chunk callback: a live typing-style preview over

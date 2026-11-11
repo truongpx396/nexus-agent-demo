@@ -17,39 +17,14 @@ import (
 	restkit "github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
 )
 
-type createRunRequest struct {
-	Input      string `json:"input"`
-	DataLabel  string `json:"data_label,omitempty"`
-	Difficulty string `json:"difficulty,omitempty"`
-	// Autonomy pins the session's permission-chain autonomy level (Phase 3,
-	// internal/permissions/autonomy.go): "read_only" | "supervised" |
-	// "autonomous". Empty defaults to "supervised", matching
-	// store.CreateSession's own default.
-	Autonomy string `json:"autonomy,omitempty"`
-	// BudgetUSD, if set, is a per-task hard ceiling in decimal USD (e.g.
-	// "0.05") — internal/cost, Phase 4, task 4.5's worker-local, per-run
-	// ceiling. Parsed via cost.ParseDecimal (never a binary float) into a
-	// session-scoped budgets row created alongside the session itself.
-	// Empty means no session-level ceiling — cost.Gate.Reserve resolves
-	// DecisionSkip for this leg (a tenant-scoped ceiling, if configured
-	// out of band, still applies).
-	BudgetUSD string `json:"budget_usd,omitempty"`
-	// Conversational opts this session into pause-not-terminate semantics
-	// (runs.Request.Conversational's own doc comment, kernel.RunConfig.
-	// Conversational's underlying one) — a plain reply suspends the
-	// session awaiting the caller's next message instead of ending the
-	// run, and POST .../steer transparently resumes it in place rather
-	// than the caller needing to start a new session. Omitted/false
-	// reproduces today's one-task-per-session behavior exactly; the web
-	// chat UI is the first caller to set it true.
-	Conversational bool `json:"conversational,omitempty"`
-}
-
-type createRunResponse struct {
-	RunID string `json:"run_id"`
-}
-
-func (h *Handler) handleCreateRun(c *gin.Context) {
+// CreateRun is POST /v1/runs. The request is api/openapi.yaml's
+// CreateRunRequest: BudgetUSD is parsed by cost.ParseDecimal (never a binary
+// float) into a session-scoped budgets row created alongside the session, and
+// empty means no session-level ceiling; Conversational opts the session into
+// pause-not-terminate semantics (runs.LaunchRequest.Conversational), so a plain
+// reply suspends it awaiting the next message and POST .../steer resumes it in
+// place.
+func (h *Handler) CreateRun(c *gin.Context) {
 	// Task 7.13: the turn-submitting principal, resolved fresh from THIS
 	// request — ResolvePrincipal reads the same verified principal Principal
 	// does, typed as capability.Principal, since starting a run is the clearest
@@ -62,7 +37,7 @@ func (h *Handler) handleCreateRun(c *gin.Context) {
 	tenantID, userID := principal.TenantID, principal.UserID
 	ctx := c.Request.Context()
 
-	var req createRunRequest
+	var req CreateRunRequest
 	if !restkit.DecodeJSON(c, &req) {
 		return
 	}
@@ -70,13 +45,12 @@ func (h *Handler) handleCreateRun(c *gin.Context) {
 		restkit.Error(c, `"input" is required`, http.StatusBadRequest)
 		return
 	}
+	// Empty defaults to "supervised", matching store.CreateSession's own default.
 	autonomy := req.Autonomy
-	switch autonomy {
-	case "":
-		autonomy = "supervised"
-	case "read_only", "supervised", "autonomous":
-		// valid
-	default:
+	if autonomy == "" {
+		autonomy = CreateRunRequestAutonomySupervised
+	}
+	if !autonomy.Valid() {
 		restkit.Error(c, `"autonomy" must be one of "read_only", "supervised", "autonomous"`, http.StatusBadRequest)
 		return
 	}
@@ -113,7 +87,7 @@ func (h *Handler) handleCreateRun(c *gin.Context) {
 	}
 	launched, err := h.Launcher.Launch(ctx, runs.LaunchRequest{
 		TenantID: tenantID, UserID: userID, SurfaceID: "rest", Input: req.Input,
-		DataLabel: provider.DataLabel(req.DataLabel), Difficulty: provider.Difficulty(req.Difficulty), Autonomy: autonomy,
+		DataLabel: provider.DataLabel(req.DataLabel), Difficulty: provider.Difficulty(req.Difficulty), Autonomy: string(autonomy),
 		BudgetUSD: req.BudgetUSD, Conversational: req.Conversational,
 		SkillSetDigest: skillSetDigest, MCPCatalogDigest: mcpCatalogDigest, MCPCatalog: mcpCatalog,
 	})
@@ -128,7 +102,7 @@ func (h *Handler) handleCreateRun(c *gin.Context) {
 	}
 	go h.publishUntilDone(tenantID, launched.SessionID, launched.Events)
 
-	c.JSON(http.StatusAccepted, createRunResponse{RunID: launched.SessionID.String()})
+	c.JSON(http.StatusAccepted, CreateRunResponse{RunID: launched.SessionID})
 }
 
 // publishUntilDone drains the runs.Starter's event channel, publishing each
@@ -151,7 +125,7 @@ func (h *Handler) publishUntilDone(tenantID, sessionID uuid.UUID, events <-chan 
 // emitTerminalSpan is README task 13.12's one concrete span-emission call
 // site: one content-free "run.terminal" span per completed run —
 // session.id/tenant.id/terminal_reason, the same three fields
-// getRunResponse already exposes over plain HTTP, now also reaching
+// Run already exposes over plain HTTP, now also reaching
 // whichever Exporter (stdout or OTLPExporter, internal/obs) cmd/nexusd
 // wired in. TerminalReason is read from the session row (a plaintext
 // column, eventlog.Session's own field — never the sealed event payload), so

@@ -1,0 +1,17 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/oapi-codegen/oapi-codegen/HEAD/configuration-schema.json
+# Generates this package's models and its ServerInterface from the operations
+# tagged "content-access" in api/openapi.yaml. Run `make generate` after editing the spec.
+package: rest
+output: api.gen.go
+generate:
+  gin-server: true
+  models: true
+compatibility:
+  # Without this an enum value is a bare package-level name (Internal, Content,
+  # Public), which would collide with the handler code beside it.
+  always-prefix-enum-values: true
+output-options:
+  # RunID, not RunId: the initialisms the rest of the codebase spells.
+  name-normalizer: ToCamelCaseWithInitialisms
+  include-tags:
+    - content-access
