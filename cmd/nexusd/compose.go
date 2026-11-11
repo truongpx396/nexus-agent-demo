@@ -200,7 +200,7 @@ func newRESTAPI(in *infra, svc *services, spanExp spanExporter) (*runsrest.Handl
 
 	srv := restkit.NewServer(in.verifier,
 		runsAPI,
-		oversightrest.Handler{Approvals: svc.approvals, Decisions: oversight.Decisions{Resume: svc.resumer, Settled: svc.ctl}},
+		oversightrest.Handler{Approvals: svc.approvals, Decisions: oversight.Decisions{Approvals: svc.approvals, Resume: approvalScheduler{queue: in.queue}}},
 		contentrest.Handler{Grants: svc.grants},
 		runctlrest.Handler{Control: svc.ctl},
 	)

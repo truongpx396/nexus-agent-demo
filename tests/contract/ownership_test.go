@@ -79,6 +79,7 @@ var kernelTables = map[string]map[string]string{
 		"internal/store":     "the aggregate's own storage: create, read, list and set the status of a session",
 		"internal/runctl":    "the session lifecycle controller: cancel, steer, resume and the idle sweep move a session between statuses, orphan recovery lists the running ones, and tightening autonomy changes the permission posture every run is configured with",
 		"internal/tenancy":   "the operator's lookup of which tenant owns a session",
+		"internal/oversight": "recovery finds an approval decided while its run is still suspended: the session status is the evidence that nothing resumed it",
 		"internal/reporting": "the read model",
 	},
 	"events": {

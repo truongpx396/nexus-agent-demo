@@ -17,11 +17,12 @@ body:json {
 }
 
 assert {
-  res.status: eq 200
+  res.status: eq 202
+  res.body.approval_id: isString
   res.body.session_id: isString
-  res.body.error: isUndefined
+  res.body.status: isString
 }
 
 docs {
-  Refuses the tool call. `reason` is optional, and so is the whole body. Like `Grant approval`, it answers `200` with a `{"session_id", "events_appended", "error"?}` acknowledgement.
+  Refuses the tool call. `reason` is optional, and so is the whole body. Like `Grant approval`, it answers `202` with `{"approval_id", "session_id", "status"}` once the decision is recorded, and the run resumes on a queue worker to end under `permission_denied`. `404` and `409` as for a grant.
 }

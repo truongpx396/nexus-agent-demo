@@ -115,16 +115,17 @@ func toolResultsFor(p provider.Prompt, toolUseID string) (texts []string) {
 
 func terminalReasonOf(t *testing.T, events []eventlog.Event) string {
 	t.Helper()
-	for _, e := range ofType(events, eventlog.EventTerminal) {
-		var p struct {
-			Reason string `json:"reason"`
-		}
-		if err := json.Unmarshal(e.Payload, &p); err != nil {
-			t.Fatal(err)
-		}
-		return p.Reason
+	terminals := ofType(events, eventlog.EventTerminal)
+	if len(terminals) == 0 {
+		return ""
 	}
-	return ""
+	var p struct {
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal(terminals[0].Payload, &p); err != nil {
+		t.Fatal(err)
+	}
+	return p.Reason
 }
 
 // A suspension pairs its tool_use with a placeholder result so the log is

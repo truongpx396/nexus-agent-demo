@@ -285,7 +285,6 @@ func TestRun_AFailureToRecordTheSuspensionIsSurfaced(t *testing.T) {
 // does while a run is in flight.
 type levelSpy struct {
 	log    *inmem.Log
-	tenant uuid.UUID
 	levels []string
 }
 
