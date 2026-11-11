@@ -12,12 +12,14 @@ export interface ApprovalView {
   created_at: string;
 }
 
-// ResumeOutcome, internal/oversight/rest/handler.go -- the response for
-// grant/deny.
-export interface ResumeOutcome {
+// DecisionResponse, internal/oversight/rest/handler.go -- the response for
+// grant/deny. The decision is recorded when it arrives; the run then resumes on a
+// queue worker, so there is no count of events. "decided" means the hand-off to the
+// queue failed and recovery will resume the run.
+export interface DecisionResponse {
+  approval_id: string;
   session_id: string;
-  events_appended: number;
-  error?: string;
+  status: "resuming" | "decided";
 }
 
 // Decision-ready context for a tool-call approval (handler.go's own doc

@@ -44,6 +44,11 @@ type Provider struct {
 	Client  *http.Client // defaults to a client with a response-header timeout (defaultClient)
 }
 
+var _ provider.ModelBound = (*Provider)(nil)
+
+// BoundModel implements provider.ModelBound: every call goes to p.Model.
+func (p *Provider) BoundModel() string { return p.Model }
+
 func New(baseURL, model, apiKey string) *Provider {
 	return &Provider{BaseURL: baseURL, Model: model, APIKey: apiKey}
 }

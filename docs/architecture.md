@@ -135,7 +135,8 @@ flowchart LR
     worker --> runctl
     runctl -->|"Continue"| K
     plan -->|"Continue"| K
-    rest -->|"grant or deny an approval"| resumer
+    rest -.->|"grant or deny: record the decision, queue the resume"| worker
+    worker -->|"approval job"| resumer
     resumer -->|"Resume"| K
     deleg -->|"Run child · ResumeDelegation"| K
     teams -->|"Run members"| K
@@ -145,7 +146,7 @@ flowchart LR
 |---|---|---|
 | `Seed` | `kernelRunStarter.StartRun` | the HTTP request goroutine: a few durable writes, then it enqueues a job |
 | `Continue` | `runctl.Control.Resume`, driven by a queue job of kind start, resume or converse; also `plan` steps | a queue worker holding the session lock |
-| `Resume` | `oversight.Resumer`, from `POST /v1/approvals/{id}/grant` or `/deny` | the HTTP request goroutine, with no queue and no session lock |
+| `Resume` | `oversight.Resumer.ResumeDecided`, from an approval job a worker leases (queued by `POST /v1/approvals/{id}/grant` or `/deny`, or by recovery) | a queue worker holding the session lock |
 | `ResumeDelegation` | `delegate.resumeParent` | the finishing child's goroutine, after it takes the parent's session lock |
 | `Run` | `delegate.Spawn` (a child) and `teams` (members) | a detached goroutine in the process that handled the parent's tool call |
 | `ResumeConversation` | no production caller: a follow-up appends the message, enqueues a job and the worker uses `Continue` | n/a |
@@ -280,7 +281,7 @@ flowchart LR
 
 ## 6. Session lifecycle
 
-`sessions.status` is a projection of the log. The kernel writes it with `SetStatus` in a transaction of its own, right after appending the event that justifies it.
+`sessions.status` is a projection of the log. An event that justifies a status (the terminal event, a suspension, the conversational pause) is written with it in one transaction (`AppendAndSetStatus`); a status no event justifies (a run starting or resuming) is written with `SetStatus` on its own.
 
 ```mermaid
 stateDiagram-v2
@@ -628,7 +629,7 @@ sequenceDiagram
     C->>PG: INSERT audit_receipts
     S->>PG: COMMIT
     L-->>K: the event, with its seq and created_at
-    K->>L: SetStatus, in a separate transaction
+    Note over K,L: a status change no event justifies goes through SetStatus, on its own.<br/>One an event does justify goes through AppendAndSetStatus, in this same transaction
 ```
 
 - If `signerd` is unreachable the append fails, so `nexusd` cannot write events without it. `/readyz` checks it for the same reason.
@@ -648,6 +649,8 @@ sequenceDiagram
     participant A as oversight.Approvals
     actor H as Approver
     participant R as oversight/rest
+    participant Q as Redis queue
+    participant W as Queue worker
     participant RS as oversight.Resumer
 
     K->>T: Execute(tool_use)
@@ -659,12 +662,16 @@ sequenceDiagram
     Note over K: the generator stops with no terminal event
     H->>R: GET /v1/approvals/id, a decision-ready context and never a bare id
     H->>R: POST /v1/approvals/id/grant, optionally with modified_input
-    R->>RS: Grant, GrantModified or Deny
-    RS->>A: Tx: lock the row, require pending, record the decision and its event
+    R->>A: Tx: lock the row, require pending, record the decision and its event
     Note over A: a modified input recomputes the digest and re-binds the approval
-    alt denied or invalidated
+    R->>Q: XADD an approval job (the approval id only)
+    R-->>H: 202 with approval_id, session_id and status resuming
+    Q->>W: lease the job, take the session lock
+    W->>RS: ResumeDecided(approval)
+    RS->>RS: already answered? then nothing to do
+    alt denied
         RS->>K: Resume(denied)
-        K->>L: Append a synthetic tool_result, then terminal permission_denied
+        K->>L: Append the real tool_result in place of the placeholder, then terminal permission_denied
     else granted
         RS->>RS: rehydrate the transcript and restore the taint state
         RS->>K: Resume(granted, approved digest)
@@ -679,14 +686,16 @@ sequenceDiagram
             K->>K: continue the turn loop
         end
     end
-    R-->>H: 200 with session_id and events_appended
+    W->>Q: publish every event to the bus, then ack the job
 ```
 
-- Suspending is three commits, not one: the placeholder result and `approval_requested`, then the status, then the approval row. The kernel wraps each failure with what was already written.
+- Suspending is three commits: the placeholder result, then `approval_requested` together with the status (one atomic write), then the approval row in the hook's own transaction. A failure in the last leaves a suspended run with no approval to resolve, and nothing recovers that yet ([observation 11](#where-the-code-differs-from-the-docs)). The kernel wraps each failure with what was already written.
+- Deciding and resuming are separate. The decision commits first and is answered `202`, so a client that disconnects loses nothing. The resume then runs on a worker like any other run: it holds the session lock, publishes to the event bus (so a connected SSE client and a Telegram, Zalo or email conversation see the result), and is retried by the queue.
+- If the queue cannot be reached the decision still stands, the answer says `decided` instead of `resuming`, and recovery resumes any run left suspended behind a decided approval. `ResumeDecided` is safe to run twice: a call that already has its real result is skipped.
+- The placeholder is replaced in place by the real result, so the model sees one `tool_result` per `tool_use`.
 - Steering or cancelling a suspended run invalidates its pending approval and appends a synthetic result, so the model is told the call was superseded.
-- A decision resumes the run inside the HTTP request, not through the queue, and its events do not go through `PublishEvent`. [Observation 1](#where-the-code-differs-from-the-docs) lists what follows from that.
 
-Source: [`kernel/terminal.go`](../kernel/terminal.go), [`internal/oversight/approval.go`](../internal/oversight/approval.go), [`internal/oversight/resume.go`](../internal/oversight/resume.go), [`internal/oversight/rest/handler.go`](../internal/oversight/rest/handler.go), [`internal/tools/execute.go`](../internal/tools/execute.go).
+Source: [`kernel/terminal.go`](../kernel/terminal.go), [`internal/oversight/decide.go`](../internal/oversight/decide.go), [`internal/oversight/resume.go`](../internal/oversight/resume.go), [`internal/oversight/rest/handler.go`](../internal/oversight/rest/handler.go), [`cmd/nexusd/approvals.go`](../cmd/nexusd/approvals.go), [`internal/tools/execute.go`](../internal/tools/execute.go).
 
 ## F6 Crash recovery
 
@@ -725,7 +734,7 @@ sequenceDiagram
 ```
 
 - A write-ahead claim goes `in_flight` before an effect leaves the process and is resolved by a probe or a person, never silently re-executed and never discarded. Resume refuses to start while one is unresolved.
-- The orphan scan trusts `status = running`, which is a projection written in its own transaction. It is not a periodic loop on purpose: an orphan whose resume fails for good would be re-enqueued forever.
+- The orphan scan trusts `status = running`. A terminal event and a suspension now commit with their status, so a finished or suspended run is not seen as running; a run that starts or resumes sets `running` on its own. It is not a periodic loop on purpose: an orphan whose resume fails for good would be re-enqueued forever.
 - A suspended or awaiting-input session is never treated as an orphan, and `Resume` refuses both states.
 
 Source: [`internal/runctl/recovery.go`](../internal/runctl/recovery.go), [`internal/runctl/resume.go`](../internal/runctl/resume.go), [`kernel/hygiene.go`](../kernel/hygiene.go), [`internal/tools/dispatch.go`](../internal/tools/dispatch.go), [`cmd/nexusd/background.go`](../cmd/nexusd/background.go).
@@ -811,7 +820,7 @@ sequenceDiagram
 - `tenant_id` in the path is a routing key, not a credential. The secret is checked before the body is parsed.
 - Redelivery is caught by `update_id` (a delivery id), not by a timestamp window, so there is no replay bound. The rate limit is per tenant, not per sender, and in memory, so per process.
 - This lock is keyed on the surface's `session_key`, deliberately not the session id the queue workers lock for a whole run: sharing one would make every delivery wait out the turn in flight.
-- A decision on an approval raised from a chat run goes through the REST approval path (F5), so see observation 1 for what a chat user does and does not see afterwards.
+- A decision on an approval raised from a chat run goes through the REST approval path (F5). Its resume runs on a worker and publishes to the bus, so the chat user receives the result like any other reply.
 
 Source: [`internal/surfaces/telegram/webhook.go`](../internal/surfaces/telegram/webhook.go), [`internal/surfaces/lock.go`](../internal/surfaces/lock.go), [`internal/runctl/converse.go`](../internal/runctl/converse.go), [`cmd/nexusd/surfaces_wiring.go`](../cmd/nexusd/surfaces_wiring.go).
 
@@ -848,17 +857,20 @@ Source: [`cmd/nexusd/cli_erase.go`](../cmd/nexusd/cli_erase.go), [`internal/cryp
 
 ## Where the code differs from the docs
 
-Found while drawing the diagrams above. **Checked** means a test or a reproduction; **read** means the code was read and not run. None of these is fixed here; each deserves a decision in the spec that owns it.
+Found while drawing the diagrams above. **Checked** means a test or a reproduction; **read** means the code was read and not run. Rows marked fixed were resolved after this document first listed them; the rest are open, and each deserves a decision in the spec that owns it.
 
 | # | What the code does | Evidence | Status |
 |---|---|---|---|
-| 1 | An approval decision resumes the run in the HTTP request (`Decisions` → `Resumer` → `Kernel.Resume`) and drains it. Nothing on that path calls `PublishEvent`. Event-bus delivery, the approval notification and the terminal span all live there, so a connected SSE client and a Telegram, Zalo or email conversation get no live events from the resumed turns, a second approval raised in the same run sends no notification, and a run that ends on this path emits no `run.terminal` span. A reconnect replays the history from Postgres. | `internal/oversight/decide.go`, `internal/oversight/rest/handler.go`, `internal/runs/rest/broker.go`; `PublishEvent` has two callers, both elsewhere | read |
-| 2 | After an approved call, the next model prompt holds two `tool_result` blocks for one `tool_use`: the `awaiting_approval` placeholder the kernel appended at suspension, and the real result appended on resume. Nothing filters the placeholder in `Rehydrate`, in `Resume` or in the Anthropic request builder. The scripted provider ignores prompts, so no test sees it. Whether a hosted model accepts that shape was not tried. | a throwaway kernel test with a recording provider: the prompt after a grant held 2 blocks for `tu1`, want 1 | checked against the scripted provider |
+| 1 | **Fixed.** An approval decision used to resume the run inside the HTTP request and drain it, never calling `PublishEvent`, so connected SSE clients and chat conversations got no live events from the resumed turns, a second approval in the same run sent no notification, and a run that ended on that path emitted no `run.terminal` span. A decision now records itself, answers `202`, and queues an approval job that a worker resumes under the session lock, publishing as every other run does. | `internal/oversight/decide.go`, `internal/oversight/resume.go`, `cmd/nexusd/approvals.go` | checked: unit tests, and integration tests for `ResumeDecided`, its repeat, and recovery |
+| 2 | **Fixed.** After an approved call the next model prompt held two `tool_result` blocks for one `tool_use`: the `awaiting_approval` placeholder and the real result. `Rehydrate` now picks one answer per call and `Resume` replaces the placeholder in place; the scripted provider now refuses a malformed prompt, so a test sees it. | `kernel/rehydrate.go`, `kernel/transcript.go`, `internal/provider/validate.go` | checked: kernel tests and mutation checks |
 | 3 | Erasure sets `encryption_keys.status = 'shredded'` and keeps `wrapped_dek`. `Unwrap` refuses a shredded key, but the wrapped bytes remain, so anyone with database access and the KEK file could still unwrap them. Irreversibility rests on that status check and on the KEK, not on the key being gone. The README says the DEK "is destroyed". | `internal/crypto/postgres/shred.go`, `keystore.go`, `migrations/0004_encryption_keys.sql`; no code ever clears `wrapped_dek` | read |
 | 4 | A DEK is minted per session (and per OAuth connection and per cron schedule), not once per tenant. The README says "a KEK wraps per-tenant DEKs". Tenant erasure shreds all of a tenant's active keys; `--session` shreds one session's. | `NewDEK` call sites in `runs`, `delegate`, `teams`, `runctl/fork`, `connectors`, `cron` | read |
 | 5 | The README and CLAUDE.md say the superuser `nexus` role is for migrations only. The running server also opens a pool with the admin DSN (`NEXUS_ADMIN_DATABASE_URL`, falling back to the migrate DSN) for the tenant directory and the orphan scan. | `adminDSN` and its callers in `cmd/nexusd/background.go` | read |
-| 6 | `provider.Route` picks a model id that is stored on the session, used to price the reservation and stamped on events, but it never reaches the provider: `Prompt` and `RunContext` carry no model id, and each adapter is bound to the one model it was configured with. `nexusd` also wraps a single provider, so failover has nothing to fail over to. | `internal/provider/provider.go`, `cmd/nexusd/compose.go`, `internal/provider/anthropic/anthropic.go` | read |
+| 6 | `provider.Route` picks a model id, but nothing in a model call carries it: `Prompt` and `RunContext` have no model field and each adapter is bound to the one model it was configured with, and `nexusd` wraps a single provider, so failover has nothing to fail over to. The cost ceiling used to be priced under the routed model and enforced against a figure that was not on the bill. It is now priced under the model the provider serves (`provider.ServedModel`), and the router's choice is kept in `route_reason`. Routing still does not dispatch. | `internal/provider/provider.go`, `internal/provider/bound.go`, `internal/runs/launch.go`, `cmd/nexusd/compose.go` | checked: a launcher test and a seed test |
 | 7 | `Kernel.PrunePolicy` and `Kernel.CondenseThresholdBytes` are never set by `cmd/nexusd`, so live pruning and condensation are off in the shipped binary. | no non-test caller sets either | checked by search |
 | 8 | Delegated children and team members run on detached goroutines in the process that handled the parent's tool call, not through the queue or its lock. | `internal/delegate/spawn.go`, `internal/teams/lifecycle.go` | read |
 | 9 | Live content previews cross Redis Pub/Sub as plaintext. The code accepts this on the assumption that Redis is on a private network. Durable events on the same bus are sealed. | `PublishDelta` in `internal/runs/rest/broker.go` | read |
 | 10 | The README's list of tenant tables is out of date against the 37 tables in `tableOwners` (for example `claims`, not `idempotency_claims`; there is no `tools`, `tool_profiles` or `catalog_manifests` table), and its repository-layout block lists `runs/`, `surfaces/`, `connectors/`, `retrieval/`, `contentaccess/` and `tenancy/` twice. This document takes its table list from `tests/contract/ownership_test.go`. | the two files side by side | read |
+| 11 | A suspension is still three commits. The placeholder result is appended first, `approval_requested` and the status commit together, and the approval row (or the delegation bind) is written afterwards in the hook's own transaction. A failure or a crash before the last leaves a suspended run with no approval to resolve, and nothing recovers it: orphan recovery looks for `running`, and `ListUnresumed` for an approval that exists. Closing it means joining the hook into the suspension's transaction. | `kernel/terminal.go`, `internal/eventlog/postgres/log.go`, `cmd/nexusd/ports.go` | read |
+| 12 | A crash between `Reserve` and `Reconcile` leaves the tenant's Redis counter charged for the full worst case and the ledger with no record of it. The counter is on the safe side, which matches the policy that unreported usage is charged in full, but the ledger and the counter disagree until Redis is re-armed. Reconciling needs a durable reservation id on `budget_decisions`, which does not exist. | `internal/cost/reserve.go`, `internal/cost/reconcile.go` | read |
+| 13 | The pipeline's per-session state (pinned autonomy and the Rule-of-Two projection) is never evicted. Evicting it is not safe yet: delegation reads a finished child's taint from it (`TaintStateFor`) after the child has ended, so dropping it would clear the child's legs from the parent. The fix is for delegation to read the child's taint from the log. | `internal/tools/pipeline.go`, `internal/delegate/resolve.go` | read |

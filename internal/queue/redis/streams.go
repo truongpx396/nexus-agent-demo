@@ -90,6 +90,7 @@ func jobFields(job queue.Job) map[string]any {
 		"session_key": job.SessionKey,
 		"kind":        string(job.Kind),
 		"attempts":    strconv.Itoa(job.Attempts),
+		"payload":     string(job.Payload),
 	}
 }
 
@@ -112,6 +113,9 @@ func parseJobFields(values map[string]any) (queue.Job, error) {
 	job.SessionKey = str("session_key")
 	job.Kind = queue.Kind(str("kind"))
 	job.Attempts, _ = strconv.Atoi(str("attempts"))
+	if p := str("payload"); p != "" {
+		job.Payload = json.RawMessage(p)
+	}
 	return job, nil
 }
 

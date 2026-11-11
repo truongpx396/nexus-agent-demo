@@ -1,8 +1,9 @@
 // Package rest is the REST binding of human oversight: list and read the
 // approvals waiting on a person, and grant, modify or deny one (README tasks
 // 5.6-5.8). A thin translator over internal/oversight: it decodes the request,
-// calls the use case, and renders the result. Who may decide, whether the
-// approval is still pending, and resuming the suspended run are oversight's.
+// calls the use case, and renders the result. Who may decide and whether the
+// approval is still pending are oversight's, and so is resuming the suspended
+// run, which a decision only schedules.
 //
 // The routes mount through the kit in internal/surfaces/rest.
 package rest
@@ -30,9 +31,9 @@ type ApprovalSource interface {
 // DecisionSource is the part of oversight.Decisions the endpoints decide
 // through.
 type DecisionSource interface {
-	Grant(ctx context.Context, tenantID, approvalID uuid.UUID, decidedBy string) oversight.Outcome
-	GrantModified(ctx context.Context, tenantID, approvalID uuid.UUID, decidedBy string, modifiedInput json.RawMessage) oversight.Outcome
-	Deny(ctx context.Context, tenantID, approvalID uuid.UUID, decidedBy, reason string) oversight.Outcome
+	Grant(ctx context.Context, tenantID, approvalID uuid.UUID, decidedBy string) (oversight.Outcome, error)
+	GrantModified(ctx context.Context, tenantID, approvalID uuid.UUID, decidedBy string, modifiedInput json.RawMessage) (oversight.Outcome, error)
+	Deny(ctx context.Context, tenantID, approvalID uuid.UUID, decidedBy, reason string) (oversight.Outcome, error)
 }
 
 // Handler serves the approval endpoints. Both fields are mandatory.
@@ -66,18 +67,49 @@ type ApprovalView struct {
 	CreatedAt  time.Time       `json:"created_at"`
 }
 
-// ResumeOutcome summarizes what granting/denying an approval actually did —
-// the HTTP response for all three decisions below. It deliberately doesn't
-// repeat the run's status/terminal_reason: GET /v1/runs/{id} (already the one
-// place that answers "is this run done yet") is the source for that, and a
-// caller that wants the full live event stream can subscribe to GET
-// /v1/runs/{id}/events — this response is only a synchronous "the resume
-// happened, here's the session and how many events it produced"
-// acknowledgment.
-type ResumeOutcome struct {
-	SessionID      string `json:"session_id"`
-	EventsAppended int    `json:"events_appended"`
-	Err            string `json:"error,omitempty"`
+// DecisionStatus says what became of the run an approval suspended.
+const (
+	// StatusResuming: the decision is recorded and the run is queued to continue.
+	// Its events arrive on GET /v1/runs/{id}/events like any other run's.
+	StatusResuming = "resuming"
+	// StatusDecided: the decision is recorded but the hand-off to the queue
+	// failed. Recovery resumes the run; nothing needs to be re-sent.
+	StatusDecided = "decided"
+)
+
+// DecisionResponse is the answer to a grant or a deny. The decision is durable
+// when it is sent; the run continues asynchronously, so there is no count of
+// events to report.
+type DecisionResponse struct {
+	ApprovalID string `json:"approval_id"`
+	SessionID  string `json:"session_id"`
+	Status     string `json:"status"`
+}
+
+func toDecisionResponse(o oversight.Outcome) DecisionResponse {
+	status := StatusDecided
+	if o.Resuming {
+		status = StatusResuming
+	}
+	return DecisionResponse{ApprovalID: o.ApprovalID.String(), SessionID: o.SessionID.String(), Status: status}
+}
+
+// respondDecision answers a decision: 202 once it is recorded, 404 for an
+// approval that is not there (or not this tenant's), 409 for one that is no longer
+// pending, and an opaque 500 for anything else.
+func respondDecision(c *gin.Context, out oversight.Outcome, err error) {
+	if notPending, ok := errors.AsType[oversight.ApprovalNotPendingError](err); ok {
+		restkit.Error(c, notPending.Error(), http.StatusConflict)
+		return
+	}
+	switch {
+	case errors.Is(err, oversight.ErrNotFound):
+		restkit.Error(c, "approval not found", http.StatusNotFound)
+	case err != nil:
+		restkit.ServerError(c, "decide approval", err)
+	default:
+		c.JSON(http.StatusAccepted, toDecisionResponse(out))
+	}
 }
 
 func toApprovalView(ap oversight.Approval) ApprovalView {
@@ -86,10 +118,6 @@ func toApprovalView(ap oversight.Approval) ApprovalView {
 		ApprovalID: ap.ApprovalID.String(), SessionID: ap.SessionID.String(), ToolID: ap.ToolID,
 		AskKind: ap.AskKind, Status: string(ap.Status), Context: ctxJSON, ExpiresAt: ap.ExpiresAt, CreatedAt: ap.CreatedAt,
 	}
-}
-
-func toResumeOutcome(o oversight.Outcome) ResumeOutcome {
-	return ResumeOutcome{SessionID: o.SessionID, EventsAppended: o.EventsAppended, Err: o.Err}
 }
 
 func (h Handler) handleListApprovals(c *gin.Context) {
@@ -155,13 +183,16 @@ func (h Handler) handleGrantApproval(c *gin.Context) {
 		}
 	}
 
-	var outcome oversight.Outcome
+	var (
+		outcome oversight.Outcome
+		derr    error
+	)
 	if len(req.ModifiedInput) > 0 {
-		outcome = h.Decisions.GrantModified(c.Request.Context(), tenantID, id, userID.String(), req.ModifiedInput)
+		outcome, derr = h.Decisions.GrantModified(c.Request.Context(), tenantID, id, userID.String(), req.ModifiedInput)
 	} else {
-		outcome = h.Decisions.Grant(c.Request.Context(), tenantID, id, userID.String())
+		outcome, derr = h.Decisions.Grant(c.Request.Context(), tenantID, id, userID.String())
 	}
-	c.JSON(http.StatusOK, toResumeOutcome(outcome))
+	respondDecision(c, outcome, derr)
 }
 
 type denyApprovalRequest struct {
@@ -185,5 +216,6 @@ func (h Handler) handleDenyApproval(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, toResumeOutcome(h.Decisions.Deny(c.Request.Context(), tenantID, id, userID.String(), req.Reason)))
+	outcome, derr := h.Decisions.Deny(c.Request.Context(), tenantID, id, userID.String(), req.Reason)
+	respondDecision(c, outcome, derr)
 }

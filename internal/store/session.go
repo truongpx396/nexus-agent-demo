@@ -89,6 +89,19 @@ func GetSession(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) (eventlog.S
 	return s, nil
 }
 
+// SessionAutonomy reads one session's autonomy level, RLS-scoped. The kernel asks
+// before each batch of tool calls, so it reads the one column and not the row.
+func SessionAutonomy(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) (string, error) {
+	var level string
+	if err := tx.QueryRow(ctx, `SELECT autonomy_level FROM sessions WHERE session_id = $1`, sessionID).Scan(&level); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", fmt.Errorf("session %s (wrong tenant scope, or it does not exist): %w", sessionID, ErrSessionNotFound)
+		}
+		return "", fmt.Errorf("read autonomy of session %s: %w", sessionID, err)
+	}
+	return level, nil
+}
+
 // GetSessionByKey loads the MOST RECENT session for (tenantID, sessionKey)
 // — sessions_tenant_session_key_idx (migrations/0002_sessions.sql) backs
 // this, but session_key carries no uniqueness constraint, deliberately:

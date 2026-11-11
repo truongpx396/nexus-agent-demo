@@ -14,6 +14,8 @@ import (
 	"github.com/rs/zerolog/log"
 
 	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
+	"github.com/truongpx396/nexus-agent-demo/internal/cost"
+	oversightpg "github.com/truongpx396/nexus-agent-demo/internal/oversight/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/queue"
 	queueredis "github.com/truongpx396/nexus-agent-demo/internal/queue/redis"
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
@@ -42,6 +44,13 @@ const (
 	// queue; each takes one job at a time, so it is also this process's ceiling
 	// on concurrently driven runs.
 	queueWorkerCount = 2
+
+	// sessionStateIdleFor and sessionStateSweepEvery bound the cost gate's
+	// per-session ceiling state. It is rebuilt from the ledger the next time a
+	// session reserves, so evicting an idle one loses nothing; without the sweep
+	// the map grows by one entry per session for the life of the process.
+	sessionStateIdleFor    = time.Hour
+	sessionStateSweepEvery = 10 * time.Minute
 )
 
 // adminDSN is the administrative connection string, for the few operations
@@ -92,7 +101,8 @@ func startBackground(ctx context.Context, in *infra, svc *services, runsAPI *run
 		startAnchorLoop(ctx, tenantDirectory(), auditpg.Scoped{St: in.st, Chain: in.chain}),
 		startTeamBackstopLoop(ctx, tenantDirectory(), svc.teams),
 		startIdleConversationSweepLoop(ctx, tenantDirectory(), svc.ctl),
-		startQueueWorkers(ctx, in.redis, in.queue, runsAPI, svc.ctl),
+		startSessionStateSweepLoop(ctx, svc.gate),
+		startQueueWorkers(ctx, in.redis, in.queue, runsAPI, svc.ctl, svc.resumer),
 		startEventBus(ctx, in.redis, runsAPI),
 		startScheduler(ctx, in, svc),
 	)
@@ -158,6 +168,16 @@ func startIdleConversationSweepLoop(ctx context.Context, dir tenancy.Directory, 
 	})
 }
 
+// startSessionStateSweepLoop evicts the cost gate's per-session state that has
+// sat idle for sessionStateIdleFor.
+func startSessionStateSweepLoop(ctx context.Context, gate *cost.Gate) (stop func()) {
+	return startPeriodic(ctx, sessionStateSweepEvery, func(context.Context) {
+		if n := gate.SweepIdle(time.Now().Add(-sessionStateIdleFor)); n > 0 {
+			log.Debug().Int("evicted", n).Msg("nexusd: cost gate: evicted idle session state")
+		}
+	})
+}
+
 // startQueueWorkers wires internal/queue's worker pool (README tasks
 // 6.1-6.2) to internal/runctl.Control.Resume: the durable, crash-recoverable
 // path a session's turn loop continues through, whether it's continuing
@@ -186,7 +206,7 @@ func startIdleConversationSweepLoop(ctx context.Context, dir tenancy.Directory, 
 // "running" in the first place, so a session only ever reaches "running"
 // once it durably has at least its seed/message event — recovering an
 // orphaned FRESH run is already exactly what this sweep covers.
-func startQueueWorkers(ctx context.Context, redisClient *redis.Client, port queue.Port, runsAPI *runsrest.Handler, ctl *runctl.Control) (stop func()) {
+func startQueueWorkers(ctx context.Context, redisClient *redis.Client, port queue.Port, runsAPI *runsrest.Handler, ctl *runctl.Control, approvals approvalResumer) (stop func()) {
 	adminPool, err := pgxpool.New(ctx, adminDSN())
 	if err != nil {
 		log.Error().Err(err).Msg("nexusd: queue: connect as admin failed; the worker pool is NOT running (fresh runs will be seeded but never actually driven, and crash recovery does not happen)")
@@ -194,10 +214,10 @@ func startQueueWorkers(ctx context.Context, redisClient *redis.Client, port queu
 	}
 
 	lock := queueredis.NewSessionLock(redisClient, sessionLockTTL)
-	runner := &queueRunner{ctl: ctl, runsAPI: runsAPI}
+	runner := &queueRunner{ctl: ctl, approvals: approvals, runsAPI: runsAPI}
 
 	workerCtx, cancel := context.WithCancel(ctx)
-	runctl.StartRecovery(workerCtx, func(ctx context.Context) ([]runctl.Orphan, error) { return runctlpg.ListRunning(ctx, adminPool) }, lock, port, orphanRecheckAfter)
+	runctl.StartRecovery(workerCtx, func(ctx context.Context) ([]runctl.Orphan, error) { return listOrphans(ctx, adminPool) }, lock, port, orphanRecheckAfter)
 
 	var workers sync.WaitGroup
 	for i := range queueWorkerCount {
@@ -214,13 +234,33 @@ func startQueueWorkers(ctx context.Context, redisClient *redis.Client, port queu
 	}
 }
 
+// listOrphans is every session a durable record says needs a worker: the ones
+// still marked running, and the ones whose approval was decided and never
+// resumed.
+func listOrphans(ctx context.Context, adminPool *pgxpool.Pool) ([]runctl.Orphan, error) {
+	running, err := runctlpg.ListRunning(ctx, adminPool)
+	if err != nil {
+		return nil, err
+	}
+	unresumed, err := oversightpg.ListUnresumed(ctx, adminPool)
+	if err != nil {
+		return running, err // still recover what was found
+	}
+	decided, err := unresumedOrphans(unresumed)
+	if err != nil {
+		return running, err
+	}
+	return append(running, decided...), nil
+}
+
 // queueRunner implements queue.Runner over internal/runctl.Control.Resume —
 // every Kind this queue carries dispatches through it identically (see
 // startQueueWorkers' own doc comment); Fork/Cancel/TightenAutonomy/Steer
 // are driven synchronously via REST instead of through the queue, since
 // none of them drive the turn loop themselves.
 type queueRunner struct {
-	ctl *runctl.Control
+	ctl       *runctl.Control
+	approvals approvalResumer
 
 	// runsAPI publishes every event this job's own turn loop produces — the
 	// same PublishEvent call internal/runs/rest's own synchronous fast
@@ -232,7 +272,7 @@ type queueRunner struct {
 }
 
 func (r *queueRunner) Run(ctx context.Context, job queue.Job) error {
-	for ev, err := range r.ctl.Resume(ctx, job.TenantID, job.SessionID) {
+	for ev, err := range jobEvents(ctx, r.ctl, r.approvals, job) {
 		if r.runsAPI != nil {
 			r.runsAPI.PublishEvent(job.TenantID, job.SessionID, ev, err)
 		}

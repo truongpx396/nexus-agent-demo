@@ -156,18 +156,16 @@ func (k *Kernel) terminate(ctx context.Context, st *RunState, yield func(eventlo
 		yield(eventlog.Event{}, err)
 		return
 	}
-	ev, err := k.appendTerminal(ctx, st, payload)
-	if err != nil {
-		yield(eventlog.Event{}, err)
-		return
-	}
 	status := eventlog.SessionStatusCompleted
 	if t.Reason != ReasonCompleted {
 		status = eventlog.SessionStatusFailed
 	}
 	reason := string(t.Reason)
-	if err := k.updateStatus(ctx, st, status, &reason); err != nil {
-		yield(ev, fmt.Errorf("terminal event %s appended but session status update failed: %w", ev.EventID, err))
+	// One atomic write: a terminal event on a session still marked running would
+	// have orphan recovery drive a finished run again.
+	ev, err := k.appendEventAndStatus(ctx, st, eventlog.EventTerminal, eventlog.ActorSystem, nil, nil, nil, payload, status, &reason)
+	if err != nil {
+		yield(eventlog.Event{}, err)
 		return
 	}
 	if k.Stuck != nil {
@@ -186,18 +184,15 @@ func (k *Kernel) terminate(ctx context.Context, st *RunState, yield func(eventlo
 // human decides; general crash/steer resume from an arbitrary point is
 // still Phase 6's internal/runctl + checkpoint.
 func (k *Kernel) suspendForApproval(ctx context.Context, st *RunState, yield func(eventlog.Event, error) bool, toolUseEventID uuid.UUID, toolID *string, input json.RawMessage, result ToolResult) {
-	ev, err := k.appendApprovalRequested(ctx, st, toolID, result.Reason, result.AskKind)
-	if err != nil {
-		yield(eventlog.Event{}, err)
-		return
-	}
-	if err := k.updateStatus(ctx, st, eventlog.SessionStatusSuspended, nil); err != nil {
-		yield(ev, fmt.Errorf("approval_requested event %s appended but session status update failed: %w", ev.EventID, err))
-		return
-	}
 	tid := ""
 	if toolID != nil {
 		tid = *toolID
+	}
+	ev, err := k.appendEventAndStatus(ctx, st, eventlog.EventApprovalRequested, eventlog.ActorSystem, toolID, nil, nil,
+		approvalRequestedPayload{ToolID: tid, Reason: result.Reason, AskKind: result.AskKind}, eventlog.SessionStatusSuspended, nil)
+	if err != nil {
+		yield(eventlog.Event{}, err)
+		return
 	}
 	if err := k.Log.RecordSuspension(ctx, SuspendRequest{
 		TenantID: st.TenantID, SessionID: st.SessionID,
@@ -227,13 +222,10 @@ func (k *Kernel) suspendForDelegation(ctx context.Context, st *RunState, yield f
 	if toolID != nil {
 		tid = *toolID
 	}
-	ev, err := k.appendEvent(ctx, st, eventlog.EventDelegationRequested, eventlog.ActorSystem, toolID, nil, nil, delegationRequestedPayload{ToolID: tid, ChildSessionID: childSessionID})
+	ev, err := k.appendEventAndStatus(ctx, st, eventlog.EventDelegationRequested, eventlog.ActorSystem, toolID, nil, nil,
+		delegationRequestedPayload{ToolID: tid, ChildSessionID: childSessionID}, eventlog.SessionStatusSuspended, nil)
 	if err != nil {
 		yield(eventlog.Event{}, err)
-		return
-	}
-	if err := k.updateStatus(ctx, st, eventlog.SessionStatusSuspended, nil); err != nil {
-		yield(ev, fmt.Errorf("delegation_requested event %s appended but session status update failed: %w", ev.EventID, err))
 		return
 	}
 	if err := k.Log.RecordDelegation(ctx, DelegateSuspendRequest{
@@ -260,13 +252,9 @@ func (k *Kernel) suspendForDelegation(ctx context.Context, st *RunState, yield f
 // decision. cmd/nexusd's idle-conversation sweep is the backstop that ends
 // one nobody ever answers.
 func (k *Kernel) suspendForUserInput(ctx context.Context, st *RunState, yield func(eventlog.Event, error) bool) {
-	ev, err := k.appendEvent(ctx, st, eventlog.EventAwaitingInput, eventlog.ActorSystem, nil, nil, nil, awaitingInputPayload{})
+	ev, err := k.appendEventAndStatus(ctx, st, eventlog.EventAwaitingInput, eventlog.ActorSystem, nil, nil, nil, awaitingInputPayload{}, eventlog.SessionStatusAwaitingInput, nil)
 	if err != nil {
 		yield(eventlog.Event{}, err)
-		return
-	}
-	if err := k.updateStatus(ctx, st, eventlog.SessionStatusAwaitingInput, nil); err != nil {
-		yield(ev, fmt.Errorf("awaiting_input event %s appended but session status update failed: %w", ev.EventID, err))
 		return
 	}
 	yield(ev, nil)

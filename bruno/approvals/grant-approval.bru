@@ -11,13 +11,14 @@ post {
 }
 
 assert {
-  res.status: eq 200
+  res.status: eq 202
+  res.body.approval_id: isString
   res.body.session_id: isString
-  res.body.error: isUndefined
+  res.body.status: isString
 }
 
 docs {
-  Approves the tool call as proposed and resumes the suspended run. The answer is an acknowledgement, `{"session_id", "events_appended", "error"?}`: ask `Get run` whether the run is done, or follow `Stream run events (SSE)`.
+  Approves the tool call as proposed. The decision is recorded before the answer is sent, and the suspended run then resumes on a queue worker, so the answer is `202` with `{"approval_id", "session_id", "status"}`. `status` is `resuming` once the run is queued, or `decided` if the hand-off to the queue failed (the decision stands and recovery resumes the run). Follow `Stream run events (SSE)`, or ask `Get run` whether it is done.
 
-  A decision that could not be applied still answers `200`, with the reason in `error`, which is why the assertions check that `error` is absent.
+  `404` for an approval that is not there, and `409` for one that is no longer pending.
 }

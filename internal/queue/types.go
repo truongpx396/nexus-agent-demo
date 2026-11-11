@@ -27,18 +27,20 @@ import (
 	"github.com/google/uuid"
 )
 
-// Kind is one queued job's vocabulary — purely for log/metric
-// observability (queueRunner.Run, cmd/nexusd/background.go): every Kind
-// dispatches to the identical runctl.Control.Resume call, since by the time
-// a worker picks any of them up, a fresh-started, crash-recovered, and
-// human-followed-up session all look the same — their durable seed/message
-// event is already in the Postgres event log.
+// Kind is one queued job's vocabulary. Start, resume and converse all dispatch to
+// the same runctl.Control.Resume call (queueRunner.Run, cmd/nexusd/background.go):
+// by the time a worker picks one up, a fresh-started, crash-recovered and
+// human-followed-up session look the same, because their seed or message event
+// is already in the Postgres event log. They differ only in the logs and metrics.
+// KindApproval is the one exception: it resumes the run an approval suspended,
+// which needs the approval, so its id travels in Job.Payload.
 type Kind string
 
 const (
 	KindResume   Kind = "resume"   // a crash/orphan sweep re-entering an existing run
 	KindStart    Kind = "start"    // a fresh run, seeded (kernel.Kernel.Seed) synchronously before this was enqueued
 	KindConverse Kind = "converse" // a conversational session's human follow-up message, appended before this was enqueued
+	KindApproval Kind = "approval" // an approval was decided (Payload: {"approval_id": ...}); resume the run it suspended
 )
 
 // Status is one job's own lifecycle vocabulary — StatusDone/StatusFailed

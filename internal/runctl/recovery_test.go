@@ -2,6 +2,7 @@ package runctl_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"sync/atomic"
@@ -175,5 +176,27 @@ func TestStartOrphanRecovery_NoRecheckOnceTheContextIsCancelled(t *testing.T) {
 	time.Sleep(120 * time.Millisecond)
 	if n := lists.Load(); n != 1 {
 		t.Errorf("listed %d times, want 1: the recheck ran after the context was cancelled", n)
+	}
+}
+
+// An orphan names the job that recovers it: a session still marked running is a
+// resume, and an approval decided but never resumed is an approval job carrying
+// its id.
+func TestRecoverOrphans_EnqueuesTheKindAndPayloadTheOrphanNames(t *testing.T) {
+	q := &recordingQueue{}
+	plain := candidate("a")
+	decided := candidate("b")
+	decided.Kind, decided.Payload = queue.KindApproval, json.RawMessage(`{"approval_id":"x"}`)
+
+	runctl.RecoverOrphans(context.Background(), "test", []runctl.Orphan{plain, decided}, &fakeLiveness{}, q)
+
+	if len(q.jobs) != 2 {
+		t.Fatalf("%d jobs enqueued, want 2", len(q.jobs))
+	}
+	if q.jobs[0].Kind != queue.KindResume || q.jobs[0].Payload != nil {
+		t.Errorf("a plain orphan = %+v, want a resume with no payload", q.jobs[0])
+	}
+	if q.jobs[1].Kind != queue.KindApproval || string(q.jobs[1].Payload) != `{"approval_id":"x"}` {
+		t.Errorf("a decided approval = %+v, want an approval job with its payload", q.jobs[1])
 	}
 }
