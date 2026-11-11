@@ -44,25 +44,35 @@ func (g *Gate) worstCaseCost(pb *PriceBook, modelID string, purpose Purpose) (Mo
 
 func (g *Gate) priceBookFor(ctx context.Context, tenantID uuid.UUID) (*PriceBook, error) {
 	g.mu.Lock()
-	if pb, ok := g.priceBooks[tenantID]; ok {
-		g.mu.Unlock()
-		return pb, nil
-	}
+	c, ok := g.priceBooks[tenantID]
 	g.mu.Unlock()
+	if ok && !g.stale(c.loaded) {
+		return c.value, nil
+	}
 
 	pb, err := g.ledger.LoadPriceBook(ctx, tenantID)
 	if err != nil {
+		if ok {
+			log.Warn().Err(err).Any("tenant_id", tenantID).Msg("cost: could not refresh the price book; using the last one read")
+			return c.value, nil
+		}
 		return nil, err
 	}
 	g.mu.Lock()
-	g.priceBooks[tenantID] = pb
+	g.priceBooks[tenantID] = cached[*PriceBook]{value: pb, loaded: g.now()}
 	g.mu.Unlock()
 	return pb, nil
 }
 
+// sessionBudgetFor returns the session's ceiling, loading it (and the spend so
+// far) the first time this process sees the session. The spend is summed from the
+// ledger, never started at zero: a run resumed after a restart, or on another
+// process, must not get a fresh ceiling.
 func (g *Gate) sessionBudgetFor(ctx context.Context, tenantID, sessionID uuid.UUID) (*Budget, error) {
 	g.mu.Lock()
 	if st, ok := g.sessionState[sessionID]; ok {
+		st.used = g.now()
+		g.sessionState[sessionID] = st
 		g.mu.Unlock()
 		return st.budget, nil
 	}
@@ -72,26 +82,38 @@ func (g *Gate) sessionBudgetFor(ctx context.Context, tenantID, sessionID uuid.UU
 	if err != nil {
 		return nil, err
 	}
+	var spent Money
+	if found != nil {
+		sum, serr := g.ledger.SumCostRecords(ctx, tenantID, BudgetScopeSession, &sessionID)
+		if serr != nil {
+			return nil, fmt.Errorf("sum the spend already recorded for session %s: %w", sessionID, serr)
+		}
+		spent = Money{Micros: sum, Currency: found.Ceiling.Currency}
+	}
 	g.mu.Lock()
-	g.sessionState[sessionID] = sessionCeilState{budget: found}
+	g.sessionState[sessionID] = sessionCeilState{budget: found, spent: spent, used: g.now()}
 	g.mu.Unlock()
 	return found, nil
 }
 
 func (g *Gate) tenantBudgetFor(ctx context.Context, tenantID uuid.UUID) (*Budget, error) {
 	g.mu.Lock()
-	if b, ok := g.tenantCache[tenantID]; ok {
-		g.mu.Unlock()
-		return b, nil
-	}
+	c, ok := g.tenantCache[tenantID]
 	g.mu.Unlock()
+	if ok && !g.stale(c.loaded) {
+		return c.value, nil
+	}
 
 	found, err := g.budgetFor(ctx, tenantID, BudgetScopeTenant, nil)
 	if err != nil {
+		if ok {
+			log.Warn().Err(err).Any("tenant_id", tenantID).Msg("cost: could not refresh the tenant budget; using the last one read")
+			return c.value, nil
+		}
 		return nil, err
 	}
 	g.mu.Lock()
-	g.tenantCache[tenantID] = found
+	g.tenantCache[tenantID] = cached[*Budget]{value: found, loaded: g.now()}
 	g.mu.Unlock()
 	return found, nil
 }

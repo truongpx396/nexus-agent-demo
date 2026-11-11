@@ -166,7 +166,7 @@ func (g *Gate) finishReconcile(ctx context.Context, res Reservation, actual Mone
 		g.mu.Lock()
 		st := g.sessionState[res.SessionID]
 		if adjusted, aerr := st.spent.Sub(delta); aerr == nil {
-			st.spent = adjusted
+			st.spent, st.used = adjusted, g.now()
 			g.sessionState[res.SessionID] = st
 		}
 		g.mu.Unlock()

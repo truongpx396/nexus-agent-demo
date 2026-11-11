@@ -14,6 +14,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
+	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	"github.com/truongpx396/nexus-agent-demo/internal/queue"
 	queueredis "github.com/truongpx396/nexus-agent-demo/internal/queue/redis"
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
@@ -42,6 +43,13 @@ const (
 	// queue; each takes one job at a time, so it is also this process's ceiling
 	// on concurrently driven runs.
 	queueWorkerCount = 2
+
+	// sessionStateIdleFor and sessionStateSweepEvery bound the cost gate's
+	// per-session ceiling state. It is rebuilt from the ledger the next time a
+	// session reserves, so evicting an idle one loses nothing; without the sweep
+	// the map grows by one entry per session for the life of the process.
+	sessionStateIdleFor    = time.Hour
+	sessionStateSweepEvery = 10 * time.Minute
 )
 
 // adminDSN is the administrative connection string, for the few operations
@@ -92,6 +100,7 @@ func startBackground(ctx context.Context, in *infra, svc *services, runsAPI *run
 		startAnchorLoop(ctx, tenantDirectory(), auditpg.Scoped{St: in.st, Chain: in.chain}),
 		startTeamBackstopLoop(ctx, tenantDirectory(), svc.teams),
 		startIdleConversationSweepLoop(ctx, tenantDirectory(), svc.ctl),
+		startSessionStateSweepLoop(ctx, svc.gate),
 		startQueueWorkers(ctx, in.redis, in.queue, runsAPI, svc.ctl),
 		startEventBus(ctx, in.redis, runsAPI),
 		startScheduler(ctx, in, svc),
@@ -155,6 +164,16 @@ func startIdleConversationSweepLoop(ctx context.Context, dir tenancy.Directory, 
 		tenancy.ForEach(ctx, dir, "idle conversation sweep", func(ctx context.Context, tenantID uuid.UUID) error {
 			return ctl.SweepIdle(ctx, tenantID, olderThan)
 		})
+	})
+}
+
+// startSessionStateSweepLoop evicts the cost gate's per-session state that has
+// sat idle for sessionStateIdleFor.
+func startSessionStateSweepLoop(ctx context.Context, gate *cost.Gate) (stop func()) {
+	return startPeriodic(ctx, sessionStateSweepEvery, func(context.Context) {
+		if n := gate.SweepIdle(time.Now().Add(-sessionStateIdleFor)); n > 0 {
+			log.Debug().Int("evicted", n).Msg("nexusd: cost gate: evicted idle session state")
+		}
 	})
 }
 

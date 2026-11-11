@@ -11,6 +11,7 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/contentaccess"
 	contentaccesspg "github.com/truongpx396/nexus-agent-demo/internal/contentaccess/postgres"
 	contentrest "github.com/truongpx396/nexus-agent-demo/internal/contentaccess/rest"
+	"github.com/truongpx396/nexus-agent-demo/internal/cost"
 	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/delegate"
 	delegatepg "github.com/truongpx396/nexus-agent-demo/internal/delegate/postgres"
@@ -50,6 +51,7 @@ const stuckDetectionWindow = 8
 // the REST API, the chat surfaces and the background loops drive.
 type services struct {
 	kernel      *kernel.Kernel
+	gate        *cost.Gate
 	starter     *kernelRunStarter
 	launcher    *runs.Service
 	approvals   *oversight.Approvals
@@ -168,7 +170,7 @@ func buildServices(in *infra, prov provider.Provider, spanExp spanExporter) (*se
 	}
 
 	return &services{
-		kernel: k, starter: starter, launcher: launcher,
+		kernel: k, gate: gate, starter: starter, launcher: launcher,
 		approvals: approvals, resumer: resumer, grants: grants, ctl: ctl,
 		delegations: delegations, teams: teamsSvc,
 		outbox:   &surfaces.Outbox{Ledger: surfpg.NewLedger(st, keyStore, chain)},
