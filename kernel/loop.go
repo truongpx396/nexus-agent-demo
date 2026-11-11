@@ -348,7 +348,7 @@ func (k *Kernel) Resume(ctx context.Context, st *RunState, cfg RunConfig, res Pe
 			yield(eventlog.Event{}, err)
 			return
 		}
-		st.Transcript = append(st.Transcript, provider.ToolResultMessage(st.ToolUseIDs[res.ToolUseEventID], resultText(result), result.IsError))
+		st.settleToolResult(st.ToolUseIDs[res.ToolUseEventID], resultText(result), result.IsError)
 		if !yield(ev, nil) {
 			return
 		}
@@ -415,7 +415,7 @@ func (k *Kernel) ResumeDelegation(ctx context.Context, st *RunState, cfg RunConf
 			yield(eventlog.Event{}, err)
 			return
 		}
-		st.Transcript = append(st.Transcript, provider.ToolResultMessage(st.ToolUseIDs[res.ToolUseEventID], resultText(result), result.IsError))
+		st.settleToolResult(st.ToolUseIDs[res.ToolUseEventID], resultText(result), result.IsError)
 		if !yield(ev, nil) {
 			return
 		}

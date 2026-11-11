@@ -60,6 +60,18 @@ func Rehydrate(ctx context.Context, history []eventlog.Event, decrypt DecryptFun
 	var transcript []provider.Message
 	toolUseIDs := map[uuid.UUID]string{}
 
+	// A tool_use has exactly one answer in the transcript. A suspension leaves a
+	// placeholder result (awaiting approval or a delegation) so the log pairs
+	// every call at all times, and the real result follows on resume; the model
+	// must see only one of them. A real result wins over a placeholder, the
+	// first real one wins over a later one, and a placeholder stands alone only
+	// while the call is still unresolved. A result whose call is not in this
+	// history is dropped, as Hygiene drops it from the log.
+	answers, err := chooseAnswers(ctx, history, decrypt)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	var pendingAssistant []provider.ContentBlock
 	var pendingResults []provider.ContentBlock
 	flushAssistant := func() {
@@ -111,16 +123,12 @@ func Rehydrate(ctx context.Context, history []eventlog.Event, decrypt DecryptFun
 			}
 			transcript = append(transcript, provider.TextMessage("user", p.Body))
 		case eventlog.EventToolResult:
+			a, ok := answers[e.EventID]
+			if !ok {
+				continue // not the answer chosen for its tool_use, or an orphan
+			}
 			flushAssistant()
-			var p toolResultPayload
-			if err := decodeEvent(ctx, e, decrypt, &p); err != nil {
-				return nil, nil, err
-			}
-			var toolUseID string
-			if e.PairRef != nil {
-				toolUseID = toolUseIDs[*e.PairRef]
-			}
-			pendingResults = append(pendingResults, provider.ContentBlock{Kind: provider.BlockToolResult, ToolUseID: toolUseID, Text: resultText(ToolResult(p)), IsError: p.IsError})
+			pendingResults = append(pendingResults, provider.ContentBlock{Kind: provider.BlockToolResult, ToolUseID: toolUseIDs[*e.PairRef], Text: resultText(ToolResult(a)), IsError: a.IsError})
 		default:
 			// Everything else (tool_loaded, budget_decision, approval_*,
 			// input_*, terminal, erasure, ...) is audit/control-plane
@@ -157,6 +165,45 @@ func RehydrateTaint(ctx context.Context, history []eventlog.Event, decrypt Decry
 		return p.Engaged, nil
 	}
 	return [3]bool{}, nil
+}
+
+// chooseAnswers picks, for every tool_use in history, the one tool_result the
+// transcript presents for it, and returns those results by event id. See the
+// note at the top of Rehydrate for the rule.
+func chooseAnswers(ctx context.Context, history []eventlog.Event, decrypt DecryptFunc) (map[uuid.UUID]toolResultPayload, error) {
+	calls := map[uuid.UUID]bool{}
+	for _, e := range history {
+		if e.Type == eventlog.EventToolUse {
+			calls[e.EventID] = true
+		}
+	}
+
+	type pick struct {
+		eventID     uuid.UUID
+		payload     toolResultPayload
+		placeholder bool
+	}
+	picked := map[uuid.UUID]pick{} // tool_use event id -> the answer so far
+	for _, e := range history {
+		if e.Type != eventlog.EventToolResult || e.PairRef == nil || !calls[*e.PairRef] {
+			continue
+		}
+		var p toolResultPayload
+		if err := decodeEvent(ctx, e, decrypt, &p); err != nil {
+			return nil, err
+		}
+		placeholder := p.AwaitingApproval || p.AwaitingDelegation
+		cur, have := picked[*e.PairRef]
+		if !have || (cur.placeholder && !placeholder) {
+			picked[*e.PairRef] = pick{eventID: e.EventID, payload: p, placeholder: placeholder}
+		}
+	}
+
+	answers := make(map[uuid.UUID]toolResultPayload, len(picked))
+	for _, pk := range picked {
+		answers[pk.eventID] = pk.payload
+	}
+	return answers, nil
 }
 
 func decodeEvent(ctx context.Context, e eventlog.Event, decrypt DecryptFunc, out any) error {

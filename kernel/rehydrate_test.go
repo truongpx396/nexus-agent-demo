@@ -6,7 +6,10 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
+	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 )
 
 // plaintextDecrypt is a no-crypto DecryptFunc stand-in: Rehydrate/
@@ -84,5 +87,83 @@ func TestRehydrateTaint_DecryptErrorPropagates(t *testing.T) {
 	})
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("err = %v, want it to wrap %v", err, wantErr)
+	}
+}
+
+// answersFor rehydrates history and returns the text of every tool_result block
+// the model would be shown for tool_use id "tu1".
+func answersFor(t *testing.T, history []eventlog.Event) []string {
+	t.Helper()
+	transcript, _, err := Rehydrate(context.Background(), history, plaintextDecrypt)
+	if err != nil {
+		t.Fatalf("Rehydrate: %v", err)
+	}
+	var out []string
+	for _, m := range transcript {
+		for _, b := range m.Blocks {
+			if b.Kind == provider.BlockToolResult && b.ToolUseID == "tu1" {
+				out = append(out, b.Text)
+			}
+		}
+	}
+	return out
+}
+
+func toolUseEvent(t *testing.T, id uuid.UUID) eventlog.Event {
+	t.Helper()
+	b, err := json.Marshal(toolUsePayload{ToolName: "platform/echo@v1", Input: json.RawMessage(`{}`), ToolUseID: "tu1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return eventlog.Event{EventID: id, Type: eventlog.EventToolUse, Payload: b}
+}
+
+func toolResultEvent(t *testing.T, pair uuid.UUID, p toolResultPayload) eventlog.Event {
+	t.Helper()
+	b, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := pair
+	return eventlog.Event{EventID: uuid.New(), Type: eventlog.EventToolResult, PairRef: &ref, Payload: b}
+}
+
+var (
+	approvalPlaceholder   = toolResultPayload{IsError: true, Reason: "approval required", AwaitingApproval: true}
+	delegationPlaceholder = toolResultPayload{IsError: true, Reason: "delegating", AwaitingDelegation: true}
+	realResult            = toolResultPayload{Output: json.RawMessage(`"real"`)}
+)
+
+func TestRehydrate_AnUnresolvedCallIsAnsweredByItsPlaceholder(t *testing.T) {
+	use := uuid.New()
+	got := answersFor(t, []eventlog.Event{toolUseEvent(t, use), toolResultEvent(t, use, approvalPlaceholder)})
+	if len(got) != 1 || got[0] != "error: approval required" {
+		t.Fatalf("answers = %q, want the placeholder alone while the call is unresolved", got)
+	}
+}
+
+func TestRehydrate_ARealResultReplacesThePlaceholderInsteadOfJoiningIt(t *testing.T) {
+	for name, placeholder := range map[string]toolResultPayload{"approval": approvalPlaceholder, "delegation": delegationPlaceholder} {
+		t.Run(name, func(t *testing.T) {
+			use := uuid.New()
+			got := answersFor(t, []eventlog.Event{toolUseEvent(t, use), toolResultEvent(t, use, placeholder), toolResultEvent(t, use, realResult)})
+			if len(got) != 1 || got[0] != `"real"` {
+				t.Fatalf("answers = %q, want exactly the real result: two tool_results for one tool_use is a 400 from a hosted API", got)
+			}
+		})
+	}
+}
+
+func TestRehydrate_TheFirstRealResultWinsAndAnOrphanIsDropped(t *testing.T) {
+	use := uuid.New()
+	second := toolResultPayload{Output: json.RawMessage(`"second"`)}
+	got := answersFor(t, []eventlog.Event{
+		toolUseEvent(t, use),
+		toolResultEvent(t, use, realResult),
+		toolResultEvent(t, use, second),
+		toolResultEvent(t, uuid.New(), realResult), // pairs with no tool_use in this history
+	})
+	if len(got) != 1 || got[0] != `"real"` {
+		t.Fatalf("answers = %q, want the first real result only", got)
 	}
 }
