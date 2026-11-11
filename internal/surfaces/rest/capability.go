@@ -2,8 +2,8 @@ package rest
 
 import (
 	"errors"
-	"net/http"
 
+	"github.com/gin-gonic/gin"
 	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/capability"
 )
 
@@ -26,10 +26,10 @@ var Descriptor = capability.Descriptor{
 // first-class, typed step: read fresh off THIS request's verified context,
 // every time — never cached from a prior request or inherited from whoever
 // opened a long-lived connection. Functionally identical to Principal
-// (server.go) — both read what authMiddleware already verified — as a typed
+// (server.go) — both read what authenticate already verified — as a typed
 // capability.Principal for the handler that starts a turn.
-func ResolvePrincipal(r *http.Request) (capability.Principal, error) {
-	tenantID, userID, ok := principalFromContext(r.Context())
+func ResolvePrincipal(c *gin.Context) (capability.Principal, error) {
+	tenantID, userID, ok := principalFrom(c)
 	if !ok {
 		return capability.Principal{}, errors.New("no verified principal on request context")
 	}

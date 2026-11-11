@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
 	restkit "github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
@@ -17,12 +18,12 @@ import (
 type pingModule struct{}
 
 func (pingModule) Routes(r restkit.Router) {
-	r.Handle("GET /ping", func(w http.ResponseWriter, req *http.Request) {
-		tenantID, userID, ok := restkit.Principal(w, req)
+	r.GET("/ping", func(c *gin.Context) {
+		tenantID, userID, ok := restkit.Principal(c)
 		if !ok {
 			return
 		}
-		restkit.WriteJSON(w, http.StatusOK, map[string]string{"tenant": tenantID.String(), "user": userID.String()})
+		c.JSON(http.StatusOK, map[string]string{"tenant": tenantID.String(), "user": userID.String()})
 	})
 }
 
@@ -31,7 +32,7 @@ func TestServer_EveryModuleRouteIsAuthenticated(t *testing.T) {
 	h := restkit.NewServer(resttest.Verifier{TenantID: tenantID, UserID: userID}, pingModule{}).Handler()
 
 	// No token: the module cannot opt out of authentication, because the only
-	// way to register a route is Router.Handle.
+	// way to register a route is Router.GET or Router.POST.
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ping", nil))
 	if rec.Code != http.StatusUnauthorized {
@@ -48,7 +49,7 @@ func TestServer_EveryModuleRouteIsAuthenticated(t *testing.T) {
 }
 
 // An unmounted path answers 404 without asking for a token first: wrapping the
-// whole mux in authentication would turn every 404 into a 401 and hide which
+// whole router in authentication would turn every 404 into a 401 and hide which
 // capabilities a deployment has.
 func TestServer_AnUnmountedPathIs404NotUnauthorized(t *testing.T) {
 	h := restkit.NewServer(resttest.Verifier{}, pingModule{}).Handler()
@@ -73,5 +74,29 @@ func TestServer_AnswersABrowsersPreflightWithoutAToken(t *testing.T) {
 	}
 	if rec.Header().Get("Access-Control-Allow-Headers") == "" {
 		t.Error("a preflight must say which headers are allowed")
+	}
+}
+
+// A known path on the wrong method answers 405 with an Allow header, as net/http's
+// mux did: the caller learns the route exists, and a 404 stays reserved for a path
+// nothing mounts.
+func TestServer_AWrongMethodIs405WithAnAllowHeader(t *testing.T) {
+	h := restkit.NewServer(resttest.Verifier{TenantID: uuid.New(), UserID: uuid.New()}, pingModule{}).Handler()
+	rec := resttest.Do(t, h, http.MethodPost, "/ping", `{}`)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST /ping = %d, want 405", rec.Code)
+	}
+	if allow := rec.Header().Get("Allow"); !strings.Contains(allow, http.MethodGet) {
+		t.Errorf("Allow = %q, want it to name GET", allow)
+	}
+}
+
+// A trailing slash is a different path, not a redirect: a redirect would send an
+// authenticated request, body and all, to a route the caller did not name.
+func TestServer_ATrailingSlashIs404NotARedirect(t *testing.T) {
+	h := restkit.NewServer(resttest.Verifier{TenantID: uuid.New(), UserID: uuid.New()}, pingModule{}).Handler()
+	rec := resttest.Do(t, h, http.MethodGet, "/ping/", "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("GET /ping/ = %d (Location %q), want 404", rec.Code, rec.Header().Get("Location"))
 	}
 }

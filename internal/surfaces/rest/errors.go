@@ -3,6 +3,7 @@ package rest
 import (
 	"net/http"
 
+	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog/log"
 )
 
@@ -14,7 +15,7 @@ import (
 // reads. op is a short verb phrase ("create run") and must not carry request
 // content. Errors that mean something to the caller (a malformed request, a
 // state conflict) keep their own status and message and do not come through here.
-func ServerError(w http.ResponseWriter, r *http.Request, op string, err error) {
-	log.Error().Err(err).Str("op", op).Str("method", r.Method).Str("path", r.URL.Path).Msg("rest: request failed")
-	http.Error(w, op+": internal error", http.StatusInternalServerError)
+func ServerError(c *gin.Context, op string, err error) {
+	log.Error().Err(err).Str("op", op).Str("method", c.Request.Method).Str("path", c.Request.URL.Path).Msg("rest: request failed")
+	Error(c, op+": internal error", http.StatusInternalServerError)
 }

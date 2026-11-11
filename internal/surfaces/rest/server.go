@@ -6,21 +6,29 @@
 // storage sits in its postgres package; cmd/nexusd decides which of them are
 // mounted.
 //
+// The router is Gin. It is confined to this kit and to the feature rest packages
+// that mount on it: Server.Handler returns a plain http.Handler, so cmd/nexusd,
+// the webhooks and the probes outside the REST API stay on net/http.
+//
 // A handler is a thin translator only: it decodes the request, calls its
 // feature's use case, and encodes what comes back. It holds no agent control
 // flow of its own (constitution Principle I), and this package never imports the
 // kernel (tests/contract/boundaries_test.go).
 //
-// AuthN (README task 13.1): every route a Module mounts through Router.Handle
-// requires a verified bearer token — the calling principal comes only from
-// Verifier.Verify's claims, never a client-supplied header. See authn.go.
+// AuthN (README task 13.1): every route a Module mounts through Router requires a
+// verified bearer token — the calling principal comes only from Verifier.Verify's
+// claims, never a client-supplied header. See authn.go.
+//
+// A handler passes c.Request.Context(), never c itself, to anything that waits:
+// a *gin.Context is reused once the handler returns, and its own Done is nil
+// unless the engine opts into falling back to the request's.
 package rest
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
 
@@ -32,19 +40,25 @@ type Module interface {
 }
 
 // Router is what a Module registers its routes on. The only way to add a route is
-// Handle, which authenticates it.
+// GET or POST, and both authenticate it.
 type Router struct {
-	mux *http.ServeMux
-	srv *Server
+	engine *gin.Engine
+	srv    *Server
 }
 
-// Handle registers h for pattern (a net/http ServeMux pattern such as
-// "GET /v1/approvals/{id}"), behind the bearer-token check.
-func (r Router) Handle(pattern string, h http.HandlerFunc) {
-	r.mux.Handle(pattern, r.srv.authed(func(w http.ResponseWriter, req *http.Request) {
-		req.Body = http.MaxBytesReader(w, req.Body, maxRequestBody)
-		h(w, req)
-	}))
+// GET registers h for GET path (Gin's path syntax, "/v1/approvals/:id"), behind
+// the bearer-token check and the request-body bound.
+func (r Router) GET(path string, h gin.HandlerFunc) { r.handle(http.MethodGet, path, h) }
+
+// POST registers h for POST path, behind the bearer-token check and the
+// request-body bound.
+func (r Router) POST(path string, h gin.HandlerFunc) { r.handle(http.MethodPost, path, h) }
+
+// handle attaches authentication and the body bound to the one route rather than
+// to the engine (engine.Use), so a path no module mounts still gets the router's
+// own 404 without needing a token first.
+func (r Router) handle(method, path string, h gin.HandlerFunc) {
+	r.engine.Handle(method, path, r.srv.authenticate(), boundBody, h)
 }
 
 // maxRequestBody bounds every request body a module reads. The server's
@@ -53,19 +67,31 @@ func (r Router) Handle(pattern string, h http.HandlerFunc) {
 // request could make the process allocate until it is killed.
 const maxRequestBody = 4 << 20
 
+func boundBody(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxRequestBody)
+}
+
 // DecodeJSON decodes the request body into v. On failure it has already
 // answered, 413 for a body over the limit and 400 for anything else, so the
 // handler just returns.
-func DecodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
-	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+func DecodeJSON(c *gin.Context, v any) bool {
+	if err := c.ShouldBindJSON(v); err != nil {
 		if _, tooLarge := errors.AsType[*http.MaxBytesError](err); tooLarge {
-			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			Error(c, "request body too large", http.StatusRequestEntityTooLarge)
 		} else {
-			http.Error(w, "invalid JSON body", http.StatusBadRequest)
+			Error(c, "invalid JSON body", http.StatusBadRequest)
 		}
 		return false
 	}
 	return true
+}
+
+// Error answers with msg as a plain-text body and status, and ends the handler
+// chain. It is http.Error for a Gin handler: the same Content-Type, nosniff
+// header and trailing newline every client of this API already sees.
+func Error(c *gin.Context, msg string, status int) {
+	c.Abort()
+	http.Error(c.Writer, msg, status)
 }
 
 // Server serves the modules it was given over HTTP.
@@ -87,15 +113,26 @@ func NewServer(verifier PrincipalVerifier, modules ...Module) *Server {
 }
 
 // Handler returns the http.Handler cmd/nexusd mounts. Every route is
-// individually wrapped in authMiddleware (README task 13.1) — an unregistered
-// path still gets the mux's own native 404 without needing a token first.
+// individually wrapped in authenticate (README task 13.1) — an unregistered
+// path still gets the router's own 404 without needing a token first.
 func (s *Server) Handler() http.Handler {
-	mux := http.NewServeMux()
-	r := Router{mux: mux, srv: s}
+	// Release mode: debug mode prints every route to stdout, outside the
+	// structured log.
+	gin.SetMode(gin.ReleaseMode)
+	engine := gin.New()
+	// Answer what net/http's mux answered: 405 with an Allow header for a known
+	// path on the wrong method, and 404, never a redirect, for a path that
+	// differs only by a trailing slash (a redirect would re-send a request body
+	// to a route the caller did not ask for).
+	engine.HandleMethodNotAllowed = true
+	engine.RedirectTrailingSlash = false
+	engine.RedirectFixedPath = false
+
+	r := Router{engine: engine, srv: s}
 	for _, m := range s.modules {
 		m.Routes(r)
 	}
-	return withCORS(mux)
+	return withCORS(engine)
 }
 
 // withCORS lets a browser-based client (web/, typically served from a
@@ -109,7 +146,9 @@ func (s *Server) Handler() http.Handler {
 // from a real browser fails outright: the browser's own preflight OPTIONS
 // request gets nexusd's default 405 (no route registers OPTIONS), which
 // surfaces to fetch() as an opaque "Failed to fetch," not the 401/403 this
-// package's own authMiddleware would otherwise produce.
+// package's own authenticate would otherwise produce. It wraps the engine
+// rather than being a Gin middleware so a preflight, which matches no route, is
+// answered before routing.
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if origin := r.Header.Get("Origin"); origin != "" {
@@ -131,23 +170,15 @@ func withCORS(next http.Handler) http.Handler {
 	})
 }
 
-// Principal reads the calling identity authMiddleware already verified and
-// stored on the request context. It writes the response itself on failure,
-// mirroring the shape http.Error already uses, so call sites just check ok —
-// in practice this only fails if authMiddleware somehow didn't run, since every
+// Principal reads the calling identity authenticate already verified and stored
+// on c. It writes the response itself on failure, so call sites just check ok —
+// in practice this only fails if authenticate somehow didn't run, since every
 // route a Module mounts is wrapped by it.
-func Principal(w http.ResponseWriter, r *http.Request) (tenantID, userID uuid.UUID, ok bool) {
-	tenantID, userID, ok = principalFromContext(r.Context())
+func Principal(c *gin.Context) (tenantID, userID uuid.UUID, ok bool) {
+	tenantID, userID, ok = principalFrom(c)
 	if !ok {
-		http.Error(w, "no verified principal on request context", http.StatusUnauthorized)
+		Error(c, "no verified principal on request context", http.StatusUnauthorized)
 		return uuid.Nil, uuid.Nil, false
 	}
 	return tenantID, userID, true
-}
-
-// WriteJSON writes v as a JSON response with the given status.
-func WriteJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("content-type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
 }

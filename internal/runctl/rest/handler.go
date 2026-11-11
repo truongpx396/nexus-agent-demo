@@ -12,6 +12,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
@@ -37,26 +38,26 @@ var _ restkit.Module = Handler{}
 
 // Routes implements restkit.Module.
 func (h Handler) Routes(r restkit.Router) {
-	r.Handle("POST /v1/runs/{id}/cancel", h.handleCancelRun)
-	r.Handle("POST /v1/runs/{id}/steer", h.handleSteerRun)
-	r.Handle("POST /v1/runs/{id}/autonomy", h.handleTightenAutonomy)
-	r.Handle("POST /v1/runs/{id}/fork", h.handleForkRun)
+	r.POST("/v1/runs/:id/cancel", h.handleCancelRun)
+	r.POST("/v1/runs/:id/steer", h.handleSteerRun)
+	r.POST("/v1/runs/:id/autonomy", h.handleTightenAutonomy)
+	r.POST("/v1/runs/:id/fork", h.handleForkRun)
 }
 
 // fail answers an error from run control. The session being absent, in a state
 // that refuses the operation, or given an argument it cannot act on is the
 // caller's to be told, with the status that says which; anything else is an
 // infrastructure failure, which is logged and never echoed (restkit.ServerError).
-func fail(w http.ResponseWriter, r *http.Request, op string, err error) {
+func fail(c *gin.Context, op string, err error) {
 	switch {
 	case errors.Is(err, runctl.ErrSessionNotFound):
-		http.Error(w, "run not found", http.StatusNotFound)
+		restkit.Error(c, "run not found", http.StatusNotFound)
 	case errors.Is(err, runctl.ErrSessionState):
-		http.Error(w, err.Error(), http.StatusConflict)
+		restkit.Error(c, err.Error(), http.StatusConflict)
 	case errors.Is(err, runctl.ErrInvalidArgument):
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		restkit.Error(c, err.Error(), http.StatusBadRequest)
 	default:
-		restkit.ServerError(w, r, op, err)
+		restkit.ServerError(c, op, err)
 	}
 }
 
@@ -75,27 +76,27 @@ type cancelRequest struct {
 	Reason string `json:"reason"`
 }
 
-func (h Handler) handleCancelRun(w http.ResponseWriter, r *http.Request) {
-	tenantID, _, ok := restkit.Principal(w, r)
+func (h Handler) handleCancelRun(c *gin.Context) {
+	tenantID, _, ok := restkit.Principal(c)
 	if !ok {
 		return
 	}
-	id, err := uuid.Parse(r.PathValue("id"))
+	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		http.Error(w, "invalid run id", http.StatusBadRequest)
+		restkit.Error(c, "invalid run id", http.StatusBadRequest)
 		return
 	}
 	var req cancelRequest
-	if r.ContentLength != 0 {
-		if !restkit.DecodeJSON(w, r, &req) {
+	if c.Request.ContentLength != 0 {
+		if !restkit.DecodeJSON(c, &req) {
 			return
 		}
 	}
-	if err := h.Control.Cancel(r.Context(), tenantID, id, req.Reason); err != nil {
-		fail(w, r, "cancel", err)
+	if err := h.Control.Cancel(c.Request.Context(), tenantID, id, req.Reason); err != nil {
+		fail(c, "cancel", err)
 		return
 	}
-	restkit.WriteJSON(w, http.StatusOK, map[string]string{"status": "aborted"})
+	c.JSON(http.StatusOK, map[string]string{"status": "aborted"})
 }
 
 type steerRequest struct {
@@ -109,50 +110,50 @@ type steerRequest struct {
 // never saw a terminal event) picks the continuation up live over the same
 // Redis-backed event bus every other run publishes through, whichever process's
 // worker actually resumes it.
-func (h Handler) handleSteerRun(w http.ResponseWriter, r *http.Request) {
-	tenantID, _, ok := restkit.Principal(w, r)
+func (h Handler) handleSteerRun(c *gin.Context) {
+	tenantID, _, ok := restkit.Principal(c)
 	if !ok {
 		return
 	}
-	id, err := uuid.Parse(r.PathValue("id"))
+	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		http.Error(w, "invalid run id", http.StatusBadRequest)
+		restkit.Error(c, "invalid run id", http.StatusBadRequest)
 		return
 	}
 	var req steerRequest
-	if !restkit.DecodeJSON(w, r, &req) {
+	if !restkit.DecodeJSON(c, &req) {
 		return
 	}
-	if err := h.Control.Send(r.Context(), tenantID, id, req.Input); err != nil {
-		fail(w, r, "steer", err)
+	if err := h.Control.Send(c.Request.Context(), tenantID, id, req.Input); err != nil {
+		fail(c, "steer", err)
 		return
 	}
-	restkit.WriteJSON(w, http.StatusOK, map[string]string{"status": "steered"})
+	c.JSON(http.StatusOK, map[string]string{"status": "steered"})
 }
 
 type tightenAutonomyRequest struct {
 	Target string `json:"target"`
 }
 
-func (h Handler) handleTightenAutonomy(w http.ResponseWriter, r *http.Request) {
-	tenantID, _, ok := restkit.Principal(w, r)
+func (h Handler) handleTightenAutonomy(c *gin.Context) {
+	tenantID, _, ok := restkit.Principal(c)
 	if !ok {
 		return
 	}
-	id, err := uuid.Parse(r.PathValue("id"))
+	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		http.Error(w, "invalid run id", http.StatusBadRequest)
+		restkit.Error(c, "invalid run id", http.StatusBadRequest)
 		return
 	}
 	var req tightenAutonomyRequest
-	if !restkit.DecodeJSON(w, r, &req) {
+	if !restkit.DecodeJSON(c, &req) {
 		return
 	}
-	if err := h.Control.TightenAutonomy(r.Context(), tenantID, id, req.Target); err != nil {
-		fail(w, r, "tighten autonomy", err)
+	if err := h.Control.TightenAutonomy(c.Request.Context(), tenantID, id, req.Target); err != nil {
+		fail(c, "tighten autonomy", err)
 		return
 	}
-	restkit.WriteJSON(w, http.StatusOK, map[string]string{"status": "tightened", "autonomy_level": req.Target})
+	c.JSON(http.StatusOK, map[string]string{"status": "tightened", "autonomy_level": req.Target})
 }
 
 type forkRequest struct {
@@ -160,26 +161,26 @@ type forkRequest struct {
 	Model string `json:"model,omitempty"`
 }
 
-func (h Handler) handleForkRun(w http.ResponseWriter, r *http.Request) {
-	tenantID, _, ok := restkit.Principal(w, r)
+func (h Handler) handleForkRun(c *gin.Context) {
+	tenantID, _, ok := restkit.Principal(c)
 	if !ok {
 		return
 	}
-	id, err := uuid.Parse(r.PathValue("id"))
+	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		http.Error(w, "invalid run id", http.StatusBadRequest)
+		restkit.Error(c, "invalid run id", http.StatusBadRequest)
 		return
 	}
 	var req forkRequest
-	if !restkit.DecodeJSON(w, r, &req) {
+	if !restkit.DecodeJSON(c, &req) {
 		return
 	}
-	result, err := h.Control.Fork(r.Context(), tenantID, id, req.AtSeq, runctl.ForkOverrides{ModelID: req.Model})
+	result, err := h.Control.Fork(c.Request.Context(), tenantID, id, req.AtSeq, runctl.ForkOverrides{ModelID: req.Model})
 	if err != nil {
-		fail(w, r, "fork", err)
+		fail(c, "fork", err)
 		return
 	}
-	restkit.WriteJSON(w, http.StatusOK, ForkView{
+	c.JSON(http.StatusOK, ForkView{
 		SessionID: result.SessionID.String(), DigestDiverged: result.DigestDiverged,
 		ParentDigest: hex.EncodeToString(result.ParentDigest), ChildDigest: hex.EncodeToString(result.ChildDigest),
 	})

@@ -639,7 +639,7 @@ style: one process, packaged by feature, with each feature's storage in an adapt
 
 **A feature's driving adapters sit beside it.** Each feature that is reachable over HTTP or by the model carries the
 binding itself, the way its storage carries `postgres/`: `runs/rest`, `oversight/rest`, `runctl/rest` and
-`contentaccess/rest` mount through the kit in `internal/surfaces/rest` (the server, bearer-token auth on every route,
+`contentaccess/rest` mount through the kit in `internal/surfaces/rest` (a [Gin](https://github.com/gin-gonic/gin) engine, bearer-token auth on every route,
 CORS), and `delegate/tool`, `teams/tool` and `retrieval/tool` are the model-facing tools. A binding imports its feature
 directly, so there is no translation layer in `cmd/nexusd`; it may not import storage or the kernel directly. The
 messaging channels (`telegram`, `zalo`, `email`) stay under `internal/surfaces/`, since each is a conversation that
