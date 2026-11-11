@@ -152,7 +152,7 @@ flowchart TB
 - 🧾 **The loop reaches durable state only through `kernel.EventLog`.** The Postgres adapter appends the event and its audit receipt in one tenant-scoped transaction, and `signerd` signs the receipt.
 - ✋ **An approval suspends the run.** An `ASK` from the permission chain records a suspension and stops the generator with no terminal event; a human decision resumes it.
 
-Layout, import boundaries, schema and interfaces are in [§3](#3-target-architecture-of-the-demo).
+Layout, import boundaries, schema and interfaces are in [§3](#3-target-architecture-of-the-demo). Zoomed-in views (the feature dependency graph, the kernel loop, the tool pipeline and permission chain) and sequence diagrams for the critical flows are in [`docs/architecture.md`](docs/architecture.md).
 
 * * *
 
@@ -910,6 +910,7 @@ This repo's own supplementary docs:
 | Document | Why |
 |---|---|
 | [`specs/`](specs/README.md) | The single source of truth for what is built and what is open: the platform spec (001) and the post-baseline increments (002), task lists that keep the build ledger's ids, the pattern coverage map and the risk register. It replaced `docs/build-phases.md`; `tests/contract/specs_test.go` keeps its ids, paths and citations from drifting. |
+| [`docs/architecture.md`](docs/architecture.md) | Mermaid component, topology and dependency diagrams, the kernel loop, the tool pipeline and permission chain, and sequence diagrams for starting a run, a turn, the durable append, approval, crash recovery, delegation, chat webhooks and erasure. Ends with where the code differs from the docs. |
 | [`docs/production-readiness-review.md`](docs/production-readiness-review.md) | The audit that found F1–F15 and drove Phase 13. |
 | [`docs/webhook-concurrency-review.md`](docs/webhook-concurrency-review.md) | The follow-up audit of Phase 11's conversational webhook surfaces that found `SessionLock` wired into only the async queue worker and no inbound delivery dedup, and drove Phase 18. |
 | [`docs/constitution.md`](docs/constitution.md) | The nine principles, copied in verbatim (Phase 0, task 0.6) as the review checklist. |
