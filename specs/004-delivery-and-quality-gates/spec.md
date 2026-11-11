@@ -118,6 +118,23 @@ A second pass over the same tree found the same class again, deeper: the `runctl
 6. **Given** a request body past 4 MiB, **When** any route reads it, **Then** the answer is 413 and the process has buffered at most the limit; a PDF stream that inflates past 32 MiB, or 256 MiB across a document, is skipped.
 7. **Given** a model endpoint that accepts the connection and sends no headers, **When** a run calls it, **Then** the call fails after the provider's header timeout, while a response that sends headers promptly and streams for longer is delivered whole.
 
+### User Story 8 - A run opens quickly, its queue can be watched, and an erased key is gone (Priority: P3)
+
+**Current state**: a review of the write path and the key custody found four things. A fresh run wrote its opening events, one per resident tool plus its memory and the user's message (17 by default), as 17 separate transactions, each with its own advisory lock, audit receipt and signer round trip, all before `POST /v1/runs` could answer; through Postgres and PgBouncer with a local signer that was a median 35.1 ms. The worker count was a constant of two and nothing on `/metrics` said whether two was enough, because the golden signals come from the database and say nothing about the queue. `Kernel.PrunePolicy` and `Kernel.CondenseThresholdBytes` existed and nothing set them, so a long conversation grew until the provider reported an overflow. And shredding a key flipped its status but kept `wrapped_dek`, so anyone with database access and the KEK file could still unwrap what it sealed: erasure rested on a status check, not on the key being gone.
+
+**Why this priority**: none of it is a correctness failure on a trusted network. The key wipe is the one that matters for the erasure claim; the rest is latency and visibility, cheap to fix and cheap to keep fixed.
+
+**Independent Test**: `go test ./kernel -run TestSeed` fails if the opening events stop being one batch; `go test -tags=integration ./tests/integration -run 'TestShred_|TestMigration_Wipes|TestPostgresEventLog_AppendBatch'` fails if a shredded key keeps its bytes or a failed batch leaves events behind; `go test ./cmd/nexusd -run 'TestWriteQueueGauges|TestQueueWorkers|TestContextPolicy'` fails if the gauges, the worker setting or the context settings change.
+
+**Acceptance Scenarios**:
+
+1. **Given** a new run, **When** it is seeded, **Then** its opening events are one `AppendBatch` (one transaction, a receipt per event, all or nothing), yielded in order and only after they are durable.
+2. **Given** a batch whose third receipt cannot be signed, **When** it is appended, **Then** the first two events and their receipts roll back with it, and a later batch is numbered from 1.
+3. **Given** a key that is shredded, **When** the transaction commits, **Then** its `wrapped_dek` is empty, its status and `shredded_at` are set, `Unwrap` returns `ErrKeyShredded`, and the event log still replays and the audit chain still verifies; keys shredded before this change are brought to the same state by a migration.
+4. **Given** a scrape of `/metrics`, **When** the queue can report its depth, **Then** it carries jobs by state, the age of the oldest job and the worker count; **When** it cannot, **Then** the gauges are left out and the scrape still succeeds.
+5. **Given** `NEXUS_QUEUE_WORKERS` outside 1 to 64, **When** `nexusd` starts, **Then** it runs the default and logs why.
+6. **Given** neither `NEXUS_CONTEXT_PRUNING` nor `NEXUS_CONDENSE_THRESHOLD_BYTES`, **When** a run goes on, **Then** the model is shown the whole transcript, as before.
+
 ## Requirements *(mandatory)*
 
 - **FR-401**: Backup, restore, RPO and RTO MUST be defined for the event log and audit chain, and a restore MUST be rehearsed and recorded (US1).
@@ -131,3 +148,7 @@ A second pass over the same tree found the same class again, deeper: the `runctl
 - **FR-409**: A response to a client MUST NOT carry the text of an infrastructure error (a database, queue or dependency failure); it names the operation and the log holds the cause. A resolution the kernel does not recognise MUST stop the run and MUST NOT produce a tool result (US7).
 - **FR-410**: Errors MUST be matched with `errors.Is` and `errors.As`/`errors.AsType`, error types MUST be named `XxxError`, and a local MUST NOT shadow a builtin; `.golangci.yml` enforces these and the standard library's newer forms (US7).
 - **FR-411**: A use case MUST give an error its caller can act on a sentinel wrapped with `%w`, and a binding MUST map it with `errors.Is`; every other error from it is an infrastructure failure under FR-409. A request body MUST be bounded by the kit and read with `rest.DecodeJSON`, and untrusted input MUST NOT be read, inflated or waited for without a bound (US7).
+- **FR-412**: A run's opening events MUST be written as one atomic batch, with a receipt per event, and yielded only once durable (US8).
+- **FR-413**: Shredding a key MUST remove its wrapped key bytes in the same statement that marks it shredded; the row, its status and `shredded_at` remain as proof it was retired (US8).
+- **FR-414**: The job queue's depth by state, the age of its oldest job and the worker count MUST be exposed on `/metrics`, a queue that cannot report them MUST NOT fail the scrape, and the worker count MUST be configurable and bounded (US8).
+- **FR-415**: Pruning and condensation of the model's context MUST be reachable from configuration and MUST be off by default, because enabling either changes what the model is shown and has to clear the eval gate against the model in use (US8).

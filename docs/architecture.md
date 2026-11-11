@@ -68,7 +68,7 @@ flowchart TB
 
     subgraph nx["nexusd :8085 (one process)"]
         http["HTTP mux<br/>/v1/* · /v1/webhooks/* · /healthz · /readyz · /metrics"]
-        workers["2 queue workers<br/>+ startup orphan recovery"]
+        workers["queue workers (2 by default)<br/>+ startup orphan recovery"]
         loops["periodic loops<br/>audit anchor · team backstop<br/>idle sweep · cron scheduler"]
         bus["event-bus subscriber<br/>Redis Pub/Sub to the SSE broker"]
     end
@@ -95,6 +95,7 @@ flowchart TB
 - Everything tenant-scoped goes through PgBouncer as `nexus_app` (`NOBYPASSRLS`), and scope is set with a transaction-local `set_config`, never per session, because the pooler reassigns connections between tenants.
 - `nexus_app` cannot query across tenants, so the few cross-tenant passes (the tenant directory, the orphaned-session scan) open a second pool with the admin DSN, direct to Postgres. See [observation 5](#where-the-code-differs-from-the-docs).
 - Redis carries five things: the job stream (`nexus:queue:jobs`, plus its delayed set and dead-letter stream), the per-session lock, the epoch-marked cost counter, the Pub/Sub bus (`nexus:events:*`, `nexus:deltas:*`) and OAuth CSRF state.
+- The worker count is `NEXUS_QUEUE_WORKERS` (1 to 64), which is this process's ceiling on concurrently driven runs. `/metrics` reports the queue's depth by state, the age of its oldest job and the worker count, so workers falling behind shows as `queued` growing while the age climbs.
 - Several `nexusd` processes are safe by construction but have never been run together; the periodic loops are not audited for it.
 
 Source: [`cmd/nexusd/infra.go`](../cmd/nexusd/infra.go), [`cmd/nexusd/background.go`](../cmd/nexusd/background.go), [`cmd/nexusd/http.go`](../cmd/nexusd/http.go), [`deploy/docker-compose.yml`](../deploy/docker-compose.yml).
@@ -464,7 +465,7 @@ Source: [`internal/crypto/envelope.go`](../internal/crypto/envelope.go), [`inter
 
 ## F1 Start a run
 
-The synchronous half: everything that happens before the client gets its `202`.
+The synchronous half: everything that happens before the client gets its `202`. A run's opening events are one batch, not one transaction each: through Postgres and PgBouncer with a local signer, 17 of them take a median 18.9 ms as a batch and 35.1 ms as separate appends.
 
 ```mermaid
 sequenceDiagram
@@ -491,9 +492,8 @@ sequenceDiagram
     S->>S: load tenant memory into the system prompt
     S->>RD: SUBSCRIBE nexus:events:session, before anything is written
     S->>K: Seed
-    loop status running, tool_loaded for each tool, memory_loaded, user_message
-        K->>PG: Append (see F4)
-    end
+    K->>PG: SetStatus running
+    K->>PG: AppendBatch: tool_loaded for each tool, memory_loaded, user_message (one transaction, a receipt each)
     S->>RD: XADD a start job (ids only, never the input's plaintext)
     S-->>L: event channel
     L-->>R: session id and channel
