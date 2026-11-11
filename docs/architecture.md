@@ -281,7 +281,7 @@ flowchart LR
 
 ## 6. Session lifecycle
 
-`sessions.status` is a projection of the log. The kernel writes it with `SetStatus` in a transaction of its own, right after appending the event that justifies it.
+`sessions.status` is a projection of the log. An event that justifies a status (the terminal event, a suspension, the conversational pause) is written with it in one transaction (`AppendAndSetStatus`); a status no event justifies (a run starting or resuming) is written with `SetStatus` on its own.
 
 ```mermaid
 stateDiagram-v2
@@ -629,7 +629,7 @@ sequenceDiagram
     C->>PG: INSERT audit_receipts
     S->>PG: COMMIT
     L-->>K: the event, with its seq and created_at
-    K->>L: SetStatus, in a separate transaction
+    Note over K,L: a status change no event justifies goes through SetStatus, on its own.<br/>One an event does justify goes through AppendAndSetStatus, in this same transaction
 ```
 
 - If `signerd` is unreachable the append fails, so `nexusd` cannot write events without it. `/readyz` checks it for the same reason.
@@ -689,7 +689,7 @@ sequenceDiagram
     W->>Q: publish every event to the bus, then ack the job
 ```
 
-- Suspending is three commits, not one: the placeholder result and `approval_requested`, then the status, then the approval row. The kernel wraps each failure with what was already written.
+- Suspending is three commits: the placeholder result, then `approval_requested` together with the status (one atomic write), then the approval row in the hook's own transaction. A failure in the last leaves a suspended run with no approval to resolve, and nothing recovers that yet ([observation 11](#where-the-code-differs-from-the-docs)). The kernel wraps each failure with what was already written.
 - Deciding and resuming are separate. The decision commits first and is answered `202`, so a client that disconnects loses nothing. The resume then runs on a worker like any other run: it holds the session lock, publishes to the event bus (so a connected SSE client and a Telegram, Zalo or email conversation see the result), and is retried by the queue.
 - If the queue cannot be reached the decision still stands, the answer says `decided` instead of `resuming`, and recovery resumes any run left suspended behind a decided approval. `ResumeDecided` is safe to run twice: a call that already has its real result is skipped.
 - The placeholder is replaced in place by the real result, so the model sees one `tool_result` per `tool_use`.
@@ -734,7 +734,7 @@ sequenceDiagram
 ```
 
 - A write-ahead claim goes `in_flight` before an effect leaves the process and is resolved by a probe or a person, never silently re-executed and never discarded. Resume refuses to start while one is unresolved.
-- The orphan scan trusts `status = running`, which is a projection written in its own transaction. It is not a periodic loop on purpose: an orphan whose resume fails for good would be re-enqueued forever.
+- The orphan scan trusts `status = running`. A terminal event and a suspension now commit with their status, so a finished or suspended run is not seen as running; a run that starts or resumes sets `running` on its own. It is not a periodic loop on purpose: an orphan whose resume fails for good would be re-enqueued forever.
 - A suspended or awaiting-input session is never treated as an orphan, and `Resume` refuses both states.
 
 Source: [`internal/runctl/recovery.go`](../internal/runctl/recovery.go), [`internal/runctl/resume.go`](../internal/runctl/resume.go), [`kernel/hygiene.go`](../kernel/hygiene.go), [`internal/tools/dispatch.go`](../internal/tools/dispatch.go), [`cmd/nexusd/background.go`](../cmd/nexusd/background.go).
@@ -871,3 +871,6 @@ Found while drawing the diagrams above. **Checked** means a test or a reproducti
 | 8 | Delegated children and team members run on detached goroutines in the process that handled the parent's tool call, not through the queue or its lock. | `internal/delegate/spawn.go`, `internal/teams/lifecycle.go` | read |
 | 9 | Live content previews cross Redis Pub/Sub as plaintext. The code accepts this on the assumption that Redis is on a private network. Durable events on the same bus are sealed. | `PublishDelta` in `internal/runs/rest/broker.go` | read |
 | 10 | The README's list of tenant tables is out of date against the 37 tables in `tableOwners` (for example `claims`, not `idempotency_claims`; there is no `tools`, `tool_profiles` or `catalog_manifests` table), and its repository-layout block lists `runs/`, `surfaces/`, `connectors/`, `retrieval/`, `contentaccess/` and `tenancy/` twice. This document takes its table list from `tests/contract/ownership_test.go`. | the two files side by side | read |
+| 11 | A suspension is still three commits. The placeholder result is appended first, `approval_requested` and the status commit together, and the approval row (or the delegation bind) is written afterwards in the hook's own transaction. A failure or a crash before the last leaves a suspended run with no approval to resolve, and nothing recovers it: orphan recovery looks for `running`, and `ListUnresumed` for an approval that exists. Closing it means joining the hook into the suspension's transaction. | `kernel/terminal.go`, `internal/eventlog/postgres/log.go`, `cmd/nexusd/ports.go` | read |
+| 12 | A crash between `Reserve` and `Reconcile` leaves the tenant's Redis counter charged for the full worst case and the ledger with no record of it. The counter is on the safe side, which matches the policy that unreported usage is charged in full, but the ledger and the counter disagree until Redis is re-armed. Reconciling needs a durable reservation id on `budget_decisions`, which does not exist. | `internal/cost/reserve.go`, `internal/cost/reconcile.go` | read |
+| 13 | The pipeline's per-session state (pinned autonomy and the Rule-of-Two projection) is never evicted. Evicting it is not safe yet: delegation reads a finished child's taint from it (`TaintStateFor`) after the child has ended, so dropping it would clear the child's legs from the parent. The fix is for delegation to read the child's taint from the log. | `internal/tools/pipeline.go`, `internal/delegate/resolve.go` | read |
