@@ -220,7 +220,7 @@ func startQueueWorkers(ctx context.Context, redisClient *redis.Client, port queu
 	runctl.StartRecovery(workerCtx, func(ctx context.Context) ([]runctl.Orphan, error) { return listOrphans(ctx, adminPool) }, lock, port, orphanRecheckAfter)
 
 	var workers sync.WaitGroup
-	for i := range queueWorkerCount {
+	for i := range queueWorkers() {
 		w := queue.NewWorker(queue.WorkerConfig{
 			Port: port, Lock: lock, Runner: runner, RenewEvery: sessionLockTTL / 3,
 			Owner: fmt.Sprintf("nexusd-worker-%d-%d", os.Getpid(), i),

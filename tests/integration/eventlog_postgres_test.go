@@ -18,6 +18,83 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 )
 
+// failAfterSigner signs n digests and then fails, standing in for a signerd that
+// goes away part-way through a batch.
+type failAfterSigner struct {
+	*fakeSigner
+	remaining atomic.Int32
+	err       error
+}
+
+func (s *failAfterSigner) Sign(ctx context.Context, digest []byte) ([]byte, string, error) {
+	if s.remaining.Add(-1) < 0 {
+		return nil, "", s.err
+	}
+	return s.fakeSigner.Sign(ctx, digest)
+}
+
+// A batch is one transaction with one receipt per event. If the signer goes away
+// on the third, the first two events and their receipts roll back with it: a run
+// never opens half written.
+func TestPostgresEventLog_AppendBatchIsOneTransactionWithOneReceiptPerEvent(t *testing.T) {
+	pool, cleanup := setupPostgresAndPgBouncer(t)
+	t.Cleanup(cleanup)
+	st := store.New(pool)
+	ctx := context.Background()
+
+	tenantID, sessionID := uuid.New(), uuid.New()
+	if err := insertTenant(ctx, st, tenantID); err != nil {
+		t.Fatalf("insert tenant: %v", err)
+	}
+	if err := st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+		return store.CreateSession(ctx, tx, eventlog.Session{
+			SessionID: sessionID, SessionKey: sessionID.String(), TenantID: tenantID,
+			SurfaceID: "test", UserID: uuid.New(), AgentVersion: 1,
+			HarnessDigest: []byte("d"), DataLabel: "internal", RouteModelID: "fake", AutonomyLevel: "supervised",
+		})
+	}); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	mk := func(typ eventlog.EventType) eventlog.Event {
+		return eventlog.Event{
+			EventID: uuid.New(), SessionID: sessionID, TenantID: tenantID, SchemaVersion: eventlog.CurrentSchemaVersion,
+			Type: typ, Payload: []byte("p"), PayloadDigest: []byte("d"), KeyID: "k", Actor: eventlog.ActorSystem,
+		}
+	}
+	batch := []eventlog.Event{mk(eventlog.EventToolLoaded), mk(eventlog.EventToolLoaded), mk(eventlog.EventToolLoaded)}
+	counts := func() (events, receipts int) {
+		t.Helper()
+		if err := st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+			if err := tx.QueryRow(ctx, `SELECT count(*) FROM events WHERE session_id = $1`, sessionID).Scan(&events); err != nil {
+				return err
+			}
+			return tx.QueryRow(ctx, `SELECT count(*) FROM audit_receipts WHERE session_id = $1`, sessionID).Scan(&receipts)
+		}); err != nil {
+			t.Fatalf("count: %v", err)
+		}
+		return events, receipts
+	}
+
+	boom := errors.New("signer went away")
+	signer := &failAfterSigner{fakeSigner: newFakeSigner(t), err: boom}
+	signer.remaining.Store(2) // signs two receipts, fails the third
+	if _, err := postgres.New(st, postgres.Hooks{Chain: auditpg.NewChain(signer)}).AppendBatch(ctx, batch); !errors.Is(err, boom) {
+		t.Fatalf("AppendBatch with a signer that fails on the third = %v, want %v", err, boom)
+	}
+	if e, r := counts(); e != 0 || r != 0 {
+		t.Fatalf("after the failed batch: %d events and %d receipts, want none of either", e, r)
+	}
+
+	signer.remaining.Store(100)
+	got, err := postgres.New(st, postgres.Hooks{Chain: auditpg.NewChain(signer)}).AppendBatch(ctx, batch)
+	if err != nil || len(got) != 3 || got[0].Seq != 1 || got[2].Seq != 3 {
+		t.Fatalf("AppendBatch after the signer recovered = %v, %v, want three events numbered 1 to 3: a rolled-back batch must not consume sequence numbers", got, err)
+	}
+	if e, r := counts(); e != 3 || r != 3 {
+		t.Fatalf("after the batch: %d events and %d receipts, want 3 and 3", e, r)
+	}
+}
+
 // TestPostgresEventLog_SatisfiesTheEventLogContract runs the same suite the
 // in-memory adapter passes (internal/eventlog/inmem) against the real thing,
 // through PgBouncer's transaction-pooling tier as nexus_app — the path

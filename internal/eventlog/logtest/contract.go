@@ -152,6 +152,56 @@ func Run(t *testing.T, s Subject) {
 		}
 	})
 
+	t.Run("AppendBatch numbers a session's events in the order given", func(t *testing.T) {
+		tenantID, sessionID := s.NewSession(t)
+		batch := []eventlog.Event{
+			event(tenantID, sessionID, eventlog.EventToolLoaded, "a"),
+			event(tenantID, sessionID, eventlog.EventToolLoaded, "b"),
+			event(tenantID, sessionID, eventlog.EventUserMessage, "c"),
+		}
+		got, err := s.Log.AppendBatch(ctx, batch)
+		if err != nil {
+			t.Fatalf("AppendBatch: %v", err)
+		}
+		if len(got) != 3 {
+			t.Fatalf("AppendBatch returned %d events, want 3", len(got))
+		}
+		for i, e := range got {
+			if e.Seq != int64(i+1) || e.EventID != batch[i].EventID {
+				t.Errorf("event %d = seq %d id %v, want seq %d and the event as given", i, e.Seq, e.EventID, i+1)
+			}
+		}
+		stored := s.Events(t, tenantID, sessionID)
+		if len(stored) != 3 || stored[2].Type != eventlog.EventUserMessage {
+			t.Fatalf("stored %d events, want the three in order", len(stored))
+		}
+		next, err := s.Log.Append(ctx, event(tenantID, sessionID, eventlog.EventContent, "d"))
+		if err != nil || next.Seq != 4 {
+			t.Fatalf("an Append after a batch = seq %d err %v, want 4", next.Seq, err)
+		}
+	})
+
+	t.Run("AppendBatch of nothing writes nothing", func(t *testing.T) {
+		got, err := s.Log.AppendBatch(ctx, nil)
+		if err != nil || len(got) != 0 {
+			t.Fatalf("AppendBatch(nil) = %v, %v, want an empty success", got, err)
+		}
+	})
+
+	t.Run("AppendBatch writes none of its events when one is refused", func(t *testing.T) {
+		tenantID, sessionID := s.NewSession(t)
+		batch := []eventlog.Event{
+			event(tenantID, sessionID, eventlog.EventToolLoaded, "a"),
+			event(tenantID, sessionID, eventlog.EventType("not_an_event_type"), "b"),
+		}
+		if _, err := s.Log.AppendBatch(ctx, batch); err == nil {
+			t.Fatal("a batch holding an event outside the taxonomy was accepted")
+		}
+		if evs := s.Events(t, tenantID, sessionID); len(evs) != 0 {
+			t.Fatalf("%d events survived a refused batch, want none: the batch is all or nothing", len(evs))
+		}
+	})
+
 	t.Run("RecordSuspension and RecordDelegation accept a well-formed request", func(t *testing.T) {
 		tenantID, sessionID := s.NewSession(t)
 		if err := s.Log.RecordSuspension(ctx, kernel.SuspendRequest{

@@ -219,6 +219,90 @@ func TestRun_ADelegationSuspendsTheRunAndBindsItThroughThePort(t *testing.T) {
 	}
 }
 
+// countingLog counts how a run's events reach the log.
+type countingLog struct {
+	*inmem.Log
+	batches   int
+	batchSize int
+	singles   int
+}
+
+func (c *countingLog) Append(ctx context.Context, e eventlog.Event) (eventlog.Event, error) {
+	c.singles++
+	return c.Log.Append(ctx, e)
+}
+
+func (c *countingLog) AppendBatch(ctx context.Context, events []eventlog.Event) ([]eventlog.Event, error) {
+	c.batches++
+	c.batchSize += len(events)
+	return c.Log.AppendBatch(ctx, events)
+}
+
+// A run opens with one event per resident tool, then its memory and the user's
+// message. They are one write, so the caller waits for one transaction and not
+// for seventeen, and they commit or fail together.
+func TestSeed_WritesTheOpeningEventsAsOneBatchInOrder(t *testing.T) {
+	inner := inmem.New()
+	log := &countingLog{Log: inner}
+	r := newRigWithLog(inner, log, toolFunc(func(kernel.ToolUseRequest) kernel.ToolResult { return kernel.ToolResult{} }), finalTurn)
+
+	cfg := kernel.RunConfig{
+		System: "test", ModelID: "fake", Input: "hello", AutonomyLevel: "supervised",
+		LoadedTools: []string{"platform/a@v1", "platform/b@v1", "platform/c@v1"}, MemorySources: []string{"m1"},
+	}
+	var got []eventlog.EventType
+	for ev, err := range r.k.Seed(context.Background(), r.st, cfg) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, ev.Type)
+	}
+
+	want := []eventlog.EventType{eventlog.EventToolLoaded, eventlog.EventToolLoaded, eventlog.EventToolLoaded, eventlog.EventMemoryLoaded, eventlog.EventUserMessage}
+	if len(got) != len(want) {
+		t.Fatalf("Seed yielded %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("Seed yielded %v, want %v in that order", got, want)
+		}
+	}
+	if log.batches != 1 || log.batchSize != 5 || log.singles != 0 {
+		t.Fatalf("the opening events took %d batches of %d and %d single appends, want one batch of 5 and none", log.batches, log.batchSize, log.singles)
+	}
+	if len(r.st.History) != 5 || len(r.st.Transcript) != 1 {
+		t.Fatalf("history %d events and transcript %d messages, want 5 and the one user message", len(r.st.History), len(r.st.Transcript))
+	}
+}
+
+func TestSeed_AFailedBatchStopsTheRunAndLeavesNothingBehind(t *testing.T) {
+	inner := inmem.New()
+	errDisk := errors.New("disk full")
+	inner.FailAppend = func(e eventlog.Event) error {
+		if e.Type == eventlog.EventUserMessage {
+			return errDisk // the last of the batch
+		}
+		return nil
+	}
+	r := newRigWithLog(inner, inner, toolFunc(func(kernel.ToolUseRequest) kernel.ToolResult { return kernel.ToolResult{} }), finalTurn)
+
+	var yielded int
+	var gotErr error
+	for _, err := range r.k.Seed(context.Background(), r.st, kernel.RunConfig{System: "test", Input: "hi", LoadedTools: []string{"platform/a@v1"}}) {
+		if err != nil {
+			gotErr = err
+			break
+		}
+		yielded++
+	}
+	if !errors.Is(gotErr, errDisk) {
+		t.Fatalf("Seed error = %v, want it to wrap the log's", gotErr)
+	}
+	if n := len(inner.Events(r.sessionID)); yielded != 0 || n != 0 {
+		t.Fatalf("a failed batch yielded %d events and left %d in the log, want none of either", yielded, n)
+	}
+}
+
 func TestRun_AFailingLogStopsTheRunAndNothingIsAppendedAfterIt(t *testing.T) {
 	errDisk := errors.New("disk full")
 	log := inmem.New()

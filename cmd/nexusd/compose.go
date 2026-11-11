@@ -101,6 +101,7 @@ func buildServices(in *infra, prov provider.Provider, spanExp spanExporter) (*se
 	oversightStore := oversightpg.New(st, keyStore, chain)
 	approvals := oversight.NewApprovals(oversightStore)
 	inputs := oversight.NewInputs(oversightStore)
+	prunePolicy, condenseAtBytes := contextPolicy()
 	k := &kernel.Kernel{
 		Provider: provider.Wrap([]provider.Provider{prov}),
 		Tools:    kerneladapter.PipelineExecutor{Pipeline: pipeline}, // real tool pipeline, Phase 3
@@ -110,9 +111,12 @@ func buildServices(in *infra, prov provider.Provider, spanExp spanExporter) (*se
 			Suspend:  onSuspendFunc(approvals),    // durably record an approval on every suspend, Phase 5 task 5.6
 			Delegate: onDelegateFunc(delegations), // bind a delegation to its gating tool_use, Phase 8 task 8.10
 		}),
-		Stuck:        reliability.NewRegistry(stuckDetectionWindow),   // README task 6.8
-		Tracer:       spanExp,                                         // per-run/per-turn/per-tool-call spans, docs/local-llm.md
-		TraceContent: envOr("NEXUS_TRACE_CONTENT", "false") == "true", // opt-in prompt/tool content in traces, docs/local-llm.md — off by default, keeps every span content-free unless explicitly requested
+		Stuck:  reliability.NewRegistry(stuckDetectionWindow), // README task 6.8
+		Tracer: spanExp,                                       // per-run/per-turn/per-tool-call spans, docs/local-llm.md
+		// Both off unless NEXUS_CONTEXT_PRUNING / NEXUS_CONDENSE_THRESHOLD_BYTES say otherwise (context_policy.go).
+		PrunePolicy:            prunePolicy,
+		CondenseThresholdBytes: condenseAtBytes,
+		TraceContent:           envOr("NEXUS_TRACE_CONTENT", "false") == "true", // opt-in prompt/tool content in traces, docs/local-llm.md — off by default, keeps every span content-free unless explicitly requested
 	}
 
 	starter := &kernelRunStarter{

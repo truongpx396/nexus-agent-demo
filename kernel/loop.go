@@ -244,46 +244,33 @@ func (k *Kernel) seed(ctx context.Context, st *RunState, cfg RunConfig, yield fu
 		return false
 	}
 
+	// The opening events are written as one batch: a fresh run starts with one per
+	// resident tool, so as separate writes they are a transaction, a lock, a
+	// receipt and a signer round trip each, all before the caller has its answer.
+	// None of the tool_loaded and memory_loaded events is added to st.Transcript:
+	// the model already sees the resident catalog through cfg.Catalog on every
+	// Provider.Stream call, and the memory text is already folded into cfg.System,
+	// so they are audit records of what was pinned, not messages.
+	var opening []openingEvent
 	for _, toolID := range cfg.LoadedTools {
-		ev, err := k.appendEvent(ctx, st, eventlog.EventToolLoaded, eventlog.ActorSystem, &toolID, nil, nil, toolLoadedPayload{ToolID: toolID})
-		if err != nil {
-			yield(eventlog.Event{}, err)
-			return false
-		}
-		// Deliberately NOT added to st.Transcript: the model already
-		// sees the resident catalog via cfg.Catalog on every
-		// Provider.Stream call (promptctx's two-zone builder), so this
-		// is an audit record of what was pinned, not something the
-		// model needs to read as a message.
-		if !yield(ev, nil) {
-			return false
-		}
+		opening = append(opening, openingEvent{typ: eventlog.EventToolLoaded, actor: eventlog.ActorSystem, toolID: &toolID, payload: toolLoadedPayload{ToolID: toolID}})
 	}
-
 	if len(cfg.MemorySources) > 0 {
-		ev, err := k.appendEvent(ctx, st, eventlog.EventMemoryLoaded, eventlog.ActorSystem, nil, nil, nil, memoryLoadedPayload{Sources: cfg.MemorySources})
-		if err != nil {
-			yield(eventlog.Event{}, err)
-			return false
-		}
-		// Deliberately NOT added to st.Transcript, same reasoning as
-		// EventToolLoaded above: the memory text is already folded into
-		// cfg.System (memory.Snapshot's caller does this before Run is
-		// ever called — README task 7.1's "injected at session start"),
-		// so this is the audit record of what was pinned, not something
-		// the model needs to read as a message.
-		if !yield(ev, nil) {
-			return false
-		}
+		opening = append(opening, openingEvent{typ: eventlog.EventMemoryLoaded, actor: eventlog.ActorSystem, payload: memoryLoadedPayload{Sources: cfg.MemorySources}})
+	}
+	if cfg.Input != "" {
+		opening = append(opening, openingEvent{typ: eventlog.EventUserMessage, actor: eventlog.ActorUser, payload: userMessagePayload{Body: cfg.Input}})
 	}
 
-	if cfg.Input != "" {
-		ev, err := k.appendEvent(ctx, st, eventlog.EventUserMessage, eventlog.ActorUser, nil, nil, nil, userMessagePayload{Body: cfg.Input})
-		if err != nil {
-			yield(eventlog.Event{}, err)
-			return false
+	written, err := k.appendBatch(ctx, st, opening)
+	if err != nil {
+		yield(eventlog.Event{}, err)
+		return false
+	}
+	for _, ev := range written {
+		if ev.Type == eventlog.EventUserMessage {
+			st.Transcript = append(st.Transcript, provider.TextMessage("user", cfg.Input))
 		}
-		st.Transcript = append(st.Transcript, provider.TextMessage("user", cfg.Input))
 		if !yield(ev, nil) {
 			return false
 		}

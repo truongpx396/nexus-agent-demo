@@ -18,6 +18,7 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -145,4 +146,37 @@ func (l *Log) RecordDelegation(ctx context.Context, req kernel.DelegateSuspendRe
 		return nil
 	}
 	return l.hooks.Delegate(ctx, req)
+}
+
+// AppendBatch appends every event, and extends the audit chain for each, in one
+// transaction. The events in a batch belong to one tenant; they are applied in the
+// order given, so their receipts chain in that order.
+func (l *Log) AppendBatch(ctx context.Context, events []eventlog.Event) ([]eventlog.Event, error) {
+	if len(events) == 0 {
+		return nil, nil
+	}
+	out := make([]eventlog.Event, 0, len(events))
+	err := l.store.InTenantTx(ctx, events[0].TenantID, func(ctx context.Context, tx pgx.Tx) error {
+		out = out[:0]
+		for _, e := range events {
+			if e.TenantID != events[0].TenantID {
+				return fmt.Errorf("append batch: events span tenants %s and %s", events[0].TenantID, e.TenantID)
+			}
+			appended, aerr := store.Append(ctx, tx, e)
+			if aerr != nil {
+				return aerr
+			}
+			if l.hooks.Chain != nil {
+				if _, cerr := l.hooks.Chain.Append(ctx, tx, appended.TenantID, appended.SessionID, appended.Seq, appended.EventID, string(appended.Type), appended.PayloadDigest); cerr != nil {
+					return cerr
+				}
+			}
+			out = append(out, appended)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }

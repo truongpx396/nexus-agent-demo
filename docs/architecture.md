@@ -68,7 +68,7 @@ flowchart TB
 
     subgraph nx["nexusd :8085 (one process)"]
         http["HTTP mux<br/>/v1/* · /v1/webhooks/* · /healthz · /readyz · /metrics"]
-        workers["2 queue workers<br/>+ startup orphan recovery"]
+        workers["queue workers (2 by default)<br/>+ startup orphan recovery"]
         loops["periodic loops<br/>audit anchor · team backstop<br/>idle sweep · cron scheduler"]
         bus["event-bus subscriber<br/>Redis Pub/Sub to the SSE broker"]
     end
@@ -95,6 +95,7 @@ flowchart TB
 - Everything tenant-scoped goes through PgBouncer as `nexus_app` (`NOBYPASSRLS`), and scope is set with a transaction-local `set_config`, never per session, because the pooler reassigns connections between tenants.
 - `nexus_app` cannot query across tenants, so the few cross-tenant passes (the tenant directory, the orphaned-session scan) open a second pool with the admin DSN, direct to Postgres. See [observation 5](#where-the-code-differs-from-the-docs).
 - Redis carries five things: the job stream (`nexus:queue:jobs`, plus its delayed set and dead-letter stream), the per-session lock, the epoch-marked cost counter, the Pub/Sub bus (`nexus:events:*`, `nexus:deltas:*`) and OAuth CSRF state.
+- The worker count is `NEXUS_QUEUE_WORKERS` (1 to 64), which is this process's ceiling on concurrently driven runs. `/metrics` reports the queue's depth by state, the age of its oldest job and the worker count, so workers falling behind shows as `queued` growing while the age climbs.
 - Several `nexusd` processes are safe by construction but have never been run together; the periodic loops are not audited for it.
 
 Source: [`cmd/nexusd/infra.go`](../cmd/nexusd/infra.go), [`cmd/nexusd/background.go`](../cmd/nexusd/background.go), [`cmd/nexusd/http.go`](../cmd/nexusd/http.go), [`deploy/docker-compose.yml`](../deploy/docker-compose.yml).
@@ -465,7 +466,7 @@ Source: [`internal/crypto/envelope.go`](../internal/crypto/envelope.go), [`inter
 
 ## F1 Start a run
 
-The synchronous half: everything that happens before the client gets its `202`.
+The synchronous half: everything that happens before the client gets its `202`. A run's opening events are one batch, not one transaction each: through Postgres and PgBouncer with a local signer, 17 of them take a median 18.9 ms as a batch and 35.1 ms as separate appends.
 
 ```mermaid
 sequenceDiagram
@@ -492,9 +493,8 @@ sequenceDiagram
     S->>S: load tenant memory into the system prompt
     S->>RD: SUBSCRIBE nexus:events:session, before anything is written
     S->>K: Seed
-    loop status running, tool_loaded for each tool, memory_loaded, user_message
-        K->>PG: Append (see F4)
-    end
+    K->>PG: SetStatus running
+    K->>PG: AppendBatch: tool_loaded for each tool, memory_loaded, user_message (one transaction, a receipt each)
     S->>RD: XADD a start job (ids only, never the input's plaintext)
     S-->>L: event channel
     L-->>R: session id and channel
@@ -838,7 +838,7 @@ sequenceDiagram
     Op->>CLI: nexusd erase --tenant=name, or --session=id
     CLI->>PG: one tenant-scoped transaction
     CLI->>E: EraseTenant or EraseSession
-    E->>PG: UPDATE encryption_keys SET status = shredded
+    E->>PG: UPDATE encryption_keys SET status = shredded and wrapped_dek empty
     E->>PG: find the sessions those keys sealed
     E->>PG: delete the derived artifacts of those sessions
     loop each affected session
@@ -849,7 +849,7 @@ sequenceDiagram
     Note over PG: event rows stay. Structure, payload_digest and the audit chain are intact,<br/>so replay and verify-chain still work. KeyStore.Unwrap now returns ErrKeyShredded.
 ```
 
-The row and its `wrapped_dek` stay on purpose, so a verifier can prove a key was retired. See [observation 3](#where-the-code-differs-from-the-docs) for what that does and does not guarantee.
+The row stays so a verifier can prove a key was retired, but its `wrapped_dek` is emptied in the same statement, so there is nothing left to unwrap. A database backup taken before the shred still holds the old bytes; see [observation 3](#where-the-code-differs-from-the-docs).
 
 Source: [`cmd/nexusd/cli_erase.go`](../cmd/nexusd/cli_erase.go), [`internal/crypto/postgres/erase.go`](../internal/crypto/postgres/erase.go), [`internal/crypto/postgres/shred.go`](../internal/crypto/postgres/shred.go), [`migrations/0004_encryption_keys.sql`](../migrations/0004_encryption_keys.sql).
 
@@ -863,11 +863,11 @@ Found while drawing the diagrams above. **Checked** means a test or a reproducti
 |---|---|---|---|
 | 1 | **Fixed.** An approval decision used to resume the run inside the HTTP request and drain it, never calling `PublishEvent`, so connected SSE clients and chat conversations got no live events from the resumed turns, a second approval in the same run sent no notification, and a run that ended on that path emitted no `run.terminal` span. A decision now records itself, answers `202`, and queues an approval job that a worker resumes under the session lock, publishing as every other run does. | `internal/oversight/decide.go`, `internal/oversight/resume.go`, `cmd/nexusd/approvals.go` | checked: unit tests, and integration tests for `ResumeDecided`, its repeat, and recovery |
 | 2 | **Fixed.** After an approved call the next model prompt held two `tool_result` blocks for one `tool_use`: the `awaiting_approval` placeholder and the real result. `Rehydrate` now picks one answer per call and `Resume` replaces the placeholder in place; the scripted provider now refuses a malformed prompt, so a test sees it. | `kernel/rehydrate.go`, `kernel/transcript.go`, `internal/provider/validate.go` | checked: kernel tests and mutation checks |
-| 3 | Erasure sets `encryption_keys.status = 'shredded'` and keeps `wrapped_dek`. `Unwrap` refuses a shredded key, but the wrapped bytes remain, so anyone with database access and the KEK file could still unwrap them. Irreversibility rests on that status check and on the KEK, not on the key being gone. The README says the DEK "is destroyed". | `internal/crypto/postgres/shred.go`, `keystore.go`, `migrations/0004_encryption_keys.sql`; no code ever clears `wrapped_dek` | read |
+| 3 | **Fixed.** Erasure used to set `encryption_keys.status = 'shredded'` and keep `wrapped_dek`, so anyone with database access and the KEK file could still unwrap what the key sealed: irreversibility rested on the status check alone. Shredding now empties `wrapped_dek` in the same statement, and migration 0030 does the same for keys shredded earlier. The row stays as proof the key was retired. A backup or WAL taken before the shred still holds the old bytes, and only retiring the KEK they were wrapped under removes those. | `internal/crypto/postgres/shred.go`, `migrations/0030_wipe_shredded_keys.sql` | checked: integration tests for both |
 | 4 | A DEK is minted per session (and per OAuth connection and per cron schedule), not once per tenant. The README says "a KEK wraps per-tenant DEKs". Tenant erasure shreds all of a tenant's active keys; `--session` shreds one session's. | `NewDEK` call sites in `runs`, `delegate`, `teams`, `runctl/fork`, `connectors`, `cron` | read |
 | 5 | The README and CLAUDE.md say the superuser `nexus` role is for migrations only. The running server also opens a pool with the admin DSN (`NEXUS_ADMIN_DATABASE_URL`, falling back to the migrate DSN) for the tenant directory and the orphan scan. | `adminDSN` and its callers in `cmd/nexusd/background.go` | read |
 | 6 | `provider.Route` picks a model id, but nothing in a model call carries it: `Prompt` and `RunContext` have no model field and each adapter is bound to the one model it was configured with, and `nexusd` wraps a single provider, so failover has nothing to fail over to. The cost ceiling used to be priced under the routed model and enforced against a figure that was not on the bill. It is now priced under the model the provider serves (`provider.ServedModel`), and the router's choice is kept in `route_reason`. Routing still does not dispatch. | `internal/provider/provider.go`, `internal/provider/bound.go`, `internal/runs/launch.go`, `cmd/nexusd/compose.go` | checked: a launcher test and a seed test |
-| 7 | `Kernel.PrunePolicy` and `Kernel.CondenseThresholdBytes` are never set by `cmd/nexusd`, so live pruning and condensation are off in the shipped binary. | no non-test caller sets either | checked by search |
+| 7 | `Kernel.PrunePolicy` and `Kernel.CondenseThresholdBytes` were never set by `cmd/nexusd`, so live pruning and condensation were off in the shipped binary and a long conversation grew until the provider reported an overflow. They are now settings (`NEXUS_CONTEXT_PRUNING`, `NEXUS_CONDENSE_THRESHOLD_BYTES`), still off by default: they change what the model is shown, so enabling one is a prompt change that has to clear the eval gate against the model in use. | `cmd/nexusd/context_policy.go`, `cmd/nexusd/compose.go` | checked: a unit test; the quality effect is not measured |
 | 8 | Delegated children and team members run on detached goroutines in the process that handled the parent's tool call, not through the queue or its lock. | `internal/delegate/spawn.go`, `internal/teams/lifecycle.go` | read |
 | 9 | Live content previews cross Redis Pub/Sub as plaintext. The code accepts this on the assumption that Redis is on a private network. Durable events on the same bus are sealed. | `PublishDelta` in `internal/runs/rest/broker.go` | read |
 | 10 | The README's list of tenant tables is out of date against the 37 tables in `tableOwners` (for example `claims`, not `idempotency_claims`; there is no `tools`, `tool_profiles` or `catalog_manifests` table), and its repository-layout block lists `runs/`, `surfaces/`, `connectors/`, `retrieval/`, `contentaccess/` and `tenancy/` twice. This document takes its table list from `tests/contract/ownership_test.go`. | the two files side by side | read |

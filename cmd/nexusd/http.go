@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/truongpx396/nexus-agent-demo/internal/queue"
 	queueredis "github.com/truongpx396/nexus-agent-demo/internal/queue/redis"
 	"github.com/truongpx396/nexus-agent-demo/internal/reporting"
 
@@ -79,7 +80,7 @@ const metricsStaleClaimAfter = 15 * time.Minute
 // nexus_telemetry_attr_drop_rate always reports 0 from this endpoint
 // specifically — the same "not measured here, never measured zero"
 // documented limitation.
-func handleMetrics(reports reporting.Reports) http.HandlerFunc {
+func handleMetrics(reports reporting.Reports, depth queue.Stater) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tenantIDs, err := tenantDirectory().ListTenantIDs(r.Context())
 		if err != nil {
@@ -154,6 +155,8 @@ func handleMetrics(reports reporting.Reports) http.HandlerFunc {
 				fmt.Fprintf(w, "nexus_tool_call_count{tenant_id=%q,tool_id=%q} %f\n", tenantID, toolID, float64(n)) //nolint:errcheck // best-effort write to a scrape response
 			}
 		}
+
+		writeQueueGauges(r.Context(), w, depth)
 
 		writeGaugeHeader(w, "nexus_sessions_by_surface", "Session count grouped by originating surface_id (web/telegram/zalo/email/cli/api).")
 		for tenantID, signals := range signalsByTenant {
