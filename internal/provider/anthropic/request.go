@@ -2,6 +2,7 @@ package anthropic
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 )
@@ -49,6 +50,12 @@ type anthMessage struct {
 // anthContentBlock is the Anthropic Messages API's native content-block
 // shape (README task 13.4, closing F5) — which fields are populated depends
 // on Type, mirroring provider.ContentBlock one-for-one.
+//
+// Its JSON tags (omitempty on every field) are used only to decode a request
+// body back, as the tests do. What is sent is MarshalJSON's: each block type has
+// fields the API requires even when empty (a thinking block's "thinking", a
+// tool_use's "input") and fields it must not carry at all, which one struct with
+// omitempty everywhere cannot express.
 type anthContentBlock struct {
 	Type string `json:"type"`
 
@@ -63,6 +70,54 @@ type anthContentBlock struct {
 	ToolUseID string `json:"tool_use_id,omitempty"` // tool_result
 	Content   string `json:"content,omitempty"`     // tool_result
 	IsError   bool   `json:"is_error,omitempty"`    // tool_result
+}
+
+// MarshalJSON emits exactly the fields the API defines for the block's Type:
+//
+//   - text: type, text.
+//   - thinking: type, thinking and signature, both always. On the models this
+//     adapter enables thinking for the thinking text is omitted by default, so a
+//     block that comes back with only a signature must be sent back with an empty
+//     "thinking" rather than none: the field is required.
+//   - tool_use: type, id, name and input, which is {} when the model sent none.
+//   - tool_result: type, tool_use_id, content (omitted when empty) and is_error
+//     (omitted when false).
+//
+// A Type this adapter does not produce is an error, not a silently empty block.
+func (b anthContentBlock) MarshalJSON() ([]byte, error) {
+	switch b.Type {
+	case "text":
+		return json.Marshal(struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}{b.Type, b.Text})
+	case "thinking":
+		return json.Marshal(struct {
+			Type      string `json:"type"`
+			Thinking  string `json:"thinking"`
+			Signature string `json:"signature"`
+		}{b.Type, b.Thinking, b.Signature})
+	case "tool_use":
+		input := b.Input
+		if len(input) == 0 {
+			input = json.RawMessage("{}")
+		}
+		return json.Marshal(struct {
+			Type  string          `json:"type"`
+			ID    string          `json:"id"`
+			Name  string          `json:"name"`
+			Input json.RawMessage `json:"input"`
+		}{b.Type, b.ID, b.Name, input})
+	case "tool_result":
+		return json.Marshal(struct {
+			Type      string `json:"type"`
+			ToolUseID string `json:"tool_use_id"`
+			Content   string `json:"content,omitempty"`
+			IsError   bool   `json:"is_error,omitempty"`
+		}{b.Type, b.ToolUseID, b.Content, b.IsError})
+	default:
+		return nil, fmt.Errorf("anthropic: cannot serialise a %q content block", b.Type)
+	}
 }
 
 type anthTool struct {

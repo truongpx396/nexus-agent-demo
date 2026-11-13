@@ -508,3 +508,95 @@ func TestStreamCancelledContextIsNotClassifiedRetryable(t *testing.T) {
 		t.Fatalf("a cancelled call classified as %s", got)
 	}
 }
+
+// TestContentBlocksSerialiseWithExactlyTheirOwnFields is R5: one struct with
+// omitempty on every field dropped the fields the API requires whenever they were
+// empty. A thinking block that comes back with a signature but no text must still
+// carry "thinking", and a tool_use with no input must still carry "input".
+func TestContentBlocksSerialiseWithExactlyTheirOwnFields(t *testing.T) {
+	for name, tc := range map[string]struct {
+		block provider.ContentBlock
+		want  string
+	}{
+		"text": {
+			provider.ContentBlock{Kind: provider.BlockText, Text: "hi"},
+			`{"type":"text","text":"hi"}`,
+		},
+		"thinking with its text": {
+			provider.ContentBlock{Kind: provider.BlockThinking, Text: "hmm", Signature: "sig"},
+			`{"type":"thinking","thinking":"hmm","signature":"sig"}`,
+		},
+		"thinking with empty text keeps the field": {
+			provider.ContentBlock{Kind: provider.BlockThinking, Signature: "sig"},
+			`{"type":"thinking","thinking":"","signature":"sig"}`,
+		},
+		"tool_use": {
+			provider.ContentBlock{Kind: provider.BlockToolUse, ToolUseID: "tu1", ToolName: "get_weather", Input: json.RawMessage(`{"city":"nyc"}`)},
+			`{"type":"tool_use","id":"tu1","name":"get_weather","input":{"city":"nyc"}}`,
+		},
+		"tool_use with nil input sends an empty object": {
+			provider.ContentBlock{Kind: provider.BlockToolUse, ToolUseID: "tu1", ToolName: "ping"},
+			`{"type":"tool_use","id":"tu1","name":"ping","input":{}}`,
+		},
+		"tool_use with empty input sends an empty object": {
+			provider.ContentBlock{Kind: provider.BlockToolUse, ToolUseID: "tu1", ToolName: "ping", Input: json.RawMessage{}},
+			`{"type":"tool_use","id":"tu1","name":"ping","input":{}}`,
+		},
+		"tool_result": {
+			provider.ContentBlock{Kind: provider.BlockToolResult, ToolUseID: "tu1", Text: "sunny"},
+			`{"type":"tool_result","tool_use_id":"tu1","content":"sunny"}`,
+		},
+		"tool_result error": {
+			provider.ContentBlock{Kind: provider.BlockToolResult, ToolUseID: "tu1", Text: "boom", IsError: true},
+			`{"type":"tool_result","tool_use_id":"tu1","content":"boom","is_error":true}`,
+		},
+		"tool_result with no content omits it": {
+			provider.ContentBlock{Kind: provider.BlockToolResult, ToolUseID: "tu1"},
+			`{"type":"tool_result","tool_use_id":"tu1"}`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			msgs := toAnthMessages([]provider.Message{{Role: "assistant", Blocks: []provider.ContentBlock{tc.block}}}, provider.WireNames{})
+			if len(msgs) != 1 || len(msgs[0].Content) != 1 {
+				t.Fatalf("messages = %+v", msgs)
+			}
+			got, err := json.Marshal(msgs[0].Content[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != tc.want {
+				t.Fatalf("block = %s\nwant    %s", got, tc.want)
+			}
+		})
+	}
+
+	t.Run("an unknown type is an error", func(t *testing.T) {
+		if _, err := json.Marshal(anthContentBlock{Type: "image"}); err == nil {
+			t.Fatal("expected an error for a block type the adapter does not produce")
+		}
+	})
+
+	t.Run("a whole request body round trips through its own decoder", func(t *testing.T) {
+		raw, err := json.Marshal(messagesRequest{Model: "m", MaxTokens: 1, Messages: toAnthMessages([]provider.Message{
+			provider.TextMessage("user", "go"),
+			{Role: "assistant", Blocks: []provider.ContentBlock{
+				{Kind: provider.BlockThinking, Signature: "sig"},
+				{Kind: provider.BlockToolUse, ToolUseID: "tu1", ToolName: "ping"},
+			}},
+			provider.ToolResultMessage("tu1", "pong", false),
+		}, provider.WireNames{})})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var back messagesRequest
+		if err := json.Unmarshal(raw, &back); err != nil {
+			t.Fatalf("unmarshal: %v (%s)", err, raw)
+		}
+		if got := back.Messages[1].Content[0]; got.Type != "thinking" || got.Signature != "sig" {
+			t.Fatalf("thinking block did not survive: %+v", got)
+		}
+		if got := string(back.Messages[1].Content[1].Input); got != "{}" {
+			t.Fatalf("tool_use input = %q, want {}", got)
+		}
+	})
+}
