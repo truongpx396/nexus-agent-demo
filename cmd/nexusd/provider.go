@@ -59,6 +59,15 @@ func anthropicMaxTokens() int {
 	return n
 }
 
+// logProviderRetry is provider.RetryConfig.OnRetry: it records why a model call
+// is being tried again and how long the wait is, the "logged reason" Principle VIII
+// asks of every retry. The error text is the provider's own status message, never
+// the prompt or a reply.
+func logProviderRetry(attempt int, err error, delay time.Duration) {
+	log.Warn().Int("retry", attempt).Str("class", string(provider.ClassifyTrigger(err))).
+		Err(err).Dur("delay", delay).Msg("nexusd: model call failed before its first chunk; retrying")
+}
+
 func newProvider() (provider.Provider, error) {
 	switch envOr("NEXUS_PROVIDER", "fake") {
 	case "anthropic":

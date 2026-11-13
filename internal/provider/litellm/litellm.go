@@ -16,6 +16,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -255,6 +256,11 @@ func (p *Provider) Stream(ctx context.Context, prompt provider.Prompt, tools []p
 
 	resp, err := p.client().Do(httpReq)
 	if err != nil {
+		// A cancelled or expired run is the caller's doing, not a throttle: returning
+		// the context's own error keeps it from being classified retryable.
+		if cerr := ctx.Err(); cerr != nil {
+			return nil, cerr
+		}
 		return nil, &provider.ThrottleError{Reason: fmt.Sprintf("request failed: %v", err)}
 	}
 
@@ -263,7 +269,11 @@ func (p *Provider) Stream(ctx context.Context, prompt provider.Prompt, tools []p
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
 		var eb errorBody
 		_ = json.Unmarshal(body, &eb) // best-effort; classifyAPIError falls back to the status code alone
-		return nil, classifyAPIError(resp.StatusCode, eb)
+		err := classifyAPIError(resp.StatusCode, eb)
+		if te, ok := errors.AsType[*provider.ThrottleError](err); ok {
+			te.RetryAfter = provider.ParseRetryAfter(resp.Header.Get("retry-after"))
+		}
+		return nil, err
 	}
 
 	// Same 1MB line cap as anthropic.go, same reason (README task 13.14): a

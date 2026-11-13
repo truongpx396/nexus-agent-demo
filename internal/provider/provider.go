@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -211,6 +212,9 @@ type Embedder interface {
 // Phase-2 failover taxonomy classifies this as retryable.
 type ThrottleError struct {
 	Reason string
+	// RetryAfter is how long the provider asked the caller to wait (its
+	// Retry-After header). Zero means it gave none.
+	RetryAfter time.Duration
 }
 
 func (e *ThrottleError) Error() string { return "provider throttled: " + e.Reason }

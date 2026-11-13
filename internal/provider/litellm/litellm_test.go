@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 )
@@ -301,5 +302,28 @@ func TestStreamRefusesCollidingToolNames(t *testing.T) {
 	_, err := p.Stream(context.Background(), provider.Prompt{}, []provider.ToolSchema{{Name: "a/b@v1"}, {Name: "a_b_v1"}}, provider.RunContext{})
 	if !errors.Is(err, provider.ErrWireNameCollision) {
 		t.Fatalf("err = %v, want ErrWireNameCollision", err)
+	}
+}
+
+func TestStreamThrottleCarriesRetryAfterAndACancelledCallIsNotRetryable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("retry-after", "3")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":{"type":"rate_limit","message":"slow down"}}`))
+	}))
+	defer srv.Close()
+
+	p := &Provider{BaseURL: srv.URL, Model: "m"}
+	_, err := p.Stream(context.Background(), provider.Prompt{}, nil, provider.RunContext{})
+	te, ok := errors.AsType[*provider.ThrottleError](err)
+	if !ok || te.RetryAfter != 3*time.Second {
+		t.Fatalf("err = %v, want a ThrottleError with RetryAfter 3s", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = p.Stream(ctx, provider.Prompt{}, nil, provider.RunContext{})
+	if !errors.Is(err, context.Canceled) || provider.ClassifyTrigger(err) == provider.TriggerRetryable {
+		t.Fatalf("a cancelled call returned %v (%s), want context.Canceled, not retryable", err, provider.ClassifyTrigger(err))
 	}
 }

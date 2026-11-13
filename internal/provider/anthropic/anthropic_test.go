@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 )
@@ -467,5 +468,43 @@ func TestStreamSendsTheConfiguredMaxTokens(t *testing.T) {
 				t.Fatalf("max_tokens = %d, want %d", req.MaxTokens, tc.want)
 			}
 		})
+	}
+}
+
+// A 429 carries the provider's Retry-After, which the retry wrapper honours.
+func TestStreamThrottleCarriesRetryAfter(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("retry-after", "7")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}`))
+	}))
+	defer srv.Close()
+
+	p := &Provider{APIKey: "k", Model: "m", BaseURL: srv.URL}
+	_, err := p.Stream(context.Background(), provider.Prompt{}, nil, provider.RunContext{})
+	te, ok := errors.AsType[*provider.ThrottleError](err)
+	if !ok {
+		t.Fatalf("err = %v, want a ThrottleError", err)
+	}
+	if te.RetryAfter != 7*time.Second {
+		t.Fatalf("RetryAfter = %v, want 7s", te.RetryAfter)
+	}
+}
+
+// A run cancelled mid-request is the caller's doing; reporting it as a throttle
+// would have the retry layer start the call again.
+func TestStreamCancelledContextIsNotClassifiedRetryable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { <-r.Context().Done() }))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	p := &Provider{APIKey: "k", Model: "m", BaseURL: srv.URL}
+	_, err := p.Stream(ctx, provider.Prompt{}, nil, provider.RunContext{})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if got := provider.ClassifyTrigger(err); got == provider.TriggerRetryable {
+		t.Fatalf("a cancelled call classified as %s", got)
 	}
 }
