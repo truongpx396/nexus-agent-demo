@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -178,6 +179,10 @@ func newToolPipeline(st *store.Store, cfgStore config.Loader, keyStore *cryptopg
 	})
 
 	workspaceRoot := envOr("NEXUS_WORKSPACE_ROOT", ".dev/workspaces")
+	sandboxFactory, err := newSandboxFactory(workspaceRoot, devMode)
+	if err != nil {
+		return toolStack{}, err
+	}
 	pipeline := tools.NewPipeline(tools.PipelineConfig{
 		Registry:         reg,
 		Manifest:         manifest,
@@ -186,7 +191,7 @@ func newToolPipeline(st *store.Store, cfgStore config.Loader, keyStore *cryptopg
 		Blobs:            tools.BlobStore{Dir: envOr("NEXUS_BLOB_DIR", ".dev/blobs")},
 		WorkspaceRoot:    workspaceRoot,
 		DerivedArtifacts: toolspg.NewDerivedArtifactRecorder(st),
-		SandboxFactory:   newSandboxFactory(workspaceRoot),
+		SandboxFactory:   sandboxFactory,
 		// Claims (README task 6.6): write-ahead idempotency for every
 		// non-read-only tool call. Built here (rather than passed in) so
 		// newToolPipeline stays the one place that wires the resident
@@ -328,35 +333,48 @@ func loadSkillCatalog(reg *tools.Registry) (*skills.Catalog, []skills.SkillBundl
 }
 
 // newSandboxFactory wires platform/shell to run inside Docker (README task
-// 5.12) when NEXUS_SANDBOX=docker and a daemon is actually reachable, or
-// inside an OpenSandbox sandbox (specs/README.md Phase 16, task 16.4)
-// when NEXUS_SANDBOX=opensandbox and NEXUS_OPENSANDBOX_URL is configured —
-// opt-in, not the default: this demo's zero-setup path (`make up && make
-// run`) must keep working on a machine with no Docker daemon and no
-// OpenSandbox server running, exactly like NEXUS_PROVIDER=fake needs no
-// ANTHROPIC_API_KEY. Both branches share the same fail-open-to-unsandboxed
-// posture on a misconfiguration — a demo that asked for isolation and can't
-// get it stays running, not fataled, matching the `docker` branch's own
-// long-standing behavior.
-func newSandboxFactory(workspaceRoot string) func(uuid.UUID) tools.SandboxExec {
-	switch envOr("NEXUS_SANDBOX", "") {
+// 5.12) when NEXUS_SANDBOX=docker, or inside an OpenSandbox sandbox
+// (specs/README.md Phase 16, task 16.4) when NEXUS_SANDBOX=opensandbox and
+// NEXUS_OPENSANDBOX_URL is configured.
+//
+// Outside --dev it fails closed, like every other security-critical setting
+// (serve's loadServerConfig): the variable must name one of the two, and a Docker
+// daemon that cannot be reached, or an OpenSandbox with no URL, is an error. With no
+// sandbox platform/shell runs /bin/sh on the host as the nexusd user, which is not
+// something a deployment should arrive at by leaving a variable unset or a daemon
+// down. In --dev it keeps the zero-setup path (`make up && make run` on a machine
+// with no Docker daemon and no OpenSandbox server): unset, or a misconfiguration,
+// logs a warning and leaves the shell unsandboxed, with the clean environment
+// builtin.Shell gives it.
+func newSandboxFactory(workspaceRoot string, dev bool) (func(uuid.UUID) tools.SandboxExec, error) {
+	kind := envOr("NEXUS_SANDBOX", "")
+	if !dev && kind != "docker" && kind != "opensandbox" {
+		return nil, fmt.Errorf("NEXUS_SANDBOX must be %q or %q outside --dev (it is %q): without a sandbox platform/shell would run commands on the host as the nexusd user", "docker", "opensandbox", kind)
+	}
+	switch kind {
 	case "docker":
 		docker, err := sandbox.NewDocker()
 		if err != nil {
+			if !dev {
+				return nil, fmt.Errorf("NEXUS_SANDBOX=docker but connecting to Docker failed: %w", err)
+			}
 			log.Warn().Err(err).Msg("nexusd: NEXUS_SANDBOX=docker but connecting to Docker failed; platform/shell stays unsandboxed")
-			return nil
+			return nil, nil
 		}
 		return func(sessionID uuid.UUID) tools.SandboxExec {
 			return sandbox.SessionSandbox{
 				Docker: docker,
 				Config: sandbox.Config{WorkspaceDir: filepath.Join(workspaceRoot, sessionID.String())},
 			}
-		}
+		}, nil
 	case "opensandbox":
 		domain := envOr("NEXUS_OPENSANDBOX_URL", "")
 		if domain == "" {
+			if !dev {
+				return nil, errors.New("NEXUS_SANDBOX=opensandbox but NEXUS_OPENSANDBOX_URL is unset")
+			}
 			log.Warn().Msg("nexusd: NEXUS_SANDBOX=opensandbox but NEXUS_OPENSANDBOX_URL is unset; platform/shell stays unsandboxed")
-			return nil
+			return nil, nil
 		}
 		protocol, host, ok := strings.Cut(domain, "://")
 		if !ok {
@@ -371,9 +389,9 @@ func newSandboxFactory(workspaceRoot string) func(uuid.UUID) tools.SandboxExec {
 			return sandbox.OpenSandboxSession{
 				Config: sandbox.OpenSandboxConfig{Domain: host, Protocol: protocol, APIKey: apiKey},
 			}
-		}
+		}, nil
 	default:
-		return nil
+		return nil, nil // --dev with NEXUS_SANDBOX unset
 	}
 }
 

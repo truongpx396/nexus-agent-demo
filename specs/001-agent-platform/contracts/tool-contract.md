@@ -138,6 +138,6 @@ discard; `UnresolvedClaimsError` blocks a resume that would otherwise skip one.
 - `platform/web_fetch` and `platform/web_crawl` check the **target URL's host** against `NEXUS_WEB_FETCH_ALLOWLIST` (empty = none
   allowed). Connector and MCP endpoints are in the sandbox **deny set** — the in-sandbox broker is not shipped, so a bypass is never
   the interim state.
-- `platform/shell` runs through `RunContext.Sandbox` when `NEXUS_SANDBOX` is `docker` or `opensandbox`; unset runs unsandboxed (a **skill script** has no such fallback: with no sandbox it is refused with `skill_script_requires_sandbox`); a
+- `platform/shell` runs through `RunContext.Sandbox` when `NEXUS_SANDBOX` is `docker` or `opensandbox`; unset runs unsandboxed under `--dev` only (outside it `nexusd` refuses to start without one, and an unsandboxed command gets a minimal environment, not the server's) (a **skill script** has no such fallback: with no sandbox it is refused with `skill_script_requires_sandbox`); a
   configured-but-unreachable backend **logs a warning and falls back** (never a hard failure). Docker limits: `--network none`,
   CPU/memory/PID/wall; `CapDrop ALL`, read-only root, `no-new-privileges`, user `65534:65534`; the per-session workspace stays writable.

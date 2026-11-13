@@ -123,7 +123,7 @@ for the right convention on its own.
 |---|---|---|
 | `NEXUS_CRAWL4AI_URL` | unset (tool not registered) | Crawl4AI server base URL |
 | `NEXUS_CRAWL4AI_API_TOKEN` | unset | Sent as `Authorization: Bearer` to Crawl4AI's `/md` endpoint |
-| `NEXUS_SANDBOX=opensandbox` | unset (unsandboxed) | Routes `platform/shell` through OpenSandbox instead of Docker (`docker` is the other valid value) |
+| `NEXUS_SANDBOX=opensandbox` | unset (unsandboxed under `--dev`; required outside it) | Routes `platform/shell` through OpenSandbox instead of Docker (`docker` is the other valid value). Outside `--dev`, `nexusd` refuses to start if it is unset, if Docker cannot be reached, or if OpenSandbox has no `NEXUS_OPENSANDBOX_URL` |
 | `NEXUS_OPENSANDBOX_URL` | unset | OpenSandbox server base URL (`host:port`, or `http(s)://host:port`) |
 | `NEXUS_OPENSANDBOX_API_KEY` | unset | Sent as `OPEN-SANDBOX-API-KEY` |
 | `NEXUS_SKILLS_ROOT` | `skills` | Where `skills.LoadBundles` reads bundles from |

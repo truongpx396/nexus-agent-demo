@@ -299,7 +299,7 @@ auto-loaded from the working directory; **a real environment variable always win
 | Concern | Setting | Notes |
 |---|---|---|
 | 🔀 Model | `NEXUS_PROVIDER=fake` (default) · `anthropic` · `litellm` | `anthropic` needs `ANTHROPIC_API_KEY` (`NEXUS_ANTHROPIC_MODEL`); `litellm` uses `NEXUS_LITELLM_BASE_URL` and `NEXUS_LITELLM_MODEL`. Local Ollama setup: [`docs/local-llm.md`](docs/local-llm.md) |
-| 📦 Sandbox | `NEXUS_SANDBOX=` (unset) · `docker` · `opensandbox` | Unset runs `platform/shell` unsandboxed, and refuses skill scripts, which never run outside a sandbox. OpenSandbox and Crawl4AI: `make agentic-up`, [`docs/agentic-capabilities.md`](docs/agentic-capabilities.md) |
+| 📦 Sandbox | `NEXUS_SANDBOX=` `docker` · `opensandbox` (required outside `--dev`) | Under `--dev`, unset runs `platform/shell` unsandboxed with a minimal environment, and refuses skill scripts, which never run outside a sandbox; outside `--dev` an unset or unreachable sandbox stops startup. OpenSandbox and Crawl4AI: `make agentic-up`, [`docs/agentic-capabilities.md`](docs/agentic-capabilities.md) |
 | 🕸️ Egress | `NEXUS_WEB_FETCH_ALLOWLIST` | Comma-separated hosts `platform/web_fetch` may reach; empty means none |
 | 🔭 Tracing | `NEXUS_OTLP_ENDPOINT` · `NEXUS_LANGFUSE_HOST` | Either or both; nothing set prints spans to stdout. Content is attached only with `NEXUS_TRACE_CONTENT=true` |
 | 🔌 Connectors | `NEXUS_OAUTH_PROVIDERS` and a `NEXUS_OAUTH_<NAME>_*` block per name | Per-user OAuth tokens, sealed under the tenant's key |

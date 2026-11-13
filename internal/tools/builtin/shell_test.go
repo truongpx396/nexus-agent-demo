@@ -3,6 +3,7 @@ package builtin
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"runtime"
 	"strings"
 	"testing"
@@ -71,5 +72,51 @@ func TestShell_TaintIsFailClosedDefault(t *testing.T) {
 	}
 	if s.IsConcurrencySafe(nil) {
 		t.Fatal("IsConcurrencySafe() = true, want false")
+	}
+}
+
+// An unsandboxed shell used to inherit the server's whole environment: the model
+// provider's API key, the database URLs and the key file paths, readable by any
+// command the model wrote.
+func TestShell_UnsandboxedCommandDoesNotInheritTheServersEnvironment(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses /bin/sh")
+	}
+	t.Setenv("NEXUS_TEST_SECRET", "leak")
+	t.Setenv("ANTHROPIC_API_KEY", "sk-leak")
+
+	dir := t.TempDir()
+	result, err := Shell{}.Call(context.Background(), json.RawMessage(`{"cmd":"env"}`), tools.RunContext{WorkspaceDir: dir})
+	if err != nil || result.IsError {
+		t.Fatalf("Call() = %+v, %v", result, err)
+	}
+	var decoded struct {
+		Output string `json:"output"`
+	}
+	if err := json.Unmarshal(result.Output, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	for _, leaked := range []string{"leak", "NEXUS_TEST_SECRET", "ANTHROPIC_API_KEY"} {
+		if strings.Contains(decoded.Output, leaked) {
+			t.Errorf("the command's environment contains %q:\n%s", leaked, decoded.Output)
+		}
+	}
+	for _, want := range []string{"PATH=", "HOME=" + dir, "LANG=C.UTF-8"} {
+		if !strings.Contains(decoded.Output, want) {
+			t.Errorf("the command's environment lacks %q:\n%s", want, decoded.Output)
+		}
+	}
+
+	// A command still finds the usual tools on that PATH.
+	ok, err := Shell{}.Call(context.Background(), json.RawMessage(`{"cmd":"ls / > /dev/null && echo fine"}`), tools.RunContext{})
+	if err != nil || ok.IsError {
+		t.Fatalf("a basic command failed with the reduced environment: %+v, %v", ok, err)
+	}
+}
+
+func TestShellEnv_HomeFallsBackToTheTempDirectory(t *testing.T) {
+	env := shellEnv("")
+	if len(env) != 3 || env[1] != "HOME="+os.TempDir() {
+		t.Fatalf("shellEnv(\"\") = %v, want HOME at the system temp directory", env)
 	}
 }

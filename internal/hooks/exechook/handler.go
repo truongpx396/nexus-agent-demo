@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/hooks"
@@ -29,6 +30,11 @@ func (Handler) Run(ctx context.Context, cfg hooks.Config, hctx hooks.Context) (h
 
 	cmd := exec.CommandContext(ctx, cfg.Command, cfg.Args...) //nolint:gosec // operator-authored hook config (hooks.Config.Command), not attacker input
 	cmd.Stdin = bytes.NewReader(payload)
+	// hooks.Config has no way to pass variables to a script, so it gets a minimal
+	// environment of its own rather than the server's, which carries the model
+	// provider's API key, the database URLs and the paths of the key files. The
+	// script sees the event on stdin and needs nothing else from the process.
+	cmd.Env = []string{"PATH=/usr/local/bin:/usr/bin:/bin", "HOME=" + os.TempDir(), "LANG=C.UTF-8"}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
