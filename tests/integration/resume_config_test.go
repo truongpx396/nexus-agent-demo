@@ -14,6 +14,8 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
+	"slices"
 	"sync"
 	"testing"
 
@@ -27,6 +29,8 @@ import (
 	oversightpg "github.com/truongpx396/nexus-agent-demo/internal/oversight/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
+	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
+	runctlpg "github.com/truongpx396/nexus-agent-demo/internal/runctl/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/store"
 	"github.com/truongpx396/nexus-agent-demo/internal/tools/kerneladapter"
 	"github.com/truongpx396/nexus-agent-demo/kernel"
@@ -174,5 +178,90 @@ func TestDelegateResume_KeepsTheSessionsPinnedRunConfig(t *testing.T) {
 				t.Errorf("turn %d metered under %q, want %q", i+1, m, routedModel)
 			}
 		}
+	}
+}
+
+// callRecorder is a provider.Provider that remembers the system prompt and tool
+// list of every call before handing it to a scripted provider.
+type callRecorder struct {
+	inner provider.Provider
+
+	mu      sync.Mutex
+	systems []string
+	tools   [][]string
+}
+
+func (c *callRecorder) Stream(ctx context.Context, p provider.Prompt, tools []provider.ToolSchema, rc provider.RunContext) (provider.Stream, error) {
+	names := make([]string, len(tools))
+	for i, tl := range tools {
+		names[i] = tl.Name
+	}
+	c.mu.Lock()
+	c.systems = append(c.systems, p.System)
+	c.tools = append(c.tools, names)
+	c.mu.Unlock()
+	return c.inner.Stream(ctx, p, tools, rc)
+}
+
+// TestRunCtlResume_ShowsTheModelTheMemoryAndToolsTheSessionStartedWith: the process
+// that accepts a run only seeds it (kernelRunStarter.StartRun), and a queue worker
+// in another process drives the turns through runctl.Control.Resume with the
+// process-wide system prompt and catalog. Before the memory text and the run's MCP
+// tool schemas were recorded in the log and read back, that worker's prompt had
+// neither, although the log said memory_loaded and tool_loaded. This drives both
+// halves against a real Postgres, with a second kernel and a fresh Control sharing
+// nothing in memory with the first.
+func TestRunCtlResume_ShowsTheModelTheMemoryAndToolsTheSessionStartedWith(t *testing.T) {
+	rig := setupOversightRig(t)
+	ctx := context.Background()
+	sessionID, userID := uuid.New(), uuid.New()
+	rig.createSession(t, sessionID, userID, "supervised")
+
+	resident := provider.ToolSchema{Name: "platform/file_write@v1", Description: "write a file", InputSchema: json.RawMessage(`{"type":"object"}`)}
+	mcp := provider.ToolSchema{Name: "mcp/github/list_prs@v1", Description: "list pull requests", InputSchema: json.RawMessage(`{"type":"object","properties":{"repo":{"type":"string"}}}`)}
+
+	// The accepting process: seed only, with the memory and the MCP tool on the config.
+	starter := &kernel.Kernel{
+		Provider: provider.Wrap([]provider.Provider{fake.New()}), Tools: kernel.NotImplementedToolExecutor{},
+		Budget: kernel.NoopBudgetGate{}, Log: postgres.New(rig.st, postgres.Hooks{}),
+	}
+	seedCfg := kernel.RunConfig{
+		System: "base system", Catalog: []provider.ToolSchema{resident}, ModelID: "fake", MaxTurns: 5,
+		Input: "list the open pull requests", AutonomyLevel: "supervised",
+		LoadedTools:   []string{resident.Name, mcp.Name},
+		MemorySources: []string{"notes.md"}, MemoryText: "the tenant prefers metric units",
+		ExtraCatalog: []provider.ToolSchema{mcp},
+	}
+	state := &kernel.RunState{TenantID: rig.tenantID, SessionID: sessionID, Seal: rig.seal(t, sessionID)}
+	for _, err := range starter.Seed(ctx, state, seedCfg) {
+		if err != nil {
+			t.Fatalf("Seed: %v", err)
+		}
+	}
+
+	// The worker: its own kernel and Control, configured with only what every process holds.
+	rec := &callRecorder{inner: fake.New(contentScript("done"))}
+	worker := &kernel.Kernel{
+		Provider: provider.Wrap([]provider.Provider{rec}), Tools: kernel.NotImplementedToolExecutor{},
+		Budget: kernel.NoopBudgetGate{}, Log: postgres.New(rig.st, postgres.Hooks{}),
+	}
+	ctl := &runctl.Control{
+		Store: runctlpg.New(rig.st, rig.keys, nil), Kernel: worker,
+		System: "base system", Catalog: []provider.ToolSchema{resident}, MaxTurns: 5,
+	}
+	for _, err := range ctl.Resume(ctx, rig.tenantID, sessionID) {
+		if err != nil {
+			t.Fatalf("Resume: %v", err)
+		}
+	}
+
+	if len(rec.systems) != 1 {
+		t.Fatalf("the worker called the model %d times, want once", len(rec.systems))
+	}
+	if want := "base system\n\nthe tenant prefers metric units"; rec.systems[0] != want {
+		t.Errorf("the worker's system prompt = %q, want %q", rec.systems[0], want)
+	}
+	if want := []string{resident.Name, mcp.Name}; !slices.Equal(rec.tools[0], want) {
+		t.Errorf("the worker's tool list = %v, want %v", rec.tools[0], want)
 	}
 }

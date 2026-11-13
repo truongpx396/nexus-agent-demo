@@ -170,6 +170,11 @@ func (r *Resumer) loadRunState(ctx context.Context, tenantID, sessionID uuid.UUI
 		return nil, eventlog.Session{}, err
 	}
 
+	pinned, err := kernel.RehydratePinned(ctx, history, decrypt)
+	if err != nil {
+		return nil, eventlog.Session{}, err
+	}
+
 	// Restore this session's Rule-of-Two taint state before Kernel.Resume
 	// dispatches the ONE approved/denied tool call — kernel.TaintSeeder's
 	// own doc comment on why this can't just happen lazily inside the tool
@@ -198,7 +203,7 @@ func (r *Resumer) loadRunState(ctx context.Context, tenantID, sessionID uuid.UUI
 		return sealed, crypto.Digest(plaintext), dek.KeyID, nil
 	}
 
-	return &kernel.RunState{TenantID: tenantID, SessionID: sessionID, Seal: seal, History: history, Transcript: transcript, ToolUseIDs: toolUseIDs}, sess, nil
+	return &kernel.RunState{TenantID: tenantID, SessionID: sessionID, Seal: seal, History: history, Transcript: transcript, ToolUseIDs: toolUseIDs, Pinned: pinned}, sess, nil
 }
 
 func currentActiveKeyID(history []eventlog.Event) (string, error) {

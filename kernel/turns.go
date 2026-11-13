@@ -22,6 +22,10 @@ import (
 // before it is yielded, so a caller forwarding these events (e.g. over SSE)
 // never shows a client something that isn't already in the log.
 func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yield func(eventlog.Event, error) bool) {
+	// Every entry into the loop passes through here, so this is the one place the
+	// session's own memory and tools are added to the process-wide config the
+	// caller built (pinned.go).
+	cfg = st.Pinned.Apply(cfg)
 	maxTurns := cfg.MaxTurns
 	if maxTurns <= 0 {
 		maxTurns = defaultMaxTurns

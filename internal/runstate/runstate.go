@@ -119,6 +119,11 @@ func Load[T Unit](ctx context.Context, st Store[T], tenantID, sessionID uuid.UUI
 		return Loaded{}, err
 	}
 
+	pinned, err := kernel.RehydratePinned(ctx, history, decrypt)
+	if err != nil {
+		return Loaded{}, err
+	}
+
 	keyID, err := ActiveKeyID(history)
 	if err != nil {
 		return Loaded{}, err
@@ -133,7 +138,7 @@ func Load[T Unit](ctx context.Context, st Store[T], tenantID, sessionID uuid.UUI
 	}
 
 	return Loaded{
-		State:   &kernel.RunState{TenantID: tenantID, SessionID: sessionID, Seal: Seal(dek, tenantID, sessionID), History: history, Transcript: transcript, ToolUseIDs: toolUseIDs},
+		State:   &kernel.RunState{TenantID: tenantID, SessionID: sessionID, Seal: Seal(dek, tenantID, sessionID), History: history, Transcript: transcript, ToolUseIDs: toolUseIDs, Pinned: pinned},
 		Session: sess, History: history, Decrypt: decrypt,
 	}, nil
 }

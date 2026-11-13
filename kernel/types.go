@@ -234,14 +234,26 @@ type RunConfig struct {
 	// model id means, exactly like ModelID's own zero value); condensation
 	// itself only ever runs when CondenseThresholdBytes > 0.
 	CondenserModelID string
-	// MemorySources names the file-first memory files already folded into
-	// System by the caller (internal/memory.Store.Load, README task 7.1) —
-	// Run appends one EventMemoryLoaded audit record per session naming
-	// them, mirroring LoadedTools/EventToolLoaded above. Empty means no
-	// memory was loaded (a tenant with nothing on disk yet, or a
-	// resumed/continued run — memory is only ever injected at a fresh
-	// session's start, matching "writes take effect next session").
+	// MemorySources names the file-first memory files behind MemoryText
+	// (internal/memory.Store.Load, README task 7.1) — Run appends one
+	// EventMemoryLoaded audit record per session naming them, mirroring
+	// LoadedTools/EventToolLoaded above. Empty means no memory was loaded (a
+	// tenant with nothing on disk yet, or a resumed/continued run — memory is
+	// only ever read at a fresh session's start, matching "writes take effect
+	// next session").
 	MemorySources []string
+	// MemoryText is the screened tenant memory (internal/memory.Snapshot.Text)
+	// behind MemorySources. A fresh run records it in its memory_loaded event
+	// and the turn loop then appends it to System, on this call and on every
+	// later resume (Pinned, pinned.go): it is not part of System here, so the
+	// durable system prompt is the one every process builds and the memory is
+	// the one thing read back from the log.
+	MemoryText string
+	// ExtraCatalog holds the schemas of the tools this run adds to Catalog (a
+	// per-user MCP server). Each one named in LoadedTools is recorded, schema
+	// included, in its tool_loaded event, and is shown to the model on every
+	// later resume the same way MemoryText is.
+	ExtraCatalog []provider.ToolSchema
 	// Conversational opts this run into pause-not-terminate semantics: a
 	// turn that classifies as plain content/empty (no tool call) suspends
 	// the session awaiting more input (suspendForUserInput,
