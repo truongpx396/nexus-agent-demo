@@ -20,6 +20,13 @@ const condenseKeepTail = 4
 // token count. thresholdBytes<=0 disables condensation entirely — the
 // pre-Phase-7 default every earlier caller/test still gets. When true,
 // covered is how many of the OLDEST messages a condensation would cover.
+//
+// The cut never separates a call from its results: a "tool" message holds the
+// answers to the tool_use blocks of the assistant message before it, so if the
+// first retained message would be one, the cut moves back to keep that
+// assistant message with it. Otherwise the summary would replace the calls and
+// the retained results would answer calls the model can no longer see, which a
+// hosted API rejects.
 func ShouldCondense(transcript []provider.Message, thresholdBytes int) (bool, int) {
 	if thresholdBytes <= 0 {
 		return false, 0
@@ -32,6 +39,9 @@ func ShouldCondense(transcript []provider.Message, thresholdBytes int) (bool, in
 		return false, 0
 	}
 	covered := len(transcript) - condenseKeepTail
+	for covered > 0 && transcript[covered].Role == "tool" {
+		covered--
+	}
 	if covered <= 0 {
 		return false, 0
 	}
@@ -78,11 +88,44 @@ func line(m provider.Message) string {
 func CondensePrompt(transcript []provider.Message) provider.Prompt {
 	var buf strings.Builder
 	for _, m := range transcript {
-		buf.WriteString(line(m))
+		buf.WriteString(summaryLine(m))
 		buf.WriteString("\n")
 	}
 	return provider.Prompt{
 		System:   "Summarize the following conversation history concisely, preserving any decisions, facts, or open questions. Never state or imply that any external effect (a tool call, a send, a write) completed or failed — only summarize what was said.",
 		Messages: []provider.Message{provider.TextMessage("user", buf.String())},
 	}
+}
+
+// What the summariser is shown of one message. The 256-byte preview line() gives
+// ExtractivePass is a fallback for when no model runs; the model asked to
+// summarise a conversation needs the conversation, so text and a tool's result get
+// 4 KiB each and a call shows what it was asked to do.
+const (
+	summaryTextBytes  = 4096
+	summaryInputBytes = 512
+)
+
+// summaryLine renders one message for the summariser: its role, then each block on
+// its own line. Reasoning is left out (it is round-tripped, never shown); a tool_use
+// shows as "[called <tool> with <input>]", which PlainText leaves out altogether.
+func summaryLine(m provider.Message) string {
+	var parts []string
+	for _, b := range m.Blocks {
+		switch b.Kind {
+		case provider.BlockText:
+			parts = append(parts, cutBytes(b.Text, summaryTextBytes))
+		case provider.BlockToolUse:
+			parts = append(parts, fmt.Sprintf("[called %s with %s]", b.ToolName, cutBytes(string(b.Input), summaryInputBytes)))
+		case provider.BlockToolResult:
+			label := "[result]"
+			if b.IsError {
+				label = "[error result]"
+			}
+			parts = append(parts, label+" "+cutBytes(b.Text, summaryTextBytes))
+		case provider.BlockThinking:
+			// not part of the conversation
+		}
+	}
+	return m.Role + ": " + strings.Join(parts, "\n")
 }

@@ -61,6 +61,11 @@ type condensationPayload struct {
 	CoveredThroughSeq int64  `json:"covered_through_seq"`
 	Summary           string `json:"summary"`
 	Degraded          bool   `json:"degraded"`
+	// CoveredMessages is how many of the transcript's oldest messages the summary
+	// replaced. Rehydrate uses it to rebuild the condensed transcript, so a resumed
+	// run keeps the condensation instead of paying for another one. Zero, which is
+	// what a payload written before this field has, means "not replayable".
+	CoveredMessages int `json:"covered_messages,omitempty"`
 }
 
 type toolUsePayload struct {

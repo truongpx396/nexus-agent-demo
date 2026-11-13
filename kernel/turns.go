@@ -136,6 +136,7 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 				CoveredThroughSeq: cond.CoveredThroughSeq,
 				Summary:           cond.Summary,
 				Degraded:          degraded,
+				CoveredMessages:   covered,
 			})
 			if err != nil {
 				yield(eventlog.Event{}, err)
@@ -151,9 +152,7 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 			// view pruning stays scoped to). st.Transcript[covered:] (not
 			// view[covered:]) so the retained tail keeps its ORIGINAL text,
 			// never a pruned preview/marker baked in permanently.
-			newTranscript := make([]provider.Message, 0, 1+len(st.Transcript)-covered)
-			newTranscript = append(newTranscript, provider.TextMessage("assistant", "[condensed summary] "+summary))
-			newTranscript = append(newTranscript, st.Transcript[covered:]...)
+			newTranscript := condensedTranscript(st.Transcript, covered, summary)
 			st.Transcript = newTranscript
 			view = newTranscript
 		}

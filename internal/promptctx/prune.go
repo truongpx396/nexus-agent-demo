@@ -99,15 +99,17 @@ func pruneText(text string, policy PrunePolicy) (string, bool) {
 
 // preview is the first previewBytes of text, cut back to a character boundary so
 // a multi-byte character is never left half there.
-func preview(text string) string {
-	if len(text) <= previewBytes {
+func preview(text string) string { return cutBytes(text, previewBytes) }
+
+// cutBytes is the first n bytes of text, cut back to a character boundary.
+func cutBytes(text string, n int) string {
+	if len(text) <= n {
 		return text
 	}
-	cut := previewBytes
-	for cut > 0 && !utf8.RuneStart(text[cut]) {
-		cut--
+	for n > 0 && !utf8.RuneStart(text[n]) {
+		n--
 	}
-	return text[:cut]
+	return text[:n]
 }
 
 // pruneMarker names what was removed (byte length) and a content digest a

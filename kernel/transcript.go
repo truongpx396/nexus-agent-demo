@@ -23,3 +23,18 @@ func (st *RunState) settleToolResult(toolUseID, text string, isError bool) {
 	}
 	st.Transcript = append(st.Transcript, provider.ToolResultMessage(toolUseID, text, isError))
 }
+
+// summaryPrefix opens the message that stands in for a condensed prefix.
+const summaryPrefix = "[summary of the earlier conversation]\n"
+
+// condensedTranscript is the transcript after a condensation: one message holding
+// the summary, then every message from index covered on. A conversation has to
+// open with a user turn, so the summary is a user message. The live loop and
+// Rehydrate both build the condensed transcript here, so a session resumed from
+// its log has the transcript the run that wrote the condensation had. It returns a
+// new slice and leaves transcript alone.
+func condensedTranscript(transcript []provider.Message, covered int, summary string) []provider.Message {
+	out := make([]provider.Message, 0, 1+len(transcript)-covered)
+	out = append(out, provider.TextMessage("user", summaryPrefix+summary))
+	return append(out, transcript[covered:]...)
+}
