@@ -50,6 +50,30 @@ var (
 		Description: "Convert a value between two units of measurement (length, weight, volume).",
 		InputSchema: jsonSchema(`{"type":"object","properties":{"value":{"type":"number"},"from_unit":{"type":"string"},"to_unit":{"type":"string"}},"required":["value","from_unit","to_unit"]}`),
 	}
+
+	// The resident catalog's own tools, exactly as nexusd shows them to a model: the
+	// reference `platform/file_read@v1` is the tool's name, and its description and
+	// schema are the shipped ones. The toy tools above use plain names, so before these
+	// the live track never sent a model what production sends, and a name the provider
+	// refuses (`/` and `@` are not allowed on the wire) went unseen. The provider
+	// adapters translate the reference to a wire-safe name and back, so a case here
+	// expects the internal reference. TestLiveTaskCorpus_ResidentSchemasAreTheShippedDescriptors
+	// keeps these equal to the real descriptors.
+	residentFileReadTool = provider.ToolSchema{
+		Name:        "platform/file_read@v1",
+		Description: "Reads a text file from the session workspace and returns its contents.",
+		InputSchema: jsonSchema(`{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}`),
+	}
+	residentFileSearchTool = provider.ToolSchema{
+		Name:        "platform/file_search@v1",
+		Description: "Searches the session workspace for files whose relative path matches a glob pattern (e.g. \"*.go\", \"src/*.md\").",
+		InputSchema: jsonSchema(`{"type":"object","properties":{"pattern":{"type":"string"}},"required":["pattern"]}`),
+	}
+	residentShellTool = provider.ToolSchema{
+		Name:        "platform/shell@v1",
+		Description: "Runs a shell command in the session workspace and returns its combined stdout/stderr.",
+		InputSchema: jsonSchema(`{"type":"object","properties":{"cmd":{"type":"string"}},"required":["cmd"]}`),
+	}
 )
 
 // LiveTaskCorpus is README task 13.9's 10-15 live task-completion cases
@@ -186,6 +210,42 @@ func LiveTaskCorpus() []LiveTaskCase {
 			Tools:       []provider.ToolSchema{weatherTool, calculatorTool},
 			ToolResults: map[string]LiveToolResult{},
 			Expected:    Trajectory{ToolCalls: nil},
+		},
+		{
+			ID:          "live-capability-resident-file-read",
+			Class:       ClassCapability,
+			Description: "the resident file_read tool, under its production name and description, is chosen to show a file",
+			System:      "You are a coding assistant working in a session workspace. Use the tools you are given.",
+			Input:       "Show me the contents of README.md in the workspace.",
+			Tools:       []provider.ToolSchema{residentFileReadTool},
+			ToolResults: map[string]LiveToolResult{"platform/file_read@v1": {Text: `{"content":"# Demo\nA small project."}`}},
+			Expected:    Trajectory{ToolCalls: []string{"platform/file_read@v1"}},
+		},
+		{
+			ID:          "live-capability-resident-search-then-read",
+			Class:       ClassCapability,
+			Description: "the resident file_search then file_read: the second call depends on what the first found",
+			System:      "You are a coding assistant working in a session workspace. Use the tools you are given.",
+			Input:       "Find the Markdown files in the workspace, then show me the contents of the first one.",
+			Tools:       []provider.ToolSchema{residentFileSearchTool, residentFileReadTool},
+			ToolResults: map[string]LiveToolResult{
+				"platform/file_search@v1": {Text: `{"matches":["README.md"]}`},
+				"platform/file_read@v1":   {Text: `{"content":"# Demo\nA small project."}`},
+			},
+			Expected: Trajectory{ToolCalls: []string{"platform/file_search@v1", "platform/file_read@v1"}},
+		},
+		{
+			ID:          "live-capability-resident-shell-for-a-listing",
+			Class:       ClassCapability,
+			Description: "the resident shell tool is chosen to run a command the user names, over the file tool beside it",
+			System:      "You are a coding assistant working in a session workspace. Use the tools you are given.",
+			Input:       "Run `ls -la` in the workspace and tell me what is there.",
+			Tools:       []provider.ToolSchema{residentShellTool, residentFileReadTool},
+			ToolResults: map[string]LiveToolResult{
+				"platform/shell@v1":     {Text: `{"output":"total 8\n-rw-r--r-- 1 u u 24 Nov 13 README.md\n"}`},
+				"platform/file_read@v1": {Text: `{"content":""}`},
+			},
+			Expected: Trajectory{ToolCalls: []string{"platform/shell@v1"}},
 		},
 	}
 }
