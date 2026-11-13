@@ -14,8 +14,20 @@ import (
 // It is genuinely cross-tenant, so pool must be an administrative connection,
 // not the RLS-restricted runtime role; whether a candidate is really orphaned is
 // not decided here (a live worker holds the session lock).
+//
+// A session with a claim still in flight is left out. The claim means a tool's
+// effect may have left the process and nobody has said whether it landed (task
+// 6.6), which only a person or a probe can resolve (runctl.ResolveClaim);
+// re-enqueueing the session does not resolve it and the resume would only refuse
+// again, so a recurring sweep would re-enqueue it for ever. Once the claim is
+// resolved the session is a candidate again and the next sweep picks it up.
 func ListRunning(ctx context.Context, pool *pgxpool.Pool) ([]runctl.Orphan, error) {
-	rows, err := pool.Query(ctx, `SELECT session_id, tenant_id, session_key FROM sessions WHERE status = 'running'`)
+	rows, err := pool.Query(ctx, `
+		SELECT s.session_id, s.tenant_id, s.session_key
+		FROM sessions s
+		WHERE s.status = 'running'
+		  AND NOT EXISTS (SELECT 1 FROM claims c WHERE c.session_id = s.session_id AND c.status = $1)`,
+		string(runctl.ClaimInFlight))
 	if err != nil {
 		return nil, fmt.Errorf("runctl: list running sessions: %w", err)
 	}

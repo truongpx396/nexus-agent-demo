@@ -42,6 +42,15 @@ const (
 	// one, a TTL later, finds the lock gone and recovers it.
 	orphanRecheckAfter = sessionLockTTL + 5*time.Second
 
+	// orphanSweepEvery is how often the recurring orphan sweep runs, and
+	// orphanReenqueueEvery how long recovery leaves a session alone after
+	// re-enqueueing it. A job can be lost while every process stays up (Redis
+	// restarted without its append-only file, a job dead-lettered by mistake), and
+	// the startup sweep only runs at boot; the throttle keeps a session whose resume
+	// keeps failing from being re-enqueued on every pass.
+	orphanSweepEvery     = 5 * time.Minute
+	orphanReenqueueEvery = 15 * time.Minute
+
 	// queueWorkerCount is how many workers this process runs to drain the job
 	// queue; each takes one job at a time, so it is also this process's ceiling
 	// on concurrently driven runs.
@@ -220,6 +229,7 @@ func startQueueWorkers(ctx context.Context, redisClient *redis.Client, port queu
 
 	workerCtx, cancel := context.WithCancel(ctx)
 	runctl.StartRecovery(workerCtx, func(ctx context.Context) ([]runctl.Orphan, error) { return listOrphans(ctx, adminPool) }, lock, port, orphanRecheckAfter)
+	stopOrphanSweep := startOrphanSweep(workerCtx, adminPool, lock, port, queueredis.NewRecoveryThrottle(redisClient, orphanReenqueueEvery))
 
 	// One breaker registry for every worker, so a session's failures are counted
 	// together whichever worker ran them. Each worker used to build its own, and a
@@ -236,9 +246,25 @@ func startQueueWorkers(ctx context.Context, redisClient *redis.Client, port queu
 	}
 	return func() {
 		cancel()
+		stopOrphanSweep()
 		workers.Wait() // a worker mid-job finishes unwinding before the pool it leases through closes
 		adminPool.Close()
 	}
+}
+
+// startOrphanSweep runs the recurring orphan sweep: every orphanSweepEvery, list the
+// sessions a durable record says need a worker and re-enqueue the ones no worker is
+// driving, at most once per orphanReenqueueEvery each. Its stop cancels the loop and
+// waits for a pass in flight, so it is done before the pool it lists through closes.
+func startOrphanSweep(ctx context.Context, adminPool *pgxpool.Pool, live runctl.Liveness, port queue.Port, throttle runctl.Throttle) (stop func()) {
+	return startPeriodic(ctx, orphanSweepEvery, func(ctx context.Context) {
+		candidates, err := listOrphans(ctx, adminPool)
+		if err != nil {
+			log.Error().Err(err).Str("pass", "periodic").Msg("runctl: list orphaned sessions failed")
+			// listOrphans still returns what it found before the failure.
+		}
+		runctl.RecoverOrphans(ctx, "periodic", candidates, live, port, throttle)
+	})
 }
 
 // staleJob reports whether err says the job's session is in a state that does not

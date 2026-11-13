@@ -110,6 +110,37 @@ func (l *SessionLock) Held(ctx context.Context, sessionKey string) (bool, error)
 	return n > 0, nil
 }
 
+// RecoveryThrottle lets orphan recovery re-enqueue one session at most once per
+// window. A recurring sweep that re-enqueued every orphan on every pass would pile
+// jobs onto a session whose resume keeps failing; this records, in Redis so every
+// process shares it, that a session was just re-enqueued. It satisfies
+// runctl.Throttle.
+type RecoveryThrottle struct {
+	client *goredis.Client
+	every  time.Duration
+}
+
+// NewRecoveryThrottle returns a throttle allowing each session one re-enqueue per
+// every (15 minutes when every is not positive).
+func NewRecoveryThrottle(client *goredis.Client, every time.Duration) *RecoveryThrottle {
+	if every <= 0 {
+		every = 15 * time.Minute
+	}
+	return &RecoveryThrottle{client: client, every: every}
+}
+
+func recoveryKey(sessionKey string) string { return "nexus:recovery:" + sessionKey }
+
+// Allow is SET nexus:recovery:<sessionKey> 1 NX EX <window>: it succeeds for the
+// first caller in a window and for nobody else until the key expires.
+func (t *RecoveryThrottle) Allow(ctx context.Context, sessionKey string) (bool, error) {
+	ok, err := t.client.SetNX(ctx, recoveryKey(sessionKey), 1, t.every).Result()
+	if err != nil {
+		return false, fmt.Errorf("queue: recovery throttle for %s: %w", sessionKey, err)
+	}
+	return ok, nil
+}
+
 func randomToken() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
