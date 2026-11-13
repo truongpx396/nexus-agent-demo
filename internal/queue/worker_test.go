@@ -3,6 +3,7 @@ package queue
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -474,5 +475,206 @@ func TestWorker_ASuccessfulJobForgetsItsSessionsBreaker(t *testing.T) {
 	w.pollOnce(context.Background())
 	if breakers.Len() != 0 {
 		t.Fatalf("registry still tracks %d keys after the session succeeded", breakers.Len())
+	}
+}
+
+// ctxStrictPort fails any Complete or Fail called with a context that has ended, as a
+// real Redis call would, and records what it settled.
+type ctxStrictPort struct {
+	*fakePort
+	mu       sync.Mutex
+	rejected int
+}
+
+func (p *ctxStrictPort) Complete(ctx context.Context, id uuid.UUID) error {
+	if ctx.Err() != nil {
+		p.mu.Lock()
+		p.rejected++
+		p.mu.Unlock()
+		return ctx.Err()
+	}
+	return p.fakePort.Complete(ctx, id)
+}
+
+func (p *ctxStrictPort) Fail(ctx context.Context, id uuid.UUID, reason string, permanent bool, retryAt time.Time) error {
+	if ctx.Err() != nil {
+		p.mu.Lock()
+		p.rejected++
+		p.mu.Unlock()
+		return ctx.Err()
+	}
+	return p.fakePort.Fail(ctx, id, reason, permanent, retryAt)
+}
+
+func (p *ctxStrictPort) rejectedCalls() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.rejected
+}
+
+// A shutdown stops leasing but must not cut the runs under way: Principle VIII says a
+// deploy does not cut a running agent over mid-task.
+func TestWorker_ARunSurvivesTheLeaseContextBeingCancelledAndFinishes(t *testing.T) {
+	port := &ctxStrictPort{fakePort: newFakePort()}
+	job, _ := port.Enqueue(context.Background(), Job{TenantID: uuid.New(), SessionID: uuid.New(), SessionKey: "s1", Kind: KindResume})
+
+	jobCtx, cancelJobs := context.WithCancel(t.Context())
+	defer cancelJobs()
+	leaseCtx, cancelLease := context.WithCancel(t.Context())
+	defer cancelLease()
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var runCtxEnded atomic.Bool
+	w := NewWorker(WorkerConfig{
+		Port: port, Lock: newTestLock(t), Owner: "w1", PollEvery: time.Millisecond, JobContext: jobCtx,
+		Runner: funcRunner(func(ctx context.Context, _ Job) error {
+			close(started)
+			select {
+			case <-release:
+				return nil
+			case <-ctx.Done():
+				runCtxEnded.Store(true)
+				return ctx.Err()
+			}
+		}),
+	})
+	stopped := make(chan struct{})
+	go func() { defer close(stopped); w.Run(leaseCtx) }()
+
+	<-started
+	cancelLease() // SIGTERM: stop leasing
+	time.Sleep(50 * time.Millisecond)
+	if runCtxEnded.Load() {
+		t.Fatal("cancelling the lease context cancelled the run in progress")
+	}
+	select {
+	case <-stopped:
+		t.Fatal("the worker returned while its job was still running")
+	default:
+	}
+
+	close(release) // the run finishes within the grace period
+	select {
+	case <-stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the worker did not return after its job finished")
+	}
+	if got := port.status(job.JobID); got != StatusDone {
+		t.Fatalf("job status = %q, want done", got)
+	}
+}
+
+// When the grace period runs out the job context is cancelled and the run ends. The job
+// still has to go back on the queue and its lock be released, which a cancelled context
+// would make impossible.
+func TestWorker_ACancelledJobContextEndsTheRunAndStillFailsTheJobBack(t *testing.T) {
+	port := &ctxStrictPort{fakePort: newFakePort()}
+	job, _ := port.Enqueue(context.Background(), Job{TenantID: uuid.New(), SessionID: uuid.New(), SessionKey: "s1", Kind: KindResume})
+	released := make(chan struct{}, 1)
+	lock := &releaseLock{released: released}
+
+	jobCtx, cancelJobs := context.WithCancel(t.Context())
+	defer cancelJobs()
+	started := make(chan struct{})
+	w := NewWorker(WorkerConfig{
+		Port: port, Lock: lock, Owner: "w1", PollEvery: time.Millisecond, JobContext: jobCtx,
+		Backoff: reliability.BackoffConfig{Base: time.Millisecond, Max: 5 * time.Millisecond},
+		Runner: funcRunner(func(ctx context.Context, _ Job) error {
+			close(started)
+			<-ctx.Done()
+			return ctx.Err()
+		}),
+	})
+	leaseCtx, cancelLease := context.WithCancel(t.Context())
+	defer cancelLease()
+	stopped := make(chan struct{})
+	go func() { defer close(stopped); w.Run(leaseCtx) }()
+
+	<-started
+	cancelLease()
+	cancelJobs() // the grace period ran out
+	select {
+	case <-stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the worker did not return after its job context was cancelled")
+	}
+
+	if got := port.status(job.JobID); got != StatusPending {
+		t.Fatalf("job status = %q, want pending: a cancelled run is failed back for another worker to resume", got)
+	}
+	if port.rejectedCalls() != 0 {
+		t.Fatalf("%d Complete/Fail calls were made with an ended context", port.rejectedCalls())
+	}
+	select {
+	case <-released:
+	default:
+		t.Fatal("the session lock was not released")
+	}
+}
+
+// releaseLock is a Locker that signals when Release is called, with the context it got.
+type releaseLock struct {
+	fakeLock
+	released chan struct{}
+}
+
+func (l *releaseLock) Release(ctx context.Context, _, _ string) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	select {
+	case l.released <- struct{}{}:
+	default:
+	}
+	return nil
+}
+
+// A panic in the kernel, a provider adapter or run control would end the whole process
+// and every other run with it. It fails that one job, for good, and the worker carries on.
+func TestWorker_APanickingJobIsFailedPermanentlyAndTheWorkerLeasesTheNextOne(t *testing.T) {
+	port := newFakePort()
+	bad, _ := port.Enqueue(context.Background(), Job{TenantID: uuid.New(), SessionID: uuid.New(), SessionKey: "bad", Kind: KindResume})
+	good, _ := port.Enqueue(context.Background(), Job{TenantID: uuid.New(), SessionID: uuid.New(), SessionKey: "good", Kind: KindResume})
+
+	released := make(chan struct{}, 4)
+	w := NewWorker(WorkerConfig{
+		Port: port, Lock: &releaseLock{released: released}, Owner: "w1", PollEvery: time.Millisecond,
+		Admission: NewAdmissionController(1), // a leaked slot would starve the second job
+		Runner: funcRunner(func(_ context.Context, j Job) error {
+			if j.SessionKey == "bad" {
+				panic("a kernel invariant was violated")
+			}
+			return nil
+		}),
+	})
+
+	w.pollOnce(context.Background())
+	if got := port.status(bad.JobID); got != StatusFailed {
+		t.Fatalf("the panicking job's status = %q, want failed (permanent): retrying a panic crash-loops a worker", got)
+	}
+	port.mu.Lock()
+	lastError := port.jobs[bad.JobID].LastError
+	port.mu.Unlock()
+	if !strings.Contains(lastError, "job panicked") {
+		t.Fatalf("last error = %q, want it to say the job panicked", lastError)
+	}
+	if len(released) != 1 {
+		t.Fatal("the panicking job's session lock was not released")
+	}
+
+	w.pollOnce(context.Background())
+	if got := port.status(good.JobID); got != StatusDone {
+		t.Fatalf("the next job's status = %q, want done: the worker must survive a panic and keep its admission slot free", got)
+	}
+}
+
+func TestWorker_APanicIsAPermanentFailureWhatEverItCarries(t *testing.T) {
+	for name, v := range map[string]any{"an error": errors.New("boom"), "a string": "boom", "an int": 7} {
+		w := NewWorker(WorkerConfig{Runner: funcRunner(func(context.Context, Job) error { panic(v) })})
+		err := w.runRecovered(context.Background(), Job{})
+		if reliability.Classify(err) != reliability.FailurePermanent || !strings.Contains(err.Error(), "job panicked") {
+			t.Errorf("%s: err = %v, want a permanent \"job panicked\" failure", name, err)
+		}
 	}
 }

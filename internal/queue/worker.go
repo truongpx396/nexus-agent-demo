@@ -2,7 +2,9 @@ package queue
 
 import (
 	"context"
+	"fmt"
 	"math/rand/v2"
+	"runtime/debug"
 	"time"
 
 	"github.com/google/uuid"
@@ -45,6 +47,16 @@ type WorkerConfig struct {
 	Admission *AdmissionController
 	Breakers  *reliability.BreakerRegistry
 	Backoff   reliability.BackoffConfig
+
+	// JobContext is the context a leased job is worked under: admission, the session
+	// lock, the run and its Complete or Fail. Run's own context only decides whether
+	// the worker keeps leasing. They are separate so a shutdown can stop leasing at
+	// once and still let the runs already under way finish (cmd/nexusd gives
+	// JobContext a grace period before it cancels it), where one context cancelled
+	// every run mid-turn and left a tool call that was executing recorded as
+	// interrupted. nil means "use the context passed to Run", which is how a worker
+	// built without it behaves.
+	JobContext context.Context
 
 	Owner     string        // this worker's identity, recorded as lease_owner and used to derive the lock token's namespace
 	LeaseFor  time.Duration // how long a lease is held before it's considered abandoned
@@ -102,14 +114,21 @@ func (w *Worker) Run(ctx context.Context) {
 	}
 }
 
-func (w *Worker) pollOnce(ctx context.Context) {
-	job, ok, err := w.cfg.Port.Lease(ctx, w.cfg.Owner, w.cfg.LeaseFor)
+func (w *Worker) pollOnce(leaseCtx context.Context) {
+	job, ok, err := w.cfg.Port.Lease(leaseCtx, w.cfg.Owner, w.cfg.LeaseFor)
 	if err != nil {
 		log.Error().Err(err).Msg("queue: lease failed")
 		return
 	}
 	if !ok {
 		return
+	}
+
+	// From here the job belongs to this worker whether or not the process has been
+	// told to stop leasing: see WorkerConfig.JobContext.
+	ctx := leaseCtx
+	if w.cfg.JobContext != nil {
+		ctx = w.cfg.JobContext
 	}
 
 	breaker := w.cfg.Breakers.For(job.SessionKey)
@@ -147,7 +166,9 @@ func (w *Worker) pollOnce(ctx context.Context) {
 		return
 	}
 	defer func() {
-		if err := w.cfg.Lock.Release(ctx, job.SessionKey, token); err != nil {
+		settle, cancel := settleContext(ctx)
+		defer cancel()
+		if err := w.cfg.Lock.Release(settle, job.SessionKey, token); err != nil {
 			log.Error().Err(err).Str("session_key", job.SessionKey).Msg("queue: session lock release failed")
 		}
 	}()
@@ -156,13 +177,15 @@ func (w *Worker) pollOnce(ctx context.Context) {
 	// for as long as the job runs, and the run is cancelled if it is ever lost.
 	runCtx, cancelRun := context.WithCancel(ctx)
 	stopRenewing := w.holdLock(runCtx, cancelRun, job.JobID, job.SessionKey, token)
-	runErr := w.cfg.Runner.Run(runCtx, job)
+	runErr := w.runRecovered(runCtx, job)
 	stopRenewing()
 	cancelRun()
 	if runErr == nil {
 		breaker.RecordSuccess()
 		w.cfg.Breakers.Forget(job.SessionKey) // a session that is running fine needs no entry
-		if err := w.cfg.Port.Complete(ctx, job.JobID); err != nil {
+		settle, cancel := settleContext(ctx)
+		defer cancel()
+		if err := w.cfg.Port.Complete(settle, job.JobID); err != nil {
 			log.Error().Err(err).Any("job_id", job.JobID).Msg("queue: complete failed")
 		}
 		return
@@ -179,9 +202,40 @@ func (w *Worker) pollOnce(ctx context.Context) {
 }
 
 func (w *Worker) failJob(ctx context.Context, job Job, reason string, permanent bool, retryAt time.Time) {
-	if err := w.cfg.Port.Fail(ctx, job.JobID, reason, permanent, retryAt); err != nil {
+	settle, cancel := settleContext(ctx)
+	defer cancel()
+	if err := w.cfg.Port.Fail(settle, job.JobID, reason, permanent, retryAt); err != nil {
 		log.Error().Err(err).Any("job_id", job.JobID).Msg("queue: fail failed")
 	}
+}
+
+// settleContext is the context the bookkeeping that ends a job runs under: letting
+// go of its lock and completing or failing it. It keeps ctx's values but not its
+// cancellation, with a deadline of its own. A job whose context was cancelled (the
+// shutdown grace ran out) still has to be failed back to the queue and have its lock
+// released, and with the cancelled context those calls would fail, leaving the job
+// to wait out its lease and the session locked until the lock's TTL.
+func settleContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), settleTimeout)
+}
+
+const settleTimeout = 10 * time.Second
+
+// runRecovered calls Runner.Run and turns a panic in it into a permanent failure of
+// this job. A panic anywhere in the kernel, a provider adapter or run control would
+// otherwise end the whole process and every other run in it. (A panic inside a tool
+// call is already recovered in internal/tools; this covers the rest.) The job is
+// permanent because a panic is a bug in code that will panic again on the same input,
+// and retrying it would crash-loop a worker. The stack goes to the log.
+func (w *Worker) runRecovered(ctx context.Context, job Job) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Error().Any("job_id", job.JobID).Str("session_key", job.SessionKey).
+				Str("panic", fmt.Sprint(r)).Bytes("stack", debug.Stack()).Msg("queue: a job panicked; failing it permanently")
+			err = &reliability.PermanentError{Err: fmt.Errorf("job panicked: %v", r)}
+		}
+	}()
+	return w.cfg.Runner.Run(ctx, job)
 }
 
 // holdLock keeps a running job's two claims alive, every RenewEvery, until the

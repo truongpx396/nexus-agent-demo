@@ -184,6 +184,10 @@ services:
     # deployment omits it and mounts real secrets instead (README task
     # 13.1/13.11).
     command: ["--dev"]
+    # Compose's default is 10s before SIGKILL. nexusd drains HTTP for up to 30s and
+    # then lets runs under way finish for NEXUS_SHUTDOWN_GRACE (25s by default), so
+    # the stop has to allow both or the drain never gets to happen (docs/go-live.md).
+    stop_grace_period: 60s
 
 volumes:
   postgres-data:

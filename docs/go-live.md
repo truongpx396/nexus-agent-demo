@@ -56,3 +56,17 @@ documents each.
 | `NEXUS_METRICS_TOKEN` | The static bearer token `GET /metrics` requires (it lists every tenant's id, spend and tool names). Give Prometheus the same value. |
 | `NEXUS_SANDBOX` | `docker` or `opensandbox`: without a sandbox `platform/shell` would run commands on the host as the `nexusd` user. |
 
+### Shutting a server down
+
+A `SIGTERM` stops the queue workers leasing at once and lets the runs already under
+way finish, so a deploy does not cut an agent off mid-task (constitution Principle
+VIII). `NEXUS_SHUTDOWN_GRACE` (a Go duration, default `25s`) is how long they get; a run
+still going after that is cancelled, failed back onto the queue and resumed by the next
+worker, though a tool call that was executing is recorded as interrupted and may need a
+person to resolve its claim. The HTTP server drains for up to 30s alongside. **The
+orchestrator's termination grace period must be longer than the HTTP drain plus
+`NEXUS_SHUTDOWN_GRACE`** (60s or more with the default: `terminationGracePeriodSeconds` in
+Kubernetes, `stop_grace_period` in Compose), or it will `SIGKILL` the process before the
+drain finishes and the grace period is worth nothing. Raise both together if your runs are
+longer than 25s.
+

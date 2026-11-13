@@ -227,7 +227,14 @@ func startQueueWorkers(ctx context.Context, redisClient *redis.Client, port queu
 	lock := queueredis.NewSessionLock(redisClient, sessionLockTTL)
 	runner := &queueRunner{ctl: ctl, approvals: approvals, runsAPI: runsAPI}
 
+	// Two contexts, because stopping and cancelling are different things. leaseCtx
+	// ends when the process is told to stop: workers stop leasing and the recovery
+	// loops stop. jobCtx outlives it (it keeps ctx's values, not its cancellation)
+	// and is what a leased job runs under, so a deploy lets runs already under way
+	// finish instead of cutting every one off mid-turn; it is cancelled only when the
+	// shutdown grace period runs out.
 	workerCtx, cancel := context.WithCancel(ctx)
+	jobCtx, cancelJobs := context.WithCancel(context.WithoutCancel(ctx))
 	runctl.StartRecovery(workerCtx, func(ctx context.Context) ([]runctl.Orphan, error) { return listOrphans(ctx, adminPool) }, lock, port, orphanRecheckAfter)
 	stopOrphanSweep := startOrphanSweep(workerCtx, adminPool, lock, port, queueredis.NewRecoveryThrottle(redisClient, orphanReenqueueEvery))
 
@@ -239,15 +246,18 @@ func startQueueWorkers(ctx context.Context, redisClient *redis.Client, port queu
 	var workers sync.WaitGroup
 	for i := range queueWorkers() {
 		w := queue.NewWorker(queue.WorkerConfig{
-			Port: port, Lock: lock, Runner: runner, Breakers: breakers, RenewEvery: sessionLockTTL / 3,
+			Port: port, Lock: lock, Runner: runner, Breakers: breakers, RenewEvery: sessionLockTTL / 3, JobContext: jobCtx,
 			Owner: fmt.Sprintf("nexusd-worker-%d-%d", os.Getpid(), i),
 		})
 		workers.Go(func() { w.Run(workerCtx) })
 	}
 	return func() {
-		cancel()
+		cancel() // stop leasing and stop the recovery loops
 		stopOrphanSweep()
-		workers.Wait() // a worker mid-job finishes unwinding before the pool it leases through closes
+		// A worker mid-job finishes, up to the grace period, before the pool it leases
+		// through closes; past it the runs are cancelled.
+		drainWorkers(&workers, shutdownGrace(), cancelJobs)
+		cancelJobs() // release jobCtx's resources; every job has returned by now
 		adminPool.Close()
 	}
 }
