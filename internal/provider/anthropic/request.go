@@ -3,6 +3,7 @@ package anthropic
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 )
@@ -70,6 +71,10 @@ type anthContentBlock struct {
 	ToolUseID string `json:"tool_use_id,omitempty"` // tool_result
 	Content   string `json:"content,omitempty"`     // tool_result
 	IsError   bool   `json:"is_error,omitempty"`    // tool_result
+
+	// CacheControl is a cache breakpoint on this block (cacheLastBlock). The API
+	// does not accept one on a thinking block, so MarshalJSON never emits it there.
+	CacheControl *anthCacheControl `json:"cache_control,omitempty"`
 }
 
 // MarshalJSON emits exactly the fields the API defines for the block's Type:
@@ -82,15 +87,17 @@ type anthContentBlock struct {
 //   - tool_use: type, id, name and input, which is {} when the model sent none.
 //   - tool_result: type, tool_use_id, content (omitted when empty) and is_error
 //     (omitted when false).
+//   - cache_control, on any block but a thinking one, when a breakpoint was set.
 //
 // A Type this adapter does not produce is an error, not a silently empty block.
 func (b anthContentBlock) MarshalJSON() ([]byte, error) {
 	switch b.Type {
 	case "text":
 		return json.Marshal(struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		}{b.Type, b.Text})
+			Type         string            `json:"type"`
+			Text         string            `json:"text"`
+			CacheControl *anthCacheControl `json:"cache_control,omitempty"`
+		}{b.Type, b.Text, b.CacheControl})
 	case "thinking":
 		return json.Marshal(struct {
 			Type      string `json:"type"`
@@ -103,18 +110,20 @@ func (b anthContentBlock) MarshalJSON() ([]byte, error) {
 			input = json.RawMessage("{}")
 		}
 		return json.Marshal(struct {
-			Type  string          `json:"type"`
-			ID    string          `json:"id"`
-			Name  string          `json:"name"`
-			Input json.RawMessage `json:"input"`
-		}{b.Type, b.ID, b.Name, input})
+			Type         string            `json:"type"`
+			ID           string            `json:"id"`
+			Name         string            `json:"name"`
+			Input        json.RawMessage   `json:"input"`
+			CacheControl *anthCacheControl `json:"cache_control,omitempty"`
+		}{b.Type, b.ID, b.Name, input, b.CacheControl})
 	case "tool_result":
 		return json.Marshal(struct {
-			Type      string `json:"type"`
-			ToolUseID string `json:"tool_use_id"`
-			Content   string `json:"content,omitempty"`
-			IsError   bool   `json:"is_error,omitempty"`
-		}{b.Type, b.ToolUseID, b.Content, b.IsError})
+			Type         string            `json:"type"`
+			ToolUseID    string            `json:"tool_use_id"`
+			Content      string            `json:"content,omitempty"`
+			IsError      bool              `json:"is_error,omitempty"`
+			CacheControl *anthCacheControl `json:"cache_control,omitempty"`
+		}{b.Type, b.ToolUseID, b.Content, b.IsError, b.CacheControl})
 	default:
 		return nil, fmt.Errorf("anthropic: cannot serialise a %q content block", b.Type)
 	}
@@ -157,7 +166,28 @@ func toAnthMessages(msgs []provider.Message, names provider.WireNames) []anthMes
 		}
 		out = append(out, anthMessage{Role: role, Content: blocks})
 	}
+	cacheLastBlock(out)
 	return out
+}
+
+// cacheLastBlock puts an ephemeral cache breakpoint on the last block of the
+// request that can carry one. In an agent loop the message history is most of the
+// input and grows by a turn at a time, so a breakpoint at its end makes each call
+// read the prefix the previous call wrote, where the system block's breakpoint
+// alone covers only the tools and the system prompt (and nothing at all when those
+// are shorter than the model's minimum cacheable length). A thinking block cannot
+// carry one, so it is skipped. A request whose history is shorter than the
+// minimum simply caches nothing: the API ignores a breakpoint it cannot use.
+func cacheLastBlock(msgs []anthMessage) {
+	for _, m := range slices.Backward(msgs) {
+		for j := len(m.Content) - 1; j >= 0; j-- {
+			if m.Content[j].Type == "thinking" {
+				continue
+			}
+			m.Content[j].CacheControl = &anthCacheControl{Type: "ephemeral"}
+			return
+		}
+	}
 }
 
 // toAnthSystem wraps the stable system prompt in a single block with an

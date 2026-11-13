@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -556,8 +557,13 @@ func TestContentBlocksSerialiseWithExactlyTheirOwnFields(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			msgs := toAnthMessages([]provider.Message{{Role: "assistant", Blocks: []provider.ContentBlock{tc.block}}}, provider.WireNames{})
-			if len(msgs) != 1 || len(msgs[0].Content) != 1 {
+			// A closing user message takes the history's cache breakpoint, so the block
+			// under test is marshalled with only the fields its own type defines.
+			msgs := toAnthMessages([]provider.Message{
+				{Role: "assistant", Blocks: []provider.ContentBlock{tc.block}},
+				provider.TextMessage("user", "end"),
+			}, provider.WireNames{})
+			if len(msgs) != 2 || len(msgs[0].Content) != 1 {
 				t.Fatalf("messages = %+v", msgs)
 			}
 			got, err := json.Marshal(msgs[0].Content[0])
@@ -599,4 +605,84 @@ func TestContentBlocksSerialiseWithExactlyTheirOwnFields(t *testing.T) {
 			t.Fatalf("tool_use input = %q, want {}", got)
 		}
 	})
+}
+
+// TestStreamCachesTheConversationHistory is R8: the system block's breakpoint
+// covers only the tools and the system prompt, so an agent loop, whose growing
+// history is most of the input, was re-sent in full every turn. A second
+// breakpoint on the last block makes each call read what the previous one wrote.
+func TestStreamCachesTheConversationHistory(t *testing.T) {
+	var gotBody []byte
+	srv := newTestServer(t, http.StatusOK, canned, func(r *http.Request) { gotBody, _ = io.ReadAll(r.Body) })
+	defer srv.Close()
+
+	p := &Provider{APIKey: "k", Model: "m", BaseURL: srv.URL}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	prompt := provider.Prompt{System: "sys", Messages: []provider.Message{
+		provider.TextMessage("user", "go"),
+		{Role: "assistant", Blocks: []provider.ContentBlock{
+			{Kind: provider.BlockThinking, Signature: "sig"},
+			{Kind: provider.BlockToolUse, ToolUseID: "tu1", ToolName: "ping"},
+		}},
+		provider.ToolResultMessage("tu1", "pong", false),
+	}}
+	if _, err := p.Stream(ctx, prompt, nil, provider.RunContext{}); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+
+	var req struct {
+		System []struct {
+			CacheControl *anthCacheControl `json:"cache_control"`
+		} `json:"system"`
+		Messages []struct {
+			Content []map[string]any `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(gotBody, &req); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	breakpoints := 0
+	if len(req.System) == 1 && req.System[0].CacheControl != nil {
+		breakpoints++ // the system breakpoint stays
+	}
+	var onBlocks []string
+	for mi, m := range req.Messages {
+		for bi, b := range m.Content {
+			if cc, ok := b["cache_control"]; ok {
+				breakpoints++
+				onBlocks = append(onBlocks, fmt.Sprintf("%v@%d.%d", b["type"], mi, bi))
+				if cc.(map[string]any)["type"] != "ephemeral" {
+					t.Errorf("cache_control = %v, want ephemeral", cc)
+				}
+			}
+		}
+	}
+	if len(onBlocks) != 1 || onBlocks[0] != "tool_result@2.0" {
+		t.Fatalf("history breakpoints on %v, want exactly the last block (the tool_result of the last message)", onBlocks)
+	}
+	if breakpoints != 2 || breakpoints > 4 {
+		t.Fatalf("%d breakpoints in the request, want the system one and the history one (the API allows 4)", breakpoints)
+	}
+}
+
+// A thinking block cannot carry a breakpoint, so the last block that can does.
+func TestCacheLastBlockSkipsThinkingAndHandlesEmpty(t *testing.T) {
+	cacheLastBlock(nil) // no messages: nothing to do, no panic
+
+	msgs := toAnthMessages([]provider.Message{{Role: "assistant", Blocks: []provider.ContentBlock{
+		{Kind: provider.BlockText, Text: "so"},
+		{Kind: provider.BlockThinking, Text: "hmm", Signature: "sig"},
+	}}}, provider.WireNames{})
+	if msgs[0].Content[0].CacheControl == nil || msgs[0].Content[1].CacheControl != nil {
+		t.Fatalf("breakpoint on %+v, want the text block and not the thinking block", msgs[0].Content)
+	}
+	raw, err := json.Marshal(msgs[0].Content[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != `{"type":"thinking","thinking":"hmm","signature":"sig"}` {
+		t.Fatalf("thinking block = %s, want no cache_control", raw)
+	}
 }
