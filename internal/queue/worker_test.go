@@ -338,3 +338,141 @@ func TestWorker_ATransientRenewErrorDoesNotCancelTheRun(t *testing.T) {
 		t.Errorf("job status = %q, want done", got)
 	}
 }
+
+// extendingPort is a Port that also implements LeaseExtender, counting the calls.
+type extendingPort struct {
+	*fakePort
+	extends atomic.Int32
+	err     error
+	jobs    sync.Map // job ids Extend was called for
+}
+
+func (p *extendingPort) Extend(_ context.Context, jobID uuid.UUID) error {
+	p.extends.Add(1)
+	p.jobs.Store(jobID, true)
+	return p.err
+}
+
+// Lease reclaims an entry that has been idle for LeaseFor, and nothing else
+// refreshes it while a job runs, so a run longer than the lease was handed to a
+// second worker. The worker has to tell the queue the job is still being worked.
+func TestWorker_ExtendsTheLeaseWhileAJobRuns(t *testing.T) {
+	port := &extendingPort{fakePort: newFakePort()}
+	job, _ := port.Enqueue(context.Background(), Job{TenantID: uuid.New(), SessionID: uuid.New(), SessionKey: "s1", Kind: KindResume})
+	lock := &renewLock{renew: func(int32) (bool, error) { return true, nil }}
+
+	w := NewWorker(WorkerConfig{
+		Port: port, Lock: lock, Owner: "w1", PollEvery: time.Millisecond, RenewEvery: 10 * time.Millisecond,
+		Runner: funcRunner(func(ctx context.Context, _ Job) error {
+			select {
+			case <-time.After(45 * time.Millisecond): // more than three renew intervals
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}),
+	})
+	w.pollOnce(context.Background())
+
+	during := port.extends.Load()
+	if during < 2 {
+		t.Errorf("Extend was called %d times during a run of several renew intervals, want at least 2", during)
+	}
+	if _, ok := port.jobs.Load(job.JobID); !ok {
+		t.Error("Extend was not called for the job being run")
+	}
+	time.Sleep(30 * time.Millisecond)
+	if after := port.extends.Load(); after != during {
+		t.Errorf("Extend calls went from %d to %d after the job finished: the heartbeat outlived the run", during, after)
+	}
+	if got := port.status(job.JobID); got != StatusDone {
+		t.Errorf("job status = %q, want done", got)
+	}
+}
+
+// A failed extension (Redis briefly unreachable) must not end the run: the next tick tries again.
+func TestWorker_AFailedLeaseExtensionDoesNotCancelTheRun(t *testing.T) {
+	port := &extendingPort{fakePort: newFakePort(), err: errors.New("redis: connection refused")}
+	job, _ := port.Enqueue(context.Background(), Job{TenantID: uuid.New(), SessionID: uuid.New(), SessionKey: "s1", Kind: KindResume})
+	lock := &renewLock{renew: func(int32) (bool, error) { return true, nil }}
+
+	var cancelled bool
+	NewWorker(WorkerConfig{
+		Port: port, Lock: lock, Owner: "w1", PollEvery: time.Millisecond, RenewEvery: 5 * time.Millisecond,
+		Runner: funcRunner(func(ctx context.Context, _ Job) error {
+			select {
+			case <-time.After(40 * time.Millisecond):
+				return nil
+			case <-ctx.Done():
+				cancelled = true
+				return ctx.Err()
+			}
+		}),
+	}).pollOnce(context.Background())
+
+	if cancelled || port.extends.Load() < 2 {
+		t.Errorf("cancelled=%v after %d extension attempts: a failed extension must be retried, not fatal", cancelled, port.extends.Load())
+	}
+	if got := port.status(job.JobID); got != StatusDone {
+		t.Errorf("job status = %q, want done", got)
+	}
+}
+
+// A Port with no LeaseExtender is every existing adapter and test: the worker still runs the job.
+func TestWorker_APortWithoutLeaseExtenderStillWorks(t *testing.T) {
+	var port Port = newFakePort()
+	if _, ok := port.(LeaseExtender); ok {
+		t.Fatal("fixture: fakePort must not implement LeaseExtender")
+	}
+	fp := port.(*fakePort)
+	job, _ := fp.Enqueue(context.Background(), Job{TenantID: uuid.New(), SessionID: uuid.New(), SessionKey: "s1", Kind: KindResume})
+	lock := &renewLock{renew: func(int32) (bool, error) { return true, nil }}
+
+	newRenewWorker(fp, lock, func(ctx context.Context, _ Job) error {
+		select {
+		case <-time.After(30 * time.Millisecond):
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}).pollOnce(context.Background())
+
+	if got := fp.status(job.JobID); got != StatusDone {
+		t.Fatalf("job status = %q, want done", got)
+	}
+}
+
+// One registry is shared, and a session that runs fine drops out of it.
+func TestWorker_ASuccessfulJobForgetsItsSessionsBreaker(t *testing.T) {
+	port := newFakePort()
+	breakers := reliability.NewBreakerRegistry(3)
+
+	fail := true
+	w := NewWorker(WorkerConfig{
+		Port: port, Lock: newTestLock(t), Breakers: breakers, Owner: "w1",
+		Backoff: reliability.BackoffConfig{Base: time.Microsecond, Max: time.Millisecond},
+		Runner: funcRunner(func(context.Context, Job) error {
+			if fail {
+				return errors.New("transient")
+			}
+			return nil
+		}),
+	})
+	enqueue := func() uuid.UUID {
+		j, _ := port.Enqueue(context.Background(), Job{TenantID: uuid.New(), SessionID: uuid.New(), SessionKey: "s1", Kind: KindResume})
+		return j.JobID
+	}
+
+	enqueue()
+	w.pollOnce(context.Background())
+	if breakers.Len() != 1 {
+		t.Fatalf("registry tracks %d keys after a failure, want 1", breakers.Len())
+	}
+
+	fail = false
+	time.Sleep(5 * time.Millisecond) // past the retry's backoff
+	w.pollOnce(context.Background())
+	if breakers.Len() != 0 {
+		t.Fatalf("registry still tracks %d keys after the session succeeded", breakers.Len())
+	}
+}

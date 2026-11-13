@@ -2,9 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
 )
 
 func TestStartPeriodic_StopWaitsForThePassAndIsSafeToRepeat(t *testing.T) {
@@ -31,5 +35,24 @@ func TestStartPeriodic_StopWaitsForThePassAndIsSafeToRepeat(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	if after := passes.Load(); after != before {
 		t.Fatalf("passes went from %d to %d after stop: the loop kept ticking", before, after)
+	}
+}
+
+// A job that reaches a session which no longer needs a worker has nothing to do,
+// which is not a failure to publish or retry.
+func TestStaleJob(t *testing.T) {
+	for name, tc := range map[string]struct {
+		err  error
+		want bool
+	}{
+		"no error":                     {nil, false},
+		"a session in the wrong state": {fmt.Errorf("%w: session s is already terminal (completed); nothing to resume", runctl.ErrSessionState), true},
+		"wrapped more than once":       {fmt.Errorf("resume: %w", fmt.Errorf("%w: suspended", runctl.ErrSessionState)), true},
+		"a missing session":            {fmt.Errorf("%w: no such session", runctl.ErrSessionNotFound), false},
+		"an infrastructure failure":    {errors.New("connection refused"), false},
+	} {
+		if got := staleJob(tc.err); got != tc.want {
+			t.Errorf("%s: staleJob(%v) = %v, want %v", name, tc.err, got, tc.want)
+		}
 	}
 }

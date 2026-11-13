@@ -5,6 +5,7 @@ import (
 	"math/rand/v2"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/reliability"
@@ -154,12 +155,13 @@ func (w *Worker) pollOnce(ctx context.Context) {
 	// The lock's TTL is far shorter than a turn loop can run, so it is renewed
 	// for as long as the job runs, and the run is cancelled if it is ever lost.
 	runCtx, cancelRun := context.WithCancel(ctx)
-	stopRenewing := w.holdLock(runCtx, cancelRun, job.SessionKey, token)
+	stopRenewing := w.holdLock(runCtx, cancelRun, job.JobID, job.SessionKey, token)
 	runErr := w.cfg.Runner.Run(runCtx, job)
 	stopRenewing()
 	cancelRun()
 	if runErr == nil {
 		breaker.RecordSuccess()
+		w.cfg.Breakers.Forget(job.SessionKey) // a session that is running fine needs no entry
 		if err := w.cfg.Port.Complete(ctx, job.JobID); err != nil {
 			log.Error().Err(err).Any("job_id", job.JobID).Msg("queue: complete failed")
 		}
@@ -182,15 +184,24 @@ func (w *Worker) failJob(ctx context.Context, job Job, reason string, permanent 
 	}
 }
 
-// holdLock renews the session lock every RenewEvery until the returned stop is
-// called. Without it the lock lapsed after its TTL while the turn loop was
-// still running, "per-session serial" stopped holding for any run longer than
-// that, and a second job for the same session (a follow-up message, a reclaimed
-// lease) could be driven concurrently. If the lock turns out to be lost, the
-// run is cancelled: a run that no longer holds its session must stop rather than
+// holdLock keeps a running job's two claims alive, every RenewEvery, until the
+// returned stop is called.
+//
+// The session lock is renewed. Without it the lock lapsed after its TTL while the
+// turn loop was still running, "per-session serial" stopped holding for any run
+// longer than that, and a second job for the same session (a follow-up message, a
+// reclaimed lease) could be driven concurrently. If the lock turns out to be lost,
+// the run is cancelled: a run that no longer holds its session must stop rather than
 // race whoever does. A failed renewal (Redis briefly unreachable) is not a lost
 // lock: it still lives until its TTL, so the next tick tries again.
-func (w *Worker) holdLock(ctx context.Context, cancelRun context.CancelFunc, sessionKey, token string) (stop func()) {
+//
+// The job's lease is extended when the Port can (LeaseExtender). Lease reclaims any
+// entry idle for LeaseFor and nothing else refreshes it while the job runs, so a run
+// longer than LeaseFor would be handed to a second worker, which finds the session
+// locked, fails the job back onto the queue and does it again on every poll until the
+// first worker is done.
+func (w *Worker) holdLock(ctx context.Context, cancelRun context.CancelFunc, jobID uuid.UUID, sessionKey, token string) (stop func()) {
+	extender, _ := w.cfg.Port.(LeaseExtender)
 	done := make(chan struct{})
 	finished := make(chan struct{})
 	go func() {
@@ -213,6 +224,11 @@ func (w *Worker) holdLock(ctx context.Context, cancelRun context.CancelFunc, ses
 					log.Error().Str("session_key", sessionKey).Msg("queue: session lock lost mid-run; cancelling the run so it cannot race the new holder")
 					cancelRun()
 					return
+				}
+				if extender != nil {
+					if err := extender.Extend(ctx, jobID); err != nil {
+						log.Warn().Err(err).Any("job_id", jobID).Msg("queue: lease extension failed; will retry")
+					}
 				}
 			}
 		}

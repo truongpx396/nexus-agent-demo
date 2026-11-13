@@ -343,3 +343,67 @@ func TestRedisStreams_APayloadSurvivesLeaseAndARetry(t *testing.T) {
 		t.Fatalf("after a retry: leased=%v payload %q, want the payload kept", ok, again.Payload)
 	}
 }
+
+// Lease reclaims an entry idle for leaseFor, and nothing refreshed the idle time
+// while a job ran, so a run longer than the lease was handed to a second worker.
+// Extend is the heartbeat: with it a second consumer gets nothing; without it, the job.
+func TestRedisStreams_ExtendKeepsALeaseFromBeingReclaimed(t *testing.T) {
+	q, client := newTestQueue(t)
+	ctx := context.Background()
+	const leaseFor = 200 * time.Millisecond
+
+	enq, err := q.Enqueue(ctx, newTestJob())
+	if err != nil {
+		t.Fatal(err)
+	}
+	leased, ok, err := q.Lease(ctx, "consumer-a", leaseFor)
+	if err != nil || !ok || leased.JobID != enq.JobID {
+		t.Fatalf("consumer A Lease = %+v, %v, %v", leased, ok, err)
+	}
+	attemptsBefore := leased.Attempts
+
+	// A works the job for three lease lengths, extending every 50ms, while B polls.
+	deadline := time.Now().Add(600 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if err := q.Extend(ctx, leased.JobID); err != nil {
+			t.Fatalf("Extend: %v", err)
+		}
+		if got, ok, err := q.Lease(ctx, "consumer-b", leaseFor); err != nil || ok {
+			t.Fatalf("consumer B leased %+v (ok=%v, err=%v) while A was extending its lease", got, ok, err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// Extend is a heartbeat, not a delivery: the entry still belongs to A and is not a new attempt.
+	if pending, err := client.XPendingExt(ctx, &goredis.XPendingExtArgs{Stream: streamKey, Group: groupName, Start: "-", End: "+", Count: 10}).Result(); err != nil || len(pending) != 1 {
+		t.Fatalf("pending = %+v, %v, want the one entry", pending, err)
+	} else if pending[0].Consumer != "consumer-a" || pending[0].RetryCount != 1 {
+		t.Fatalf("pending entry owner %q delivered %d times, want consumer-a once", pending[0].Consumer, pending[0].RetryCount)
+	}
+
+	// A stops (its worker died): B gets the job once the lease has been idle for leaseFor.
+	var reclaimed queue.Job
+	stopped := time.Now()
+	for time.Since(stopped) < 400*time.Millisecond+leaseFor {
+		if j, ok, err := q.Lease(ctx, "consumer-b", leaseFor); err != nil {
+			t.Fatal(err)
+		} else if ok {
+			reclaimed = j
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if reclaimed.JobID != enq.JobID {
+		t.Fatalf("consumer B never reclaimed the abandoned job (got %+v)", reclaimed)
+	}
+	if reclaimed.Attempts != attemptsBefore+1 {
+		t.Errorf("reclaimed attempts = %d, want %d", reclaimed.Attempts, attemptsBefore+1)
+	}
+}
+
+func TestRedisStreams_ExtendOfAJobThatIsNotLeasedIsAnError(t *testing.T) {
+	q, _ := newTestQueue(t)
+	if err := q.Extend(context.Background(), uuid.New()); err == nil {
+		t.Fatal("Extend of a job nobody holds succeeded")
+	}
+}

@@ -295,6 +295,29 @@ func (r *Streams) claimedEntry(ctx context.Context, jobID uuid.UUID) (entryID st
 	return entryID, job, nil
 }
 
+var _ queue.LeaseExtender = (*Streams)(nil)
+
+// Extend resets the idle time of jobID's stream entry, which is what Lease's
+// XAUTOCLAIM measures an abandoned lease by. Without it an entry is reclaimed once
+// it has been leased for leaseFor, whether or not its worker is still running the
+// job, and a run longer than that is handed to a second worker while the first is
+// mid-turn. Claiming an entry for the consumer that already holds it resets its idle
+// time, and JUSTID leaves its delivery count alone: this is a heartbeat, not a new
+// attempt.
+func (r *Streams) Extend(ctx context.Context, jobID uuid.UUID) error {
+	entryID, job, err := r.claimedEntry(ctx, jobID)
+	if err != nil {
+		return fmt.Errorf("queue: extend lease of job %s: %w", jobID, err)
+	}
+	if err := r.client.XClaimJustID(ctx, &goredis.XClaimArgs{
+		Stream: streamKey, Group: groupName, Consumer: job.LeaseOwner,
+		MinIdle: 0, Messages: []string{entryID},
+	}).Err(); err != nil {
+		return fmt.Errorf("queue: extend lease of job %s: %w", jobID, err)
+	}
+	return nil
+}
+
 func (r *Streams) Complete(ctx context.Context, jobID uuid.UUID) error {
 	entryID, _, err := r.claimedEntry(ctx, jobID)
 	if err != nil {

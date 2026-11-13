@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -18,6 +19,7 @@ import (
 	oversightpg "github.com/truongpx396/nexus-agent-demo/internal/oversight/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/queue"
 	queueredis "github.com/truongpx396/nexus-agent-demo/internal/queue/redis"
+	"github.com/truongpx396/nexus-agent-demo/internal/reliability"
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
 	runctlpg "github.com/truongpx396/nexus-agent-demo/internal/runctl/postgres"
 	runsrest "github.com/truongpx396/nexus-agent-demo/internal/runs/rest"
@@ -219,10 +221,15 @@ func startQueueWorkers(ctx context.Context, redisClient *redis.Client, port queu
 	workerCtx, cancel := context.WithCancel(ctx)
 	runctl.StartRecovery(workerCtx, func(ctx context.Context) ([]runctl.Orphan, error) { return listOrphans(ctx, adminPool) }, lock, port, orphanRecheckAfter)
 
+	// One breaker registry for every worker, so a session's failures are counted
+	// together whichever worker ran them. Each worker used to build its own, and a
+	// session's failures were split across them and never tripped any.
+	breakers := reliability.NewBreakerRegistry(3)
+
 	var workers sync.WaitGroup
 	for i := range queueWorkers() {
 		w := queue.NewWorker(queue.WorkerConfig{
-			Port: port, Lock: lock, Runner: runner, RenewEvery: sessionLockTTL / 3,
+			Port: port, Lock: lock, Runner: runner, Breakers: breakers, RenewEvery: sessionLockTTL / 3,
 			Owner: fmt.Sprintf("nexusd-worker-%d-%d", os.Getpid(), i),
 		})
 		workers.Go(func() { w.Run(workerCtx) })
@@ -232,6 +239,15 @@ func startQueueWorkers(ctx context.Context, redisClient *redis.Client, port queu
 		workers.Wait() // a worker mid-job finishes unwinding before the pool it leases through closes
 		adminPool.Close()
 	}
+}
+
+// staleJob reports whether err says the job's session is in a state that does not
+// call for a worker: runctl.ErrSessionState, which Resume returns for a session
+// that is terminal, suspended on an approval or awaiting the next message. A job
+// that arrives at such a session (a copy a reclaimed lease made, a recovery sweep
+// that raced a finish) has nothing to do, which is not a failure.
+func staleJob(err error) bool {
+	return err != nil && errors.Is(err, runctl.ErrSessionState)
 }
 
 // listOrphans is every session a durable record says needs a worker: the ones
@@ -273,6 +289,15 @@ type queueRunner struct {
 
 func (r *queueRunner) Run(ctx context.Context, job queue.Job) error {
 	for ev, err := range jobEvents(ctx, r.ctl, r.approvals, job) {
+		if staleJob(err) {
+			// The session no longer needs a worker (it finished, or it is waiting on a
+			// person, between this job being queued and it being leased). Nothing is
+			// wrong, so no error goes to the session's event stream and the job
+			// completes instead of being retried and dead-lettered.
+			log.Info().Err(err).Any("job_id", job.JobID).Str("kind", string(job.Kind)).Any("session_id", job.SessionID).
+				Msg("nexusd: queue: session no longer needs driving; completing the job without running it")
+			return nil
+		}
 		if r.runsAPI != nil {
 			r.runsAPI.PublishEvent(job.TenantID, job.SessionID, ev, err)
 		}

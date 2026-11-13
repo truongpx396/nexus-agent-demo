@@ -118,3 +118,123 @@ func TestBreakerRegistry_IsolatesKeys(t *testing.T) {
 		t.Fatal("session-b's breaker must be independent of session-a's")
 	}
 }
+
+// fakeClock is a test seam for a breaker's cool-down.
+type fakeClock struct{ t time.Time }
+
+func (c *fakeClock) now() time.Time          { return c.t }
+func (c *fakeClock) advance(d time.Duration) { c.t = c.t.Add(d) }
+
+func clockedBreaker(threshold int, cooldown time.Duration) (*CircuitBreaker, *fakeClock) {
+	clock := &fakeClock{t: time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)}
+	b := NewCircuitBreaker(threshold)
+	b.cooldown, b.now = cooldown, clock.now
+	return b, clock
+}
+
+// An open breaker never ran the job again, and only a success could close it, so a
+// breaker opened on a failure that has since been fixed refused its session for the
+// life of the process.
+func TestCircuitBreaker_ClosesAfterItsCooldownAndOneMoreIdenticalFailureReopensIt(t *testing.T) {
+	b, clock := clockedBreaker(3, 5*time.Minute)
+	for range 3 {
+		b.RecordFailure("provider overloaded")
+	}
+	if !b.Open() {
+		t.Fatal("the breaker should be open after 3 identical failures")
+	}
+
+	clock.advance(4*time.Minute + 59*time.Second)
+	if !b.Open() {
+		t.Fatal("the breaker closed before its cool-down passed")
+	}
+
+	clock.advance(2 * time.Second)
+	if b.Open() {
+		t.Fatal("the breaker is still open after its cool-down")
+	}
+
+	// It is one identical failure short of tripping, not back at zero.
+	if !b.RecordFailure("provider overloaded") {
+		t.Fatal("one identical failure after the cool-down should open the breaker again")
+	}
+	if !b.Open() {
+		t.Fatal("the breaker should be open again")
+	}
+	clock.advance(5 * time.Minute)
+	if b.Open() {
+		t.Fatal("the second open should have its own cool-down")
+	}
+}
+
+func TestCircuitBreaker_ADifferentFailureAfterTheCooldownDoesNotReopenIt(t *testing.T) {
+	b, clock := clockedBreaker(3, time.Minute)
+	for range 3 {
+		b.RecordFailure("provider overloaded")
+	}
+	clock.advance(time.Minute)
+	if b.RecordFailure("a different problem") || b.Open() {
+		t.Fatal("a different failure must count from one again, not trip the breaker")
+	}
+}
+
+func TestCircuitBreaker_ASuccessAfterTheCooldownResetsIt(t *testing.T) {
+	b, clock := clockedBreaker(3, time.Minute)
+	for range 3 {
+		b.RecordFailure("provider overloaded")
+	}
+	clock.advance(time.Minute)
+	b.RecordSuccess()
+	for range 2 {
+		if b.RecordFailure("provider overloaded") {
+			t.Fatal("after a success the count restarts: two failures must not trip a threshold of 3")
+		}
+	}
+}
+
+// RecordFailure must also see the cool-down has passed, not only Open.
+func TestCircuitBreaker_RecordFailureAloneExpiresTheCooldown(t *testing.T) {
+	b, clock := clockedBreaker(3, time.Minute)
+	for range 3 {
+		b.RecordFailure("x")
+	}
+	clock.advance(time.Minute)
+	if !b.RecordFailure("x") {
+		t.Fatal("RecordFailure past the cool-down should trip again without Open having been called")
+	}
+}
+
+func TestBreakerRegistry_CooldownAndTheClockReachEveryBreakerAndForgetRemovesTheEntry(t *testing.T) {
+	clock := &fakeClock{t: time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)}
+	r := NewBreakerRegistry(2)
+	r.Cooldown, r.now = 30*time.Second, clock.now
+
+	b := r.For("s1")
+	b.RecordFailure("x")
+	b.RecordFailure("x")
+	if !b.Open() {
+		t.Fatal("the breaker should be open")
+	}
+	clock.advance(31 * time.Second)
+	if b.Open() {
+		t.Fatal("the registry's Cooldown did not reach its breaker")
+	}
+
+	if r.Len() != 1 {
+		t.Fatalf("Len = %d, want 1", r.Len())
+	}
+	r.Forget("s1")
+	if r.Len() != 0 {
+		t.Fatalf("Len = %d after Forget, want 0", r.Len())
+	}
+	if r.For("s1") == b {
+		t.Fatal("a forgotten key must start with a fresh breaker")
+	}
+	r.Forget("never-seen") // a key that was never there is fine
+}
+
+func TestNewBreakerRegistry_DefaultCooldownIsFiveMinutes(t *testing.T) {
+	if got := NewBreakerRegistry(3).For("s").cooldown; got != 5*time.Minute {
+		t.Fatalf("default cool-down = %v, want 5m", got)
+	}
+}
