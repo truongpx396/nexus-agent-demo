@@ -16,12 +16,20 @@ import (
 // `nexusd seed` or `nexusd dashboard` — those keep their existing envOr
 // defaults.
 type serverConfig struct {
-	DatabaseURL         string
-	RedisAddr           string
-	SignerdSocket       string
-	KEKPath             string
+	DatabaseURL   string
+	RedisAddr     string
+	SignerdSocket string
+	KEKPath       string
+	HTTPAddr      string
+
+	// AuthnPublicKeyPath is the Ed25519 public key bearer tokens are verified with.
+	// The server only verifies, so outside --dev it is given this and never the
+	// signing key, whose file would let anyone who can read it mint a token for any
+	// tenant. Under --dev, when it is unset, the verifying key is derived from
+	// AuthnSigningKeyPath, which is where `nexusd --dev token` mints from.
+	AuthnPublicKeyPath string
+	// AuthnSigningKeyPath is only read under --dev (see AuthnPublicKeyPath).
 	AuthnSigningKeyPath string
-	HTTPAddr            string
 
 	// AdminDatabaseURL is the superuser DSN the few cross-tenant operations use (the
 	// tenant directory, the orphan scan, the queue workers' admission). adminDSN
@@ -50,6 +58,7 @@ func loadServerConfig(dev bool) (serverConfig, error) {
 			SignerdSocket:       envOr("NEXUS_SIGNERD_SOCKET", defaultSignerdSocket),
 			KEKPath:             envOr("NEXUS_KEK_PATH", defaultKEKPath),
 			AuthnSigningKeyPath: envOr("NEXUS_AUTHN_SIGNING_KEY_PATH", defaultAuthnSigningKeyPath),
+			AuthnPublicKeyPath:  os.Getenv("NEXUS_AUTHN_PUBLIC_KEY_PATH"), // optional under --dev: derived from the signing key when unset
 			HTTPAddr:            envOr("NEXUS_HTTP_ADDR", ":8085"),
 			AdminDatabaseURL:    adminDSN(),
 			MetricsToken:        os.Getenv("NEXUS_METRICS_TOKEN"), // optional under --dev: /metrics stays open for the local scrape
@@ -65,14 +74,14 @@ func loadServerConfig(dev bool) (serverConfig, error) {
 		return v
 	}
 	cfg := serverConfig{
-		DatabaseURL:         require("NEXUS_DATABASE_URL"),
-		RedisAddr:           require("NEXUS_REDIS_ADDR"),
-		SignerdSocket:       require("NEXUS_SIGNERD_SOCKET"),
-		KEKPath:             require("NEXUS_KEK_PATH"),
-		AuthnSigningKeyPath: require("NEXUS_AUTHN_SIGNING_KEY_PATH"),
-		HTTPAddr:            envOr("NEXUS_HTTP_ADDR", ":8085"), // a listen address has no unsafe-default failure mode; --dev doesn't change what this defaults to
-		AdminDatabaseURL:    require("NEXUS_ADMIN_DATABASE_URL"),
-		MetricsToken:        require("NEXUS_METRICS_TOKEN"),
+		DatabaseURL:        require("NEXUS_DATABASE_URL"),
+		RedisAddr:          require("NEXUS_REDIS_ADDR"),
+		SignerdSocket:      require("NEXUS_SIGNERD_SOCKET"),
+		KEKPath:            require("NEXUS_KEK_PATH"),
+		AuthnPublicKeyPath: require("NEXUS_AUTHN_PUBLIC_KEY_PATH"),
+		HTTPAddr:           envOr("NEXUS_HTTP_ADDR", ":8085"), // a listen address has no unsafe-default failure mode; --dev doesn't change what this defaults to
+		AdminDatabaseURL:   require("NEXUS_ADMIN_DATABASE_URL"),
+		MetricsToken:       require("NEXUS_METRICS_TOKEN"),
 	}
 	if len(missing) > 0 {
 		return serverConfig{}, fmt.Errorf(

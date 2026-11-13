@@ -294,7 +294,7 @@ that is safe because auth is a bearer token the client attaches, never a cookie.
 Everything is a `NEXUS_*` environment variable. [`.env.example`](.env.example) documents each one with its default and is
 auto-loaded from the working directory; **a real environment variable always wins**, and a `.env` that sets
 `NEXUS_PROVIDER` changes what `make run` talks to. Without `--dev`, `nexusd` refuses to start unless
-`NEXUS_DATABASE_URL`, `NEXUS_REDIS_ADDR`, `NEXUS_SIGNERD_SOCKET`, `NEXUS_KEK_PATH` and `NEXUS_AUTHN_SIGNING_KEY_PATH` are set.
+`NEXUS_DATABASE_URL`, `NEXUS_ADMIN_DATABASE_URL`, `NEXUS_REDIS_ADDR`, `NEXUS_SIGNERD_SOCKET`, `NEXUS_KEK_PATH`, `NEXUS_AUTHN_PUBLIC_KEY_PATH` and `NEXUS_METRICS_TOKEN` are set (and a sandbox: see below); [`docs/go-live.md`](docs/go-live.md) says what each is.
 
 | Concern | Setting | Notes |
 |---|---|---|

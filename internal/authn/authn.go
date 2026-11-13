@@ -14,6 +14,7 @@ package authn
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -119,6 +120,29 @@ func LoadPrivateKey(r io.Reader) (ed25519.PrivateKey, error) {
 		return nil, fmt.Errorf("authn: read signing key: %w", err)
 	}
 	return ed25519.PrivateKey(buf), nil
+}
+
+// LoadPublicKey reads exactly ed25519.PublicKeySize raw bytes from r as the
+// verifying key, the file `nexusd token --public-key-out` writes. The server only
+// verifies tokens, so it needs this half and never the signing key: anyone who
+// can read that file could otherwise mint a token for any tenant.
+//
+// A file of any other length is an error, not a prefix read. In particular the
+// 64-byte private key file is refused rather than having its first 32 bytes (the
+// seed) taken as a public key, which would fail every verification with no hint why.
+func LoadPublicKey(r io.Reader) (ed25519.PublicKey, error) {
+	buf := make([]byte, ed25519.PublicKeySize+1)
+	n, err := io.ReadFull(r, buf)
+	switch {
+	case err == nil: // one byte more than a key: too long
+		return nil, fmt.Errorf("authn: public key file is longer than the %d bytes of an Ed25519 public key (is it the private key?)", ed25519.PublicKeySize)
+	case errors.Is(err, io.ErrUnexpectedEOF) && n == ed25519.PublicKeySize:
+		return ed25519.PublicKey(buf[:n]), nil
+	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+		return nil, fmt.Errorf("authn: public key file is %d bytes, want %d", n, ed25519.PublicKeySize)
+	default:
+		return nil, fmt.Errorf("authn: read public key: %w", err)
+	}
 }
 
 // GeneratePrivateKey creates a fresh random Ed25519 key pair — used only to

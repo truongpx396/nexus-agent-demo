@@ -85,3 +85,16 @@ func loadOrGenerateSigningKey(path string, dev bool) (ed25519.PrivateKey, error)
 	log.Info().Str("path", path).Msg("generated a new dev AuthN signing key")
 	return key, nil
 }
+
+// loadPublicKey reads the Ed25519 public key a deployment's server verifies bearer
+// tokens with. Unlike the signing key there is nothing to generate: the file is
+// produced from the signing key once, by `nexusd token --public-key-out`, wherever
+// that key is kept, and the server is given only this half.
+func loadPublicKey(path string) (ed25519.PublicKey, error) {
+	f, err := os.Open(path) //nolint:gosec // path is an operator-controlled config value (NEXUS_AUTHN_PUBLIC_KEY_PATH), never request input
+	if err != nil {
+		return nil, fmt.Errorf("open AuthN public key file %s: %w", path, err)
+	}
+	defer f.Close() //nolint:errcheck // read-only handle; nothing to flush
+	return authn.LoadPublicKey(f)
+}

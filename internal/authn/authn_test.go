@@ -1,6 +1,7 @@
 package authn
 
 import (
+	"bytes"
 	"testing"
 	"time"
 
@@ -85,5 +86,43 @@ func TestDevVerifier_RejectsTamperedToken(t *testing.T) {
 	tampered := tok[:mid] + string(flipped) + tok[mid+1:]
 	if _, _, err := verifier.Verify(tampered); err == nil {
 		t.Fatal("Verify accepted a tampered token")
+	}
+}
+
+func TestLoadPublicKey_ATokenIssuedByThePrivateKeyVerifiesWithTheExportedPublicHalf(t *testing.T) {
+	priv, err := GeneratePrivateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadPublicKey(bytes.NewReader(PublicKey(priv)))
+	if err != nil {
+		t.Fatalf("LoadPublicKey: %v", err)
+	}
+
+	wantTenant, wantUser := uuid.New(), uuid.New()
+	tok, err := NewDevIssuer(priv).Issue(wantTenant, wantUser, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotTenant, gotUser, err := NewDevVerifier(loaded).Verify(tok)
+	if err != nil || gotTenant != wantTenant || gotUser != wantUser {
+		t.Fatalf("Verify with the loaded public key = %s, %s, %v", gotTenant, gotUser, err)
+	}
+}
+
+func TestLoadPublicKey_RefusesAnyOtherLength(t *testing.T) {
+	priv, err := GeneratePrivateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range map[string][]byte{
+		"empty":                 {},
+		"short":                 PublicKey(priv)[:31],
+		"one byte over":         append(append([]byte{}, PublicKey(priv)...), 0),
+		"the private key (64B)": priv,
+	} {
+		if _, err := LoadPublicKey(bytes.NewReader(content)); err == nil {
+			t.Errorf("%s: LoadPublicKey accepted %d bytes", name, len(content))
+		}
 	}
 }

@@ -38,3 +38,21 @@ prints green is worse than no checklist at all.
 
 See `internal/reporting/golden_signals.go` (the golden-signal queries) and
 `cmd/nexusd`'s `runGoLive` for the implementation of every AUTOMATED item.
+
+## Configuring a production server
+
+Outside `--dev`, `nexusd` refuses to start unless these are set, and reports every
+missing one at once (`cmd/nexusd/config.go`'s `loadServerConfig`). `.env.example`
+documents each.
+
+| Setting | What it is |
+|---|---|
+| `NEXUS_DATABASE_URL` | The runtime role (`nexus_app`) through PgBouncer. |
+| `NEXUS_ADMIN_DATABASE_URL` | The superuser DSN for the few cross-tenant operations (the tenant directory, orphan recovery). Outside `--dev` it has no default: a deployment that forgot it would otherwise start and fail those loops quietly against localhost. |
+| `NEXUS_REDIS_ADDR` | The job queue, session locks and cost counters. |
+| `NEXUS_SIGNERD_SOCKET` | `signerd`, the only holder of the audit signing key. |
+| `NEXUS_KEK_PATH` | The key-encryption key. |
+| `NEXUS_AUTHN_PUBLIC_KEY_PATH` | The Ed25519 **public** key bearer tokens are verified with. The server only verifies, so it is never given the signing key: anyone who can read that file could mint a token for any tenant. Produce the file where the signing key lives with `nexusd token --public-key-out <path>` and mount only that. |
+| `NEXUS_METRICS_TOKEN` | The static bearer token `GET /metrics` requires (it lists every tenant's id, spend and tool names). Give Prometheus the same value. |
+| `NEXUS_SANDBOX` | `docker` or `opensandbox`: without a sandbox `platform/shell` would run commands on the host as the `nexusd` user. |
+
