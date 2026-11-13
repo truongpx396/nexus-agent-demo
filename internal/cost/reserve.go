@@ -21,7 +21,7 @@ func (g *Gate) Reserve(ctx context.Context, req ReserveRequest) (Reservation, er
 	if err != nil {
 		return g.refuse(ctx, res, nil, zero, "price book unavailable (fail closed): "+err.Error())
 	}
-	worst, err := g.worstCaseCost(pb, req.ModelID, req.Purpose)
+	worst, err := g.worstCaseCost(pb, req.ModelID, req.Purpose, req.InputTokenEstimate)
 	if err != nil {
 		return g.refuse(ctx, res, nil, zero, "cannot price a worst-case reservation (fail closed): "+err.Error())
 	}

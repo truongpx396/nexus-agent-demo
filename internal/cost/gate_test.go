@@ -301,3 +301,89 @@ func TestReconcile_ARecordingFailureIsReturned(t *testing.T) {
 		t.Error("Reconcile swallowed a failure to record usage")
 	}
 }
+
+// The gate reserved a fixed worst case whatever the prompt held, so a turn with a long
+// history overshot a ceiling by the difference in one call. A caller that knows how big
+// its prompt is says so, and the reservation is sized from it.
+func TestReserve_ASizedInputEstimateReservesItsOwnWorstCase(t *testing.T) {
+	r := newRig(t)
+	r.ledger.SeedBudget(r.tenant, cost.BudgetScopeSession, &r.session, r.usd(10_000_000))
+
+	// 200,000 input tokens at $3/M = 600,000 micros, plus the 1,000-token output ceiling at $15/M = 15,000.
+	res, err := r.gate.Reserve(context.Background(), cost.ReserveRequest{
+		TenantID: r.tenant, SessionID: r.session, ModelID: "m", Purpose: cost.PurposeTurn, InputTokenEstimate: 200_000,
+	})
+	if err != nil {
+		t.Fatalf("Reserve: %v", err)
+	}
+	if got, want := res.Decision.Reserved, r.usd(615_000); got != want {
+		t.Fatalf("reserved %v, want %v (the prompt's own size, not the configured 1,000 tokens)", got, want)
+	}
+	if res.Decision.Reserved.Micros <= worstCase {
+		t.Fatalf("a 200,000-token prompt reserved %d micros, no more than the default %d", res.Decision.Reserved.Micros, worstCase)
+	}
+}
+
+// A ceiling below that amount refuses the call; the fixed estimate would have let it through.
+func TestReserve_ACeilingBelowTheSizedReservationRefusesWhatTheFixedEstimateAllowed(t *testing.T) {
+	r := newRig(t)
+	r.ledger.SeedBudget(r.tenant, cost.BudgetScopeSession, &r.session, r.usd(100_000))
+
+	if res, err := r.reserve(); err != nil || res.Decision.Kind == cost.DecisionRefuseCeiling {
+		t.Fatalf("fixture: the default reservation (%d micros) should fit a 100,000 ceiling: %v, %+v", worstCase, err, res.Decision)
+	}
+
+	r2 := newRig(t)
+	r2.ledger.SeedBudget(r2.tenant, cost.BudgetScopeSession, &r2.session, r2.usd(100_000))
+	res, err := r2.gate.Reserve(context.Background(), cost.ReserveRequest{
+		TenantID: r2.tenant, SessionID: r2.session, ModelID: "m", Purpose: cost.PurposeTurn, InputTokenEstimate: 200_000,
+	})
+	if err == nil || res.Decision.Kind != cost.DecisionRefuseCeiling {
+		t.Fatalf("a 200,000-token prompt against a 100,000-micro ceiling = %s, %v, want a refusal", res.Decision.Kind, err)
+	}
+	if res.Decision.Reserved.Micros != 0 {
+		t.Errorf("a refusal reserved %v, want nothing", res.Decision.Reserved)
+	}
+}
+
+// The configured estimate is a floor: a smaller prompt, or none, reserves what it always did,
+// and the tenant ceiling goes through the counters at the sized amount.
+func TestReserve_TheConfiguredEstimateIsAFloorAndTheTenantCountersSeeTheSizedAmount(t *testing.T) {
+	r := newRig(t)
+	b := r.ledger.SeedBudget(r.tenant, cost.BudgetScopeTenant, nil, r.usd(10_000_000))
+	for name, estimate := range map[string]int64{"none": 0, "below the floor": 400, "at the floor": 1_000} {
+		res, err := r.gate.Reserve(context.Background(), cost.ReserveRequest{
+			TenantID: r.tenant, SessionID: uuid.New(), ModelID: "m", Purpose: cost.PurposeTurn, InputTokenEstimate: estimate,
+		})
+		if err != nil || res.Decision.Reserved != r.usd(worstCase) {
+			t.Errorf("%s: reserved %v (%v), want the default %v", name, res.Decision.Reserved, err, r.usd(worstCase))
+		}
+	}
+
+	before, _ := r.counters.Spend(b.ID)
+	if _, err := r.gate.Reserve(context.Background(), cost.ReserveRequest{
+		TenantID: r.tenant, SessionID: uuid.New(), ModelID: "m", Purpose: cost.PurposeTurn, InputTokenEstimate: 100_000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := r.counters.Spend(b.ID)
+	if got, want := after-before, int64(300_000+15_000); got != want {
+		t.Fatalf("the tenant counter moved by %d, want the sized %d", got, want)
+	}
+}
+
+// An embedding reservation has its own estimate and ignores the field.
+func TestReserve_AnEmbeddingReservationIgnoresTheInputEstimate(t *testing.T) {
+	r := newRig(t)
+	r.ledger.SeedBudget(r.tenant, cost.BudgetScopeSession, &r.session, r.usd(10_000_000))
+	res, err := r.gate.Reserve(context.Background(), cost.ReserveRequest{
+		TenantID: r.tenant, SessionID: r.session, ModelID: "m", Purpose: cost.PurposeEmbedding, InputTokenEstimate: 5_000_000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 500 tokens at $0.10/M = 50 micros.
+	if got := res.Decision.Reserved; got != r.usd(50) {
+		t.Fatalf("an embedding reservation = %v, want %v", got, r.usd(50))
+	}
+}

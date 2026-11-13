@@ -39,14 +39,18 @@ func (k *Kernel) reconcile(ctx context.Context, st *RunState, res cost.Reservati
 // promptctx.ExtractivePass instead — a condenser that can't run must never
 // block or fail the turn, only degrade it.
 func (k *Kernel) condense(ctx context.Context, st *RunState, cfg RunConfig, covered []provider.Message) (summary string, degraded bool, reservation cost.Reservation) {
+	// The summariser is sent the covered messages, which are by definition a large part
+	// of a transcript that has outgrown its threshold, so its reservation is sized from
+	// the prompt it will actually get.
+	prompt := promptctx.CondensePrompt(covered)
 	reservation, reserveErr := k.Budget.Reserve(ctx, cost.ReserveRequest{
 		TenantID: st.TenantID, SessionID: st.SessionID, ModelID: cfg.CondenserModelID, Purpose: cost.PurposeCompaction,
+		InputTokenEstimate: promptctx.EstimateTokens(prompt.System, nil, prompt.Messages),
 	})
 	if reserveErr != nil {
 		return "", true, reservation
 	}
 
-	prompt := promptctx.CondensePrompt(covered)
 	spanCtx, genSpan := k.startSpan(ctx, "model.condense", obs.ObservationGeneration, obs.Attrs{"model.id": cfg.CondenserModelID})
 	stream, serr := k.Provider.Stream(spanCtx, prompt, nil, provider.RunContext{TenantID: st.TenantID, SessionID: st.SessionID})
 	if serr != nil {

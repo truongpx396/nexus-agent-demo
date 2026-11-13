@@ -26,6 +26,12 @@ func callTurn(id string) fake.Script {
 // condenser's own model call answers "SUMMARY", and the fourth turn finishes.
 func condensingRig(t *testing.T) (*rig, *kernel.RunState) {
 	t.Helper()
+	return condensingRigWith(t, nil)
+}
+
+// condensingRigWith is condensingRig with a budget gate of the caller's (nil keeps the no-op one).
+func condensingRigWith(t *testing.T, budget kernel.BudgetGate) (*rig, *kernel.RunState) {
+	t.Helper()
 	out := json.RawMessage(`"` + strings.Repeat("o", 600) + `"`)
 	r := newRig(toolFunc(func(kernel.ToolUseRequest) kernel.ToolResult { return kernel.ToolResult{Output: out} }),
 		callTurn("tu1"), callTurn("tu2"), callTurn("tu3"),
@@ -33,6 +39,9 @@ func condensingRig(t *testing.T) (*rig, *kernel.RunState) {
 		finalTurn,
 	)
 	r.k.CondenseThresholdBytes = 1500
+	if budget != nil {
+		r.k.Budget = budget
+	}
 	cfg := kernel.RunConfig{System: "test", ModelID: "fake", CondenserModelID: "cheap", MaxTurns: 10, Input: "go", AutonomyLevel: "supervised"}
 	for _, err := range r.k.Run(context.Background(), r.st, cfg) {
 		if err != nil {

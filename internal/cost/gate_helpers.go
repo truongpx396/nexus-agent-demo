@@ -12,7 +12,7 @@ import (
 
 // --- internal helpers ---
 
-func (g *Gate) worstCaseCost(pb *PriceBook, modelID string, purpose Purpose) (Money, error) {
+func (g *Gate) worstCaseCost(pb *PriceBook, modelID string, purpose Purpose, inputEstimate int64) (Money, error) {
 	subject := modelID
 	if subject == "" {
 		subject = WildcardSubject
@@ -31,7 +31,9 @@ func (g *Gate) worstCaseCost(pb *PriceBook, modelID string, purpose Purpose) (Mo
 	// priced as MeterInputUncached, never InputCacheRead — because a
 	// reservation exists to bound the call BEFORE the provider tells us
 	// whether the cache actually hit.
-	in, err := pb.Cost(MeterInputUncached, subject, g.cfg.MaxInputTokenEstimate, now)
+	// The configured estimate is a floor, not the size of every prompt: a call whose
+	// prompt is known to be bigger reserves for that (ReserveRequest.InputTokenEstimate).
+	in, err := pb.Cost(MeterInputUncached, subject, max(g.cfg.MaxInputTokenEstimate, inputEstimate), now)
 	if err != nil {
 		return Money{}, err
 	}

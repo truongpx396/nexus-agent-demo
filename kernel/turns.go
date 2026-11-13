@@ -69,8 +69,14 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 			st.Transcript = append(st.Transcript, provider.Message{Role: "tool", Blocks: synthBlocks})
 		}
 
+		// The reservation is sized from what this turn will send, not a fixed 8,000
+		// tokens: an agent turn with a long history sends far more, and a ceiling
+		// reserved at the fixed figure is overshot by the difference in one call. It is
+		// measured on the whole transcript, before pruning or condensing trims it, so it
+		// errs high.
 		reservation, reserveErr := k.Budget.Reserve(ctx, cost.ReserveRequest{
 			TenantID: st.TenantID, SessionID: st.SessionID, ModelID: cfg.ModelID, Purpose: cost.PurposeTurn,
+			InputTokenEstimate: promptctx.EstimateTokens(cfg.System, cfg.Catalog, st.Transcript),
 		})
 		bev, err := k.appendBudgetDecision(ctx, st, reservation)
 		if err != nil {
