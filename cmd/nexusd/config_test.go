@@ -53,6 +53,29 @@ func TestLoadServerConfig_OutsideDevRequiresWhatItNeedsAndNotTheSigningKey(t *te
 	}
 }
 
+// Either a Redis URL (password, TLS) or the plain address satisfies the requirement.
+func TestLoadServerConfig_ARedisURLInPlaceOfTheAddressIsEnough(t *testing.T) {
+	for k, v := range map[string]string{ //nolint:gosec // a URL fixture, not a credential
+		"NEXUS_DATABASE_URL": "postgres://app", "NEXUS_REDIS_ADDR": "", "NEXUS_REDIS_URL": "rediss://u:p@redis:6380/0",
+		"NEXUS_SIGNERD_SOCKET": "/run/signerd.sock", "NEXUS_KEK_PATH": "/keys/kek", "NEXUS_AUTHN_PUBLIC_KEY_PATH": "/keys/authn.pub",
+		"NEXUS_ADMIN_DATABASE_URL": "postgres://admin", "NEXUS_METRICS_TOKEN": "tok",
+	} {
+		t.Setenv(k, v)
+	}
+	cfg, err := loadServerConfig(false)
+	if err != nil {
+		t.Fatalf("loadServerConfig with NEXUS_REDIS_URL and no NEXUS_REDIS_ADDR: %v", err)
+	}
+	if cfg.RedisURL != "rediss://u:p@redis:6380/0" { //nolint:gosec // a URL fixture, not a credential
+		t.Fatalf("cfg.RedisURL = %q", cfg.RedisURL)
+	}
+
+	t.Setenv("NEXUS_REDIS_URL", "")
+	if _, err := loadServerConfig(false); err == nil || !strings.Contains(err.Error(), "NEXUS_REDIS_URL or NEXUS_REDIS_ADDR") {
+		t.Fatalf("with neither: err = %v, want it to name both", err)
+	}
+}
+
 func TestLoadServerConfig_DevKeepsTheDefaultsAndTheNewSettingsAreOptional(t *testing.T) {
 	for _, k := range []string{"NEXUS_ADMIN_DATABASE_URL", "NEXUS_MIGRATE_DATABASE_URL", "NEXUS_METRICS_TOKEN", "NEXUS_AUTHN_PUBLIC_KEY_PATH", "NEXUS_AUTHN_SIGNING_KEY_PATH"} {
 		t.Setenv(k, "")

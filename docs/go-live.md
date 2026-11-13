@@ -49,7 +49,7 @@ documents each.
 |---|---|
 | `NEXUS_DATABASE_URL` | The runtime role (`nexus_app`) through PgBouncer. |
 | `NEXUS_ADMIN_DATABASE_URL` | The superuser DSN for the few cross-tenant operations (the tenant directory, orphan recovery). Outside `--dev` it has no default: a deployment that forgot it would otherwise start and fail those loops quietly against localhost. |
-| `NEXUS_REDIS_ADDR` | The job queue, session locks and cost counters. |
+| `NEXUS_REDIS_URL` (or `NEXUS_REDIS_ADDR`) | The job queue, session locks, cost counters and live content previews. Use the URL form (`rediss://user:password@host:6380/0`) so the connection authenticates and is encrypted: the address form carries neither. The URL wins when both are set. |
 | `NEXUS_SIGNERD_SOCKET` | `signerd`, the only holder of the audit signing key. |
 | `NEXUS_KEK_PATH` | The key-encryption key. |
 | `NEXUS_AUTHN_PUBLIC_KEY_PATH` | The Ed25519 **public** key bearer tokens are verified with. The server only verifies, so it is never given the signing key: anyone who can read that file could mint a token for any tenant. Produce the file where the signing key lives with `nexusd token --public-key-out <path>` and mount only that. |

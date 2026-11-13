@@ -67,7 +67,10 @@ func openInfra(ctx context.Context, cfg serverConfig) (_ *infra, err error) {
 	in.signer = audit.NewSignerClient(cfg.SignerdSocket)
 	in.chain = auditpg.NewChain(in.signer)
 
-	in.redis = redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
+	in.redis, err = newRedisClientFrom(cfg.RedisURL, cfg.RedisAddr)
+	if err != nil {
+		return nil, fmt.Errorf("configure redis: %w", err)
+	}
 
 	// internal/queue's Redis Streams adapter (the retired Postgres queue_jobs
 	// table's successor): the run starter and run control both enqueue through it

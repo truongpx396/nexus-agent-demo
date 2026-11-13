@@ -22,6 +22,11 @@ type serverConfig struct {
 	KEKPath       string
 	HTTPAddr      string
 
+	// RedisURL, when set, is used instead of RedisAddr: redis:// or rediss:// (TLS),
+	// with an optional user and password (newRedisClient). Outside --dev one of the
+	// two is required.
+	RedisURL string
+
 	// AuthnPublicKeyPath is the Ed25519 public key bearer tokens are verified with.
 	// The server only verifies, so outside --dev it is given this and never the
 	// signing key, whose file would let anyone who can read it mint a token for any
@@ -55,6 +60,7 @@ func loadServerConfig(dev bool) (serverConfig, error) {
 		return serverConfig{
 			DatabaseURL:         envOr("NEXUS_DATABASE_URL", defaultAppDSN),
 			RedisAddr:           envOr("NEXUS_REDIS_ADDR", defaultRedisAddr),
+			RedisURL:            os.Getenv("NEXUS_REDIS_URL"),
 			SignerdSocket:       envOr("NEXUS_SIGNERD_SOCKET", defaultSignerdSocket),
 			KEKPath:             envOr("NEXUS_KEK_PATH", defaultKEKPath),
 			AuthnSigningKeyPath: envOr("NEXUS_AUTHN_SIGNING_KEY_PATH", defaultAuthnSigningKeyPath),
@@ -75,13 +81,17 @@ func loadServerConfig(dev bool) (serverConfig, error) {
 	}
 	cfg := serverConfig{
 		DatabaseURL:        require("NEXUS_DATABASE_URL"),
-		RedisAddr:          require("NEXUS_REDIS_ADDR"),
+		RedisAddr:          os.Getenv("NEXUS_REDIS_ADDR"),
+		RedisURL:           os.Getenv("NEXUS_REDIS_URL"),
 		SignerdSocket:      require("NEXUS_SIGNERD_SOCKET"),
 		KEKPath:            require("NEXUS_KEK_PATH"),
 		AuthnPublicKeyPath: require("NEXUS_AUTHN_PUBLIC_KEY_PATH"),
 		HTTPAddr:           envOr("NEXUS_HTTP_ADDR", ":8085"), // a listen address has no unsafe-default failure mode; --dev doesn't change what this defaults to
 		AdminDatabaseURL:   require("NEXUS_ADMIN_DATABASE_URL"),
 		MetricsToken:       require("NEXUS_METRICS_TOKEN"),
+	}
+	if cfg.RedisAddr == "" && cfg.RedisURL == "" {
+		missing = append(missing, "NEXUS_REDIS_URL or NEXUS_REDIS_ADDR")
 	}
 	if len(missing) > 0 {
 		return serverConfig{}, fmt.Errorf(
