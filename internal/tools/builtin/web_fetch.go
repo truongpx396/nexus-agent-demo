@@ -14,37 +14,6 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/tools"
 )
 
-// privateBlocks is the same SSRF guard shape internal/hooks's http handler
-// uses, duplicated rather than imported: this package has no reason to
-// depend on internal/hooks, and the guard is a handful of CIDR literals,
-// not shared logic worth a common package for.
-var privateBlocks = mustParseCIDRs(
-	"127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
-	"169.254.0.0/16", "0.0.0.0/8",
-	"::1/128", "fc00::/7", "fe80::/10",
-)
-
-func mustParseCIDRs(cidrs ...string) []*net.IPNet {
-	blocks := make([]*net.IPNet, 0, len(cidrs))
-	for _, c := range cidrs {
-		_, block, err := net.ParseCIDR(c)
-		if err != nil {
-			panic("builtin: invalid CIDR literal " + c + ": " + err.Error())
-		}
-		blocks = append(blocks, block)
-	}
-	return blocks
-}
-
-func isPrivateIP(ip net.IP) bool {
-	for _, b := range privateBlocks {
-		if b.Contains(ip) {
-			return true
-		}
-	}
-	return false
-}
-
 const webFetchMaxBodyBytes = 1 << 20 // 1 MiB
 
 // WebFetch fetches a URL over HTTP(S). Its result is external content and
@@ -168,7 +137,7 @@ func (w WebFetch) Call(ctx context.Context, in json.RawMessage, _ tools.RunConte
 	}
 	client := w.Client
 	if client == nil {
-		client = &http.Client{Timeout: 15 * time.Second}
+		client = newEgressClient(w.AllowedHosts, w.AllowPrivateNetworks, 15*time.Second)
 	}
 	resp, err := client.Do(httpReq)
 	if err != nil {

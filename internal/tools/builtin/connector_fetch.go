@@ -148,7 +148,7 @@ func (c ConnectorFetch) Call(ctx context.Context, in json.RawMessage, rc tools.R
 
 	client := c.Client
 	if client == nil {
-		client = &http.Client{Timeout: 15 * time.Second}
+		client = newEgressClient(c.AllowedHosts, c.AllowPrivateNetworks, 15*time.Second)
 	}
 	resp, err := client.Do(httpReq)
 	if err != nil {

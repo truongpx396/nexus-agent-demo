@@ -17,39 +17,6 @@ import (
 	"github.com/truongpx396/nexus-agent-demo/internal/hooks"
 )
 
-// privateBlocks is the set of ranges an http hook is refused to call unless
-// AllowPrivateNetworks is set — loopback, RFC1918/ULA, link-local, and the
-// "current network" block. This is the SSRF guard README task 3.11 names:
-// an http hook target is tenant/operator config, but hooks.Config.URL can still be
-// templated from tool input in a future phase, so the guard belongs here,
-// not at the config-authoring boundary.
-var privateBlocks = mustParseCIDRs(
-	"127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
-	"169.254.0.0/16", "0.0.0.0/8",
-	"::1/128", "fc00::/7", "fe80::/10",
-)
-
-func mustParseCIDRs(cidrs ...string) []*net.IPNet {
-	blocks := make([]*net.IPNet, 0, len(cidrs))
-	for _, c := range cidrs {
-		_, block, err := net.ParseCIDR(c)
-		if err != nil {
-			panic("hooks: invalid CIDR literal " + c + ": " + err.Error())
-		}
-		blocks = append(blocks, block)
-	}
-	return blocks
-}
-
-func isPrivateIP(ip net.IP) bool {
-	for _, b := range privateBlocks {
-		if b.Contains(ip) {
-			return true
-		}
-	}
-	return false
-}
-
 // Handler POSTs the same hooks.Request shape CommandHandler sends over
 // stdin, and expects the same hooks.Response shape back as the body.
 type Handler struct {
@@ -95,7 +62,7 @@ func (h Handler) Run(ctx context.Context, cfg hooks.Config, hctx hooks.Context) 
 
 	client := h.Client
 	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second}
+		client = newEgressClient(h.AllowPrivateNetworks, 10*time.Second)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
