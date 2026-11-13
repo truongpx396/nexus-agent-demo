@@ -282,7 +282,7 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 		}
 
 		if done == provider.DoneMaxOutput {
-			k.terminate(ctx, st, yield, TerminalError(errors.New("provider truncated output at max_output without a natural stop")))
+			k.terminate(ctx, st, yield, TerminalError(errors.New("provider stopped at max_tokens before finishing its reply; raise NEXUS_ANTHROPIC_MAX_TOKENS or ask for a shorter output")))
 			return
 		}
 		if done == provider.DoneRefusal {

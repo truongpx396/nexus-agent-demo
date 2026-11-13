@@ -35,6 +35,30 @@ const (
 	defaultLiteLLMModel   = "qwen2.5-local"
 )
 
+// The output limit sent to Anthropic on every call, in tokens. With adaptive
+// thinking on, thinking tokens count against it, so a limit near the adapter's old
+// fixed 4096 ended any run that wrote one long file with a max_tokens stop.
+// NEXUS_ANTHROPIC_MAX_TOKENS overrides it within the model family's range.
+const (
+	defaultAnthropicMaxTokens = 16000
+	minAnthropicMaxTokens     = 1024
+	maxAnthropicMaxTokens     = 128000
+)
+
+// anthropicMaxTokens is the output limit for the Anthropic adapter and the size of
+// the worst-case output the cost gate reserves for each call (costGateConfig). A
+// value outside minAnthropicMaxTokens..maxAnthropicMaxTokens, or one that is not a
+// number, falls back to the default and says so, as queueWorkers does.
+func anthropicMaxTokens() int {
+	n := envIntOr("NEXUS_ANTHROPIC_MAX_TOKENS", defaultAnthropicMaxTokens)
+	if n < minAnthropicMaxTokens || n > maxAnthropicMaxTokens {
+		log.Warn().Int("requested", n).Int("using", defaultAnthropicMaxTokens).
+			Msg("nexusd: NEXUS_ANTHROPIC_MAX_TOKENS out of range 1024-128000; using the default")
+		return defaultAnthropicMaxTokens
+	}
+	return n
+}
+
 func newProvider() (provider.Provider, error) {
 	switch envOr("NEXUS_PROVIDER", "fake") {
 	case "anthropic":
@@ -43,7 +67,9 @@ func newProvider() (provider.Provider, error) {
 			return nil, errors.New("NEXUS_PROVIDER=anthropic requires ANTHROPIC_API_KEY")
 		}
 		model := envOr("NEXUS_ANTHROPIC_MODEL", defaultAnthropicModel)
-		return anthropic.New(apiKey, model), nil
+		p := anthropic.New(apiKey, model)
+		p.MaxTokens = anthropicMaxTokens()
+		return p, nil
 	case "litellm":
 		baseURL := envOr("NEXUS_LITELLM_BASE_URL", "http://localhost:4100")
 		model := envOr("NEXUS_LITELLM_MODEL", defaultLiteLLMModel)

@@ -436,3 +436,36 @@ func TestStreamRefusesCollidingToolNames(t *testing.T) {
 		t.Fatalf("err = %v, want ErrWireNameCollision", err)
 	}
 }
+
+// TestStreamSendsTheConfiguredMaxTokens: the output limit is a setting
+// (NEXUS_ANTHROPIC_MAX_TOKENS), not the adapter's fixed 4096.
+func TestStreamSendsTheConfiguredMaxTokens(t *testing.T) {
+	for name, tc := range map[string]struct {
+		maxTokens int
+		want      int
+	}{
+		"configured": {16000, 16000},
+		"unset":      {0, defaultMaxTokens},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var gotBody []byte
+			srv := newTestServer(t, http.StatusOK, canned, func(r *http.Request) { gotBody, _ = io.ReadAll(r.Body) })
+			defer srv.Close()
+			p := &Provider{APIKey: "k", Model: "m", BaseURL: srv.URL, MaxTokens: tc.maxTokens}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if _, err := p.Stream(ctx, provider.Prompt{}, nil, provider.RunContext{}); err != nil {
+				t.Fatalf("Stream: %v", err)
+			}
+			var req struct {
+				MaxTokens int `json:"max_tokens"`
+			}
+			if err := json.Unmarshal(gotBody, &req); err != nil {
+				t.Fatal(err)
+			}
+			if req.MaxTokens != tc.want {
+				t.Fatalf("max_tokens = %d, want %d", req.MaxTokens, tc.want)
+			}
+		})
+	}
+}
