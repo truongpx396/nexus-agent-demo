@@ -18,12 +18,16 @@ import (
 // refused the call outright — mirrors provider.ThrottleError's documented
 // contract.
 func (p *Provider) Stream(ctx context.Context, prompt provider.Prompt, tools []provider.ToolSchema, _ provider.RunContext) (provider.Stream, error) {
+	names, err := provider.NewWireNames(tools)
+	if err != nil {
+		return nil, fmt.Errorf("anthropic: %w", err)
+	}
 	reqBody := messagesRequest{
 		Model:     p.Model,
 		MaxTokens: p.maxTokens(),
 		System:    toAnthSystem(prompt.System),
-		Messages:  toAnthMessages(prompt.Messages),
-		Tools:     toAnthTools(tools),
+		Messages:  toAnthMessages(prompt.Messages, names),
+		Tools:     toAnthTools(tools, names),
 		Stream:    true,
 		Thinking:  thinkingConfigFor(p.Model),
 	}
@@ -63,7 +67,7 @@ func (p *Provider) Stream(ctx context.Context, prompt provider.Prompt, tools []p
 	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
 
 	return &stream{
-		body: resp.Body, scanner: scanner,
+		body: resp.Body, scanner: scanner, names: names,
 		toolBlocks: map[int]*toolBlockState{}, thinkingBlocks: map[int]*thinkingBlockState{},
 	}, nil
 }
@@ -92,6 +96,7 @@ type thinkingOpaque struct {
 type stream struct {
 	body           io.ReadCloser
 	scanner        *bufio.Scanner
+	names          provider.WireNames // maps a tool_use block's wire name back to its internal reference
 	toolBlocks     map[int]*toolBlockState
 	thinkingBlocks map[int]*thinkingBlockState
 	usage          provider.Usage
@@ -143,7 +148,7 @@ func (s *stream) Next(ctx context.Context) (provider.Chunk, bool, error) {
 		case "content_block_start":
 			switch evt.ContentBlock.Type {
 			case "tool_use":
-				s.toolBlocks[evt.Index] = &toolBlockState{id: evt.ContentBlock.ID, name: evt.ContentBlock.Name}
+				s.toolBlocks[evt.Index] = &toolBlockState{id: evt.ContentBlock.ID, name: s.names.Ref(evt.ContentBlock.Name)}
 			case "thinking":
 				s.thinkingBlocks[evt.Index] = &thinkingBlockState{}
 			}

@@ -144,7 +144,7 @@ type chatToolFunction struct {
 // equivalent slot for it, so a transcript that previously ran against
 // Anthropic and picked up a thinking block simply loses it here rather than
 // erroring; qwen2.5:3b has no extended-thinking mode to receive it anyway.
-func toChatMessages(system string, msgs []provider.Message) []chatMessage {
+func toChatMessages(system string, msgs []provider.Message, names provider.WireNames) []chatMessage {
 	out := make([]chatMessage, 0, len(msgs)+1)
 	if system != "" {
 		out = append(out, chatMessage{Role: "system", Content: system})
@@ -167,7 +167,7 @@ func toChatMessages(system string, msgs []provider.Message) []chatMessage {
 				case provider.BlockToolUse:
 					calls = append(calls, chatToolCall{
 						ID: b.ToolUseID, Type: "function",
-						Function: chatToolCallFunc{Name: b.ToolName, Arguments: string(b.Input)},
+						Function: chatToolCallFunc{Name: names.Wire(b.ToolName), Arguments: string(b.Input)},
 					})
 				}
 			}
@@ -179,14 +179,17 @@ func toChatMessages(system string, msgs []provider.Message) []chatMessage {
 	return out
 }
 
-func toChatTools(schemas []provider.ToolSchema) []chatTool {
+// toChatTools lists the catalog under wire-safe names (provider.WireNames): an
+// OpenAI-compatible API accepts only [a-zA-Z0-9_-]{1,64}, which the internal
+// `namespace/name@version` reference is not.
+func toChatTools(schemas []provider.ToolSchema, names provider.WireNames) []chatTool {
 	if len(schemas) == 0 {
 		return nil
 	}
 	out := make([]chatTool, 0, len(schemas))
 	for _, s := range schemas {
 		out = append(out, chatTool{Type: "function", Function: chatToolFunction{
-			Name: s.Name, Description: s.Description, Parameters: s.InputSchema,
+			Name: names.Wire(s.Name), Description: s.Description, Parameters: s.InputSchema,
 		}})
 	}
 	return out
@@ -225,10 +228,14 @@ func classifyAPIError(status int, body errorBody) error {
 // endpoint refused the call outright — mirrors provider.ThrottleError's
 // documented contract, same as anthropic.Provider.Stream.
 func (p *Provider) Stream(ctx context.Context, prompt provider.Prompt, tools []provider.ToolSchema, _ provider.RunContext) (provider.Stream, error) {
+	names, err := provider.NewWireNames(tools)
+	if err != nil {
+		return nil, fmt.Errorf("litellm: %w", err)
+	}
 	reqBody := chatRequest{
 		Model:         p.Model,
-		Messages:      toChatMessages(prompt.System, prompt.Messages),
-		Tools:         toChatTools(tools),
+		Messages:      toChatMessages(prompt.System, prompt.Messages, names),
+		Tools:         toChatTools(tools, names),
 		Stream:        true,
 		StreamOptions: &streamOptions{IncludeUsage: true},
 	}
@@ -265,7 +272,7 @@ func (p *Provider) Stream(ctx context.Context, prompt provider.Prompt, tools []p
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
 
-	return &stream{body: resp.Body, scanner: scanner, toolCalls: map[int]*toolCallState{}}, nil
+	return &stream{body: resp.Body, scanner: scanner, names: names, toolCalls: map[int]*toolCallState{}}, nil
 }
 
 type toolCallState struct {
@@ -306,6 +313,7 @@ type chatStreamChunk struct {
 type stream struct {
 	body      io.ReadCloser
 	scanner   *bufio.Scanner
+	names     provider.WireNames // maps a call's wire name back to its internal reference
 	toolCalls map[int]*toolCallState
 
 	usage      provider.Usage
@@ -398,7 +406,7 @@ func (s *stream) Next(ctx context.Context) (provider.Chunk, bool, error) {
 				tb.id = tc.ID
 			}
 			if tc.Function.Name != "" {
-				tb.name = tc.Function.Name
+				tb.name = s.names.Ref(tc.Function.Name)
 			}
 			tb.args.WriteString(tc.Function.Arguments)
 		}

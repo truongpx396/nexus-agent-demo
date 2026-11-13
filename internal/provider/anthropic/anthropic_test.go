@@ -3,6 +3,7 @@ package anthropic
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -345,5 +346,93 @@ func TestStreamInvalidRequestIsPermanent(t *testing.T) {
 	}
 	if provider.ClassifyTrigger(err) != provider.TriggerPermanent {
 		t.Fatalf("ClassifyTrigger(%v) = %v, want permanent", err, provider.ClassifyTrigger(err))
+	}
+}
+
+// TestStreamSendsWireSafeToolNames is the R1 regression: the Messages API
+// rejects a tool name outside [a-zA-Z0-9_-]{1,128}, so the internal reference
+// `platform/shell@v1` must reach the wire as `platform_shell_v1` — in the tool
+// list and in a replayed tool_use — and a tool_use block the model names that
+// way must come back to the kernel under the internal reference.
+func TestStreamSendsWireSafeToolNames(t *testing.T) {
+	const ref = "platform/shell@v1"
+	body := "event: message_start\n" +
+		`data: {"type":"message_start","message":{"usage":{"input_tokens":10}}}` + "\n\n" +
+		"event: content_block_start\n" +
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_9","name":"platform_shell_v1"}}` + "\n\n" +
+		"event: content_block_delta\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"cmd\":\"ls\"}"}}` + "\n\n" +
+		"event: content_block_stop\n" +
+		`data: {"type":"content_block_stop","index":0}` + "\n\n" +
+		"event: message_delta\n" +
+		`data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":3}}` + "\n\n" +
+		"event: message_stop\n" +
+		`data: {"type":"message_stop"}` + "\n\n"
+	var gotBody []byte
+	srv := newTestServer(t, http.StatusOK, body, func(r *http.Request) { gotBody, _ = io.ReadAll(r.Body) })
+	defer srv.Close()
+
+	prompt := provider.Prompt{Messages: []provider.Message{
+		provider.TextMessage("user", "list files"),
+		{Role: "assistant", Blocks: []provider.ContentBlock{
+			{Kind: provider.BlockToolUse, ToolUseID: "toolu_1", ToolName: ref, Input: json.RawMessage(`{"cmd":"pwd"}`)},
+		}},
+		provider.ToolResultMessage("toolu_1", "/work", false),
+	}}
+	tools := []provider.ToolSchema{{Name: ref, Description: "run a command", InputSchema: json.RawMessage(`{"type":"object"}`)}}
+
+	p := &Provider{APIKey: "k", Model: "m", BaseURL: srv.URL}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s, err := p.Stream(ctx, prompt, tools, provider.RunContext{})
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+
+	var req struct {
+		Tools    []struct{ Name string } `json:"tools"`
+		Messages []struct {
+			Content []struct {
+				Type string `json:"type"`
+				Name string `json:"name"`
+			} `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(gotBody, &req); err != nil {
+		t.Fatalf("unmarshal request: %v", err)
+	}
+	if len(req.Tools) != 1 || req.Tools[0].Name != "platform_shell_v1" {
+		t.Fatalf("tools = %+v, want one tool named platform_shell_v1", req.Tools)
+	}
+	if got := req.Messages[1].Content[0]; got.Type != "tool_use" || got.Name != "platform_shell_v1" {
+		t.Fatalf("replayed tool_use = %+v, want name platform_shell_v1", got)
+	}
+
+	for {
+		c, ok, err := s.Next(ctx)
+		if err != nil {
+			t.Fatalf("Next: %v", err)
+		}
+		if !ok {
+			t.Fatal("stream ended without a tool_use chunk")
+		}
+		if c.Kind == provider.ChunkToolUse {
+			if c.ToolName != ref {
+				t.Fatalf("ChunkToolUse.ToolName = %q, want the internal reference %q", c.ToolName, ref)
+			}
+			return
+		}
+	}
+}
+
+// Two references that sanitize to one wire name cannot be told apart in the
+// model's reply, so the call is refused before anything is sent.
+func TestStreamRefusesCollidingToolNames(t *testing.T) {
+	srv := newTestServer(t, http.StatusOK, canned, func(*http.Request) { t.Error("a request was sent") })
+	defer srv.Close()
+	p := &Provider{APIKey: "k", Model: "m", BaseURL: srv.URL}
+	_, err := p.Stream(context.Background(), provider.Prompt{}, []provider.ToolSchema{{Name: "a/b@v1"}, {Name: "a_b_v1"}}, provider.RunContext{})
+	if !errors.Is(err, provider.ErrWireNameCollision) {
+		t.Fatalf("err = %v, want ErrWireNameCollision", err)
 	}
 }

@@ -77,7 +77,10 @@ type anthTool struct {
 // tool_result blocks, exactly what the API expects; every other kind maps
 // 1:1 onto its Anthropic block type, preserving tool_use_id pairing and a
 // thinking block's signature all the way to the wire.
-func toAnthMessages(msgs []provider.Message) []anthMessage {
+//
+// A replayed tool_use carries names.Wire(b.ToolName), never the internal
+// reference: the API rejects a name outside [a-zA-Z0-9_-].
+func toAnthMessages(msgs []provider.Message, names provider.WireNames) []anthMessage {
 	out := make([]anthMessage, 0, len(msgs))
 	for _, m := range msgs {
 		role := m.Role
@@ -92,7 +95,7 @@ func toAnthMessages(msgs []provider.Message) []anthMessage {
 			case provider.BlockThinking:
 				blocks = append(blocks, anthContentBlock{Type: "thinking", Thinking: b.Text, Signature: b.Signature})
 			case provider.BlockToolUse:
-				blocks = append(blocks, anthContentBlock{Type: "tool_use", ID: b.ToolUseID, Name: b.ToolName, Input: b.Input})
+				blocks = append(blocks, anthContentBlock{Type: "tool_use", ID: b.ToolUseID, Name: names.Wire(b.ToolName), Input: b.Input})
 			case provider.BlockToolResult:
 				blocks = append(blocks, anthContentBlock{Type: "tool_result", ToolUseID: b.ToolUseID, Content: b.Text, IsError: b.IsError})
 			}
@@ -130,13 +133,15 @@ func thinkingConfigFor(model string) *anthThinking {
 	}
 }
 
-func toAnthTools(schemas []provider.ToolSchema) []anthTool {
+// toAnthTools lists the catalog under wire-safe names (provider.WireNames); the
+// internal reference never reaches the API.
+func toAnthTools(schemas []provider.ToolSchema, names provider.WireNames) []anthTool {
 	if len(schemas) == 0 {
 		return nil
 	}
 	out := make([]anthTool, 0, len(schemas))
 	for _, s := range schemas {
-		out = append(out, anthTool{Name: s.Name, Description: s.Description, InputSchema: s.InputSchema})
+		out = append(out, anthTool{Name: names.Wire(s.Name), Description: s.Description, InputSchema: s.InputSchema})
 	}
 	return out
 }
