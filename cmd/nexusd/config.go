@@ -22,6 +22,17 @@ type serverConfig struct {
 	KEKPath             string
 	AuthnSigningKeyPath string
 	HTTPAddr            string
+
+	// AdminDatabaseURL is the superuser DSN the few cross-tenant operations use (the
+	// tenant directory, the orphan scan, the queue workers' admission). adminDSN
+	// reads it from the environment and falls back to a local default, which is
+	// right for --dev and wrong anywhere else: a deployment that forgot it would
+	// start and then fail those loops quietly against localhost.
+	AdminDatabaseURL string
+	// MetricsToken is the bearer token /metrics requires. It lists every tenant's
+	// id, spend and tool names, so it is not served to whoever can reach the port.
+	// Empty only under --dev.
+	MetricsToken string
 }
 
 // loadServerConfig reads serverConfig from the environment. In dev mode
@@ -40,6 +51,8 @@ func loadServerConfig(dev bool) (serverConfig, error) {
 			KEKPath:             envOr("NEXUS_KEK_PATH", defaultKEKPath),
 			AuthnSigningKeyPath: envOr("NEXUS_AUTHN_SIGNING_KEY_PATH", defaultAuthnSigningKeyPath),
 			HTTPAddr:            envOr("NEXUS_HTTP_ADDR", ":8085"),
+			AdminDatabaseURL:    adminDSN(),
+			MetricsToken:        os.Getenv("NEXUS_METRICS_TOKEN"), // optional under --dev: /metrics stays open for the local scrape
 		}, nil
 	}
 
@@ -58,6 +71,8 @@ func loadServerConfig(dev bool) (serverConfig, error) {
 		KEKPath:             require("NEXUS_KEK_PATH"),
 		AuthnSigningKeyPath: require("NEXUS_AUTHN_SIGNING_KEY_PATH"),
 		HTTPAddr:            envOr("NEXUS_HTTP_ADDR", ":8085"), // a listen address has no unsafe-default failure mode; --dev doesn't change what this defaults to
+		AdminDatabaseURL:    require("NEXUS_ADMIN_DATABASE_URL"),
+		MetricsToken:        require("NEXUS_METRICS_TOKEN"),
 	}
 	if len(missing) > 0 {
 		return serverConfig{}, fmt.Errorf(

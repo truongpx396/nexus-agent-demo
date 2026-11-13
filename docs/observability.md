@@ -369,6 +369,7 @@ flag to start them in the first place).
 | `NEXUS_PPROF_BLOCK_RATE` | `0` (off) | `runtime.SetBlockProfileRate`'s own parameter — nonzero also adds `block_count`/`block_duration` to what Pyroscope uploads and makes `/debug/pprof/block` non-empty. |
 | `NEXUS_PPROF_ADDR` | `127.0.0.1:6060` for `make run`; `0.0.0.0:6060` (published loopback-only) for `make docker-up`; unset (no listener) otherwise | `nexusd`'s on-demand `net/http/pprof` listener address — a SEPARATE listener from the main REST/webhook mux, see "On-demand profiling: pprof" above. `make pprof-cpu`/`pprof-heap`/`pprof-goroutine` target `127.0.0.1:6060` by default, working against either path unmodified. |
 | `NEXUS_SIGNERD_PPROF_ADDR` | `127.0.0.1:6061` for `make signerd`/`make run`; `0.0.0.0:6061` (published loopback-only) for `make docker-up`; unset otherwise | Same as `NEXUS_PPROF_ADDR`, for `signerd` — a distinct env var since both processes may run on the same host at once and can't share a bind address. |
+| `NEXUS_METRICS_TOKEN` | unset (open under `--dev`; required outside it) | The bearer token `GET /metrics` requires. Prometheus sends it from a credentials file, see `deploy/observability/prometheus.yml`. |
 | `NEXUS_QUEUE_WORKERS` | `2` (1 to 64) | How many queue workers `nexusd` runs, which is also its ceiling on concurrently driven runs. `/metrics` reports it as `nexus_queue_workers`, beside `nexus_queue_jobs{state=queued\|leased\|delayed\|dead}` and `nexus_queue_oldest_job_age_seconds`: a growing `queued` with a climbing age is workers falling behind. |
 
 `docker-label-exporter` (task 17.15) takes two of its own, set in
@@ -434,13 +435,16 @@ bind address. Neither needs to change for this repo's own use.
   running a different container runtime (Podman, etc.) that doesn't honor
   `host-gateway` the same way, point the scrape target at your host's real
   LAN/bridge IP instead.
-- **`/metrics` is unauthenticated and per-process, not per-request** — it
-  walks every tenant on each scrape (`handleMetrics`'s own `listTenantIDs`
-  call). Fine for a local demo's tenant count; a real deployment behind this
-  stack would want the same bearer-token gate the rest of the REST surface
-  has, or a network-level restriction to the scraper only. Not built here —
-  same "deployment concern, not an architectural one" scope line
-  the other production-hardening specs already draw.
+- **`/metrics` needs `NEXUS_METRICS_TOKEN` outside `--dev`, and is per-process,
+  not per-request.** It lists every tenant's id, spend and tool names, so it
+  answers 401 without `Authorization: Bearer <token>` (a static token, not a
+  tenant's; `nexusd` refuses to start outside `--dev` without one). Under `--dev`
+  the token is optional and the local scrape stays open. A render walks every
+  tenant (`renderMetrics`' tenant lister) and runs several queries for each, so
+  the response is cached for 15 seconds: scrapes inside that window share one
+  render, and a Prometheus `scrape_interval` shorter than that sees the same
+  numbers twice. `deploy/observability/prometheus.yml` shows the `authorization`
+  block that sends the token.
 - **Loki's single-binary mode is a demo topology**, the same call
   `docker-compose.yml` already makes for PgBouncer over a full
   connection-pool mesh — fine for this stack's actual log volume, not the

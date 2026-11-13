@@ -10,7 +10,11 @@ meta {
 get {
   url: {{baseUrl}}/metrics
   body: none
-  auth: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{metricsToken}}
 }
 
 assert {
@@ -18,5 +22,5 @@ assert {
 }
 
 docs {
-  Per-tenant golden signals, with per-tool and per-model breakdowns, in Prometheus text format. Unauthenticated, like the probes.
+  Per-tenant golden signals, with per-tool and per-model breakdowns, in Prometheus text format. Needs the server's static metrics token (NEXUS_METRICS_TOKEN, set as the metricsToken environment secret), not a tenant token. Under --dev with no token configured it is open and any value of metricsToken works.
 }

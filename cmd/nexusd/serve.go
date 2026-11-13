@@ -63,5 +63,5 @@ func serve(ctx context.Context) error {
 	defer stopBackground()
 
 	fmt.Printf("listening on %s (provider=%s)\n", cfg.HTTPAddr, envOr("NEXUS_PROVIDER", "fake"))
-	return runHTTPServer(ctx, cfg.HTTPAddr, newMux(in, svc, restAPI))
+	return runHTTPServer(ctx, cfg.HTTPAddr, newMux(in, svc, restAPI, cfg.MetricsToken))
 }

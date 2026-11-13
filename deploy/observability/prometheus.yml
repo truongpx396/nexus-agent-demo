@@ -25,6 +25,14 @@ alerting:
 scrape_configs:
   - job_name: nexusd
     metrics_path: /metrics
+    # nexusd requires NEXUS_METRICS_TOKEN on /metrics outside --dev. Under --dev
+    # (what `make run` and `make docker-up` start) it is optional and this scrape
+    # needs nothing. Against a server that has one, uncomment this and put the token
+    # in the file (mounted into the prometheus container, readable by it); a missing
+    # file stops Prometheus loading this config, so it is not on by default.
+    # authorization:
+    #   type: Bearer
+    #   credentials_file: /etc/prometheus/nexusd_metrics_token
     static_configs:
       - targets: ["host.docker.internal:8085"]
         labels:
