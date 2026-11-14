@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/reliability"
+	"github.com/truongpx396/nexus-agent/internal/reliability"
 )
 
 // Runner is what a worker calls to actually DO one leased job —

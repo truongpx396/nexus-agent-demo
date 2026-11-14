@@ -1,6 +1,6 @@
 package evals
 
-import "github.com/truongpx396/nexus-agent-demo/internal/provider"
+import "github.com/truongpx396/nexus-agent/internal/provider"
 
 // jsonSchema is a small helper for LiveTaskCorpus's tool definitions —
 // every LiveTaskCase tool schema below is written out by hand rather than

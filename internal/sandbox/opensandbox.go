@@ -27,7 +27,7 @@ type OpenSandboxConfig struct {
 	Protocol string
 	// APIKey authenticates against the server's OPEN-SANDBOX-API-KEY header
 	// (empty is valid only against a server started with no api_key set —
-	// this demo's dev-only posture, never a production one).
+	// this repo's dev-only posture, never a production one).
 	APIKey string
 	// Image defaults to "python:3.12-slim" — small, and enough of a POSIX
 	// shell environment for what builtin.Shell's commands need, mirroring

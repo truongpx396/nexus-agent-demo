@@ -10,12 +10,12 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
-	oversightpg "github.com/truongpx396/nexus-agent-demo/internal/oversight/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/queue"
-	"github.com/truongpx396/nexus-agent-demo/internal/reliability"
-	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/internal/oversight"
+	oversightpg "github.com/truongpx396/nexus-agent/internal/oversight/postgres"
+	"github.com/truongpx396/nexus-agent/internal/queue"
+	"github.com/truongpx396/nexus-agent/internal/reliability"
+	"github.com/truongpx396/nexus-agent/internal/runctl"
 )
 
 // approvalJobPayload is what a queue.KindApproval job carries: only the id, never

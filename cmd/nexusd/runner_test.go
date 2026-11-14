@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/runs"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/internal/runs"
 )
 
 // seedSeq yields n EventToolLoaded events numbered 1..n, then err (when

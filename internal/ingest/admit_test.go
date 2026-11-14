@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/tools"
+	"github.com/truongpx396/nexus-agent/internal/tools"
 )
 
 func TestAdmit_CleanDocument(t *testing.T) {

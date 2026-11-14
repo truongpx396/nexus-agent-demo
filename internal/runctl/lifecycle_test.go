@@ -8,8 +8,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/internal/runctl"
 )
 
 // A checkpoint is a pointer into state that lives elsewhere: how far the log

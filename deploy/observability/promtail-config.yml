@@ -11,7 +11,7 @@
 # docker-compose.observability.yml's promtail service mounts, filtered to
 # the APP stack's containers via the `com.docker.compose.project` label
 # Docker Compose sets on everything it creates — deliberately
-# `nexus-agent-demo` (docker-compose.yml's/docker-compose.local-llm.yml's
+# `nexus-agent` (docker-compose.yml's/docker-compose.local-llm.yml's
 # own project name), NOT this file's own project
 # (`nexus-agent-observability`, a separate Docker Desktop group on
 # purpose — docker-compose.observability.yml's own header comment says why):
@@ -63,7 +63,7 @@ scrape_configs:
         refresh_interval: 15s
         filters:
           - name: label
-            values: ["com.docker.compose.project=nexus-agent-demo"]
+            values: ["com.docker.compose.project=nexus-agent"]
     relabel_configs:
       - target_label: job
         replacement: docker

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
+	"github.com/truongpx396/nexus-agent/internal/provider"
 )
 
 // condenseKeepTail is how many of the most recent messages ShouldCondense

@@ -1,6 +1,6 @@
 package promptctx
 
-import "github.com/truongpx396/nexus-agent-demo/internal/provider"
+import "github.com/truongpx396/nexus-agent/internal/provider"
 
 // CacheReadRate computes the fraction of input tokens served from cache
 // across usages — the measured counterpart to constitution Principle III's

@@ -10,10 +10,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
-	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
-	"github.com/truongpx396/nexus-agent-demo/migrations"
+	"github.com/truongpx396/nexus-agent/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent/internal/crypto/postgres"
+	"github.com/truongpx396/nexus-agent/internal/store"
+	"github.com/truongpx396/nexus-agent/migrations"
 )
 
 func wrappedLen(t *testing.T, ctx context.Context, st *store.Store, tenantID uuid.UUID, keyID string) (n int, status string) {

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/sandbox"
-	"github.com/truongpx396/nexus-agent-demo/internal/tools"
+	"github.com/truongpx396/nexus-agent/internal/sandbox"
+	"github.com/truongpx396/nexus-agent/internal/tools"
 )
 
 // TestShell_CallSandboxedRoutesThroughDocker is the end-to-end path README

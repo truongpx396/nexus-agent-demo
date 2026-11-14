@@ -3,7 +3,7 @@
 package integration
 
 import (
-	runctlpg "github.com/truongpx396/nexus-agent-demo/internal/runctl/postgres"
+	runctlpg "github.com/truongpx396/nexus-agent/internal/runctl/postgres"
 
 	"context"
 	"sync"
@@ -15,12 +15,12 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
-	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/queue"
-	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
+	"github.com/truongpx396/nexus-agent/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent/internal/crypto/postgres"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/internal/queue"
+	"github.com/truongpx396/nexus-agent/internal/runctl"
+	"github.com/truongpx396/nexus-agent/internal/store"
 )
 
 // countingQueue is a queue.Port that only counts Enqueue calls — what the

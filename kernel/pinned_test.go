@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
-	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
-	"github.com/truongpx396/nexus-agent-demo/kernel"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/internal/provider"
+	"github.com/truongpx396/nexus-agent/internal/provider/fake"
+	"github.com/truongpx396/nexus-agent/kernel"
 )
 
 func openPayload(_ context.Context, e eventlog.Event) ([]byte, error) { return e.Payload, nil }

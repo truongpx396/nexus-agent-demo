@@ -5,9 +5,9 @@
 # `make llm-down` / `make agentic-down` can never touch it, and a demo that
 # never runs `make observability-up` pays nothing. `name:` is its OWN
 # project, `nexus-agent-observability` — deliberately NOT the app
-# stack's `nexus-agent-demo` (docker-compose.yml/docker-compose.local-llm.yml
+# stack's `nexus-agent` (docker-compose.yml/docker-compose.local-llm.yml
 # both use that one), the same "own project, own group" call
-# docker-compose.agentic.yml's own `name: nexus-agent-demo-agentic` already
+# docker-compose.agentic.yml's own `name: nexus-agent-agentic` already
 # makes, so this whole stack shows up as its own container group in Docker
 # Desktop rather than folded into the app stack's. Safe to split because
 # nothing here is reached by container DNS from the app side in the first
@@ -28,8 +28,8 @@
 # file's own project name, because their whole job is to observe the app
 # stack's containers, not this stack's own: the `docker-label-exporter`
 # service's `COMPOSE_PROJECT` default (deploy/observability/docker-label-
-# exporter/main.go — now a comma-separated `nexus-agent-demo,nexus-agent-
-# demo-agentic`, since Crawl4AI/OpenSandbox are app-driven work too, not
+# exporter/main.go — now a comma-separated `nexus-agent,
+# nexus-agent-agentic`, since Crawl4AI/OpenSandbox are app-driven work too, not
 # observability-of-observability) and Promtail's own `docker` scrape job
 # (deploy/observability/promtail-config.yml, still single-project — a
 # separate call about log tailing, not this one) — both still correctly

@@ -12,7 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/obs"
+	"github.com/truongpx396/nexus-agent/internal/obs"
 )
 
 // Reports is the read side of the dashboard and the /metrics scrape: the

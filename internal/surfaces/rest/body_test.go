@@ -9,8 +9,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	restkit "github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
-	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest/resttest"
+	restkit "github.com/truongpx396/nexus-agent/internal/surfaces/rest"
+	"github.com/truongpx396/nexus-agent/internal/surfaces/rest/resttest"
 )
 
 // echoModule mounts one route that decodes its body with the kit's helper.

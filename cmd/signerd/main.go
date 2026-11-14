@@ -24,12 +24,12 @@ import (
 
 	"github.com/rs/zerolog/log"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/audit"
-	"github.com/truongpx396/nexus-agent-demo/internal/audit/signerkey"
-	"github.com/truongpx396/nexus-agent-demo/internal/dotenv"
-	"github.com/truongpx396/nexus-agent-demo/internal/obs"
-	"github.com/truongpx396/nexus-agent-demo/internal/obs/profiling"
-	"github.com/truongpx396/nexus-agent-demo/internal/version"
+	"github.com/truongpx396/nexus-agent/internal/audit"
+	"github.com/truongpx396/nexus-agent/internal/audit/signerkey"
+	"github.com/truongpx396/nexus-agent/internal/dotenv"
+	"github.com/truongpx396/nexus-agent/internal/obs"
+	"github.com/truongpx396/nexus-agent/internal/obs/profiling"
+	"github.com/truongpx396/nexus-agent/internal/version"
 )
 
 const (

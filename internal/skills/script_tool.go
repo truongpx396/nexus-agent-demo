@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/tools"
+	"github.com/truongpx396/nexus-agent/internal/tools"
 )
 
 // ScriptTool wraps one bundle's script as an ordinary tools.Tool (README

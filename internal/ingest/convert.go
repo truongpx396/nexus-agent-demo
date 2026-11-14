@@ -11,10 +11,10 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent/internal/crypto"
 )
 
-// Supported MIME types (task 12.1: "PDF/DOCX/HTML/plaintext"). This demo
+// Supported MIME types (task 12.1: "PDF/DOCX/HTML/plaintext"). Nexus Agent
 // dispatches on the caller-declared MIME type rather than sniffing content —
 // the same "trust the declared shape, validate against it" posture
 // internal/tools/builtin's other input-parsing tools already take.

@@ -6,8 +6,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/tools"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/internal/tools"
 )
 
 // claimedPayload/claimResolvedPayload are what EventEffectClaimed/
@@ -77,7 +77,7 @@ func (t *ClaimTracker) Complete(ctx context.Context, tenantID, sessionID, claimI
 	if failed {
 		// A failed CALL does not, by itself, prove the effect never
 		// happened (the tool could have thrown after the external effect
-		// already landed) — but this demo's builtin tools have no
+		// already landed) — but Nexus Agent's builtin tools have no
 		// after-the-fact probe capability, so the honest, fail-closed
 		// choice is to mark it abandoned only when the caller (finishCall)
 		// already knows the call errored BEFORE any output was produced.
@@ -96,7 +96,7 @@ func (t *ClaimTracker) Complete(ctx context.Context, tenantID, sessionID, claimI
 	})
 }
 
-// ResolveClaim is the operator-facing (or, if this demo ever wires one, a
+// ResolveClaim is the operator-facing (or, if Nexus Agent ever wires one, a
 // probe-facing) resolution for a claim a crash left in_flight — task 6.6's
 // own "resolved by a probe or a human," made real. Called via
 // internal/runctl (not internal/tools) because it needs the same seal/

@@ -23,10 +23,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
-	"github.com/truongpx396/nexus-agent-demo/kernel"
+	auditpg "github.com/truongpx396/nexus-agent/internal/audit/postgres"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/internal/store"
+	"github.com/truongpx396/nexus-agent/kernel"
 )
 
 // SuspendFunc durably records the approval a run just suspended on

@@ -106,7 +106,7 @@ type LeaseExtender interface {
 
 // Port is the queue's own abstract interface (mirrors internal/cost.
 // BudgetGate / kernel.ToolExecutor's own decoupling idiom): RedisStreams
-// (redis_streams.go) is the demo's own adapter — NATS JetStream remains
+// (redis_streams.go) is Nexus Agent's own adapter — NATS JetStream remains
 // deferred (README §2's infrastructure collapse) — but every call site
 // depends on this interface, never *RedisStreams directly, so a future
 // adapter is a `main.go` change, not a rewrite. This interface's shape

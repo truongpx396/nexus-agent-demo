@@ -10,10 +10,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
+	auditpg "github.com/truongpx396/nexus-agent/internal/audit/postgres"
+	"github.com/truongpx396/nexus-agent/internal/crypto"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/internal/store"
 )
 
 // ArtifactStore is how erasure reaches the derived artifacts: plaintext files

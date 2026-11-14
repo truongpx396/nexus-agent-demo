@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/permissions"
+	"github.com/truongpx396/nexus-agent/internal/permissions"
 )
 
 func joinReason(existing, addition string) string {

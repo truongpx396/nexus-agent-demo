@@ -8,8 +8,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/runs"
-	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/cron"
+	"github.com/truongpx396/nexus-agent/internal/runs"
+	"github.com/truongpx396/nexus-agent/internal/surfaces/cron"
 )
 
 // fakeSchedules answers Due per tenant and records what the scheduler asks of

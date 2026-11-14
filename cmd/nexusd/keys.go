@@ -7,8 +7,8 @@ import (
 
 	"github.com/rs/zerolog/log"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/authn"
-	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent/internal/authn"
+	"github.com/truongpx396/nexus-agent/internal/crypto"
 )
 
 // defaultKEKPath is a local, gitignored dev key (see .gitignore's

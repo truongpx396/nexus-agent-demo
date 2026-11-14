@@ -7,7 +7,7 @@ auth:bearer {
 }
 
 docs {
-  # nexus-agent-demo REST API
+  # nexus-agent REST API
 
   Every route except the `ops` probes needs `Authorization: Bearer <token>`. The collection sends the `token` environment variable; the principal (tenant and user) comes only from that token's verified claims, never from a header.
 

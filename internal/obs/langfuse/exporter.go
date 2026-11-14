@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/obs"
+	"github.com/truongpx396/nexus-agent/internal/obs"
 
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"

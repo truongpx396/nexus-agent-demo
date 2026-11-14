@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/controlplane"
+	"github.com/truongpx396/nexus-agent/internal/controlplane"
 )
 
 // Client is a controlplane.Port that calls a Handler over HTTP.

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
+	"github.com/truongpx396/nexus-agent/internal/provider"
 )
 
 func drain(t *testing.T, s provider.Stream) ([]provider.Chunk, error) {

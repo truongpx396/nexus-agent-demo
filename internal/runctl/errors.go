@@ -3,7 +3,7 @@ package runctl
 import (
 	"errors"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
 )
 
 // The errors below are the refusals a caller can act on. Each operation wraps

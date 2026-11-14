@@ -15,10 +15,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
-	"github.com/truongpx396/nexus-agent-demo/internal/queue"
-	"github.com/truongpx396/nexus-agent-demo/kernel"
+	"github.com/truongpx396/nexus-agent/internal/oversight"
+	"github.com/truongpx396/nexus-agent/internal/provider"
+	"github.com/truongpx396/nexus-agent/internal/queue"
+	"github.com/truongpx396/nexus-agent/kernel"
 )
 
 // Control bundles every collaborator this package's operations need.

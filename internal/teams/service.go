@@ -5,8 +5,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
-	"github.com/truongpx396/nexus-agent-demo/kernel"
+	"github.com/truongpx396/nexus-agent/internal/provider"
+	"github.com/truongpx396/nexus-agent/kernel"
 )
 
 // TaintFolder is the two operations this package needs from

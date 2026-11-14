@@ -11,8 +11,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/mcp"
-	"github.com/truongpx396/nexus-agent-demo/internal/tools"
+	"github.com/truongpx396/nexus-agent/internal/surfaces/mcp"
+	"github.com/truongpx396/nexus-agent/internal/tools"
 )
 
 // fakeDirectory is a ServerDirectory over a map, so these tests pin the

@@ -1,4 +1,4 @@
-name: nexus-agent-demo
+name: nexus-agent
 
 services:
   postgres:

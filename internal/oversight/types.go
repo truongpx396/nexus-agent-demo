@@ -40,7 +40,7 @@ const DefaultApprovalTTL = 24 * time.Hour
 
 // ContextPackage is the decision-ready rendering an approver sees — never a
 // bare UUID (README §5's Phase 5 demo text, verbatim: "renders recipient/
-// subject/attachment digests ... never a bare UUID"). This demo's builtin
+// subject/attachment digests ... never a bare UUID"). Nexus Agent's builtin
 // tools (platform/file_write, platform/shell, platform/web_fetch, ...) have
 // no per-field redaction metadata of their own, so the generic, honest
 // rendering is the tool's identity, its effect class, and its ORIGINAL

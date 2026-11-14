@@ -1,4 +1,4 @@
-name: nexus-agent-demo-agentic
+name: nexus-agent-agentic
 
 # specs/README.md Phase 16 / docs/agentic-capabilities.md — two opt-in
 # third-party services behind the seams internal/tools/builtin/web_crawl.go

@@ -17,13 +17,13 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
-	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
-	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/mcp"
-	mcppg "github.com/truongpx396/nexus-agent-demo/internal/surfaces/mcp/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/tools"
-	"github.com/truongpx396/nexus-agent-demo/migrations"
+	"github.com/truongpx396/nexus-agent/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent/internal/crypto/postgres"
+	"github.com/truongpx396/nexus-agent/internal/store"
+	"github.com/truongpx396/nexus-agent/internal/surfaces/mcp"
+	mcppg "github.com/truongpx396/nexus-agent/internal/surfaces/mcp/postgres"
+	"github.com/truongpx396/nexus-agent/internal/tools"
+	"github.com/truongpx396/nexus-agent/migrations"
 )
 
 // setupMCPEnv mirrors internal/crypto/keystore_integration_test.go's own

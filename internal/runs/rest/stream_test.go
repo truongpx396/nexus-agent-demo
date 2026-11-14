@@ -11,10 +11,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/runs"
-	restkit "github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
-	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest/resttest"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/internal/runs"
+	restkit "github.com/truongpx396/nexus-agent/internal/surfaces/rest"
+	"github.com/truongpx396/nexus-agent/internal/surfaces/rest/resttest"
 )
 
 // A recorder holds everything until the handler returns, so it cannot show that

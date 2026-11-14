@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
 )
 
 // Inputs implements the input-request lifecycle (README task 5.9):

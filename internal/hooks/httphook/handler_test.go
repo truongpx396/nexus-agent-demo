@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/hooks"
+	"github.com/truongpx396/nexus-agent/internal/hooks"
 )
 
 func TestHandler_SSRFGuardRefusesPrivateAddress(t *testing.T) {

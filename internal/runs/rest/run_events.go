@@ -9,9 +9,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/runs"
-	restkit "github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/internal/runs"
+	restkit "github.com/truongpx396/nexus-agent/internal/surfaces/rest"
 )
 
 // StreamRunEvents is GET /v1/runs/{id}/events. An SSE frame's data is a

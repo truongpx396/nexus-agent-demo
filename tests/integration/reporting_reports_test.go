@@ -9,11 +9,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/cost"
-	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	reportingpg "github.com/truongpx396/nexus-agent-demo/internal/reporting/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
+	"github.com/truongpx396/nexus-agent/internal/cost"
+	costpg "github.com/truongpx396/nexus-agent/internal/cost/postgres"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	reportingpg "github.com/truongpx396/nexus-agent/internal/reporting/postgres"
+	"github.com/truongpx396/nexus-agent/internal/store"
 )
 
 // TestReports_ToolCallCountsAndModelSpend pins the two /metrics breakdowns that

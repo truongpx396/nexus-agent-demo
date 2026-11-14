@@ -15,8 +15,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
-	restkit "github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
+	"github.com/truongpx396/nexus-agent/internal/runctl"
+	restkit "github.com/truongpx396/nexus-agent/internal/surfaces/rest"
 )
 
 // Controller is the part of runctl.Control the endpoints drive.

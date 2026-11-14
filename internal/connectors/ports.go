@@ -7,7 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent/internal/crypto"
 )
 
 // Token is an OAuth token pair as the vault handles it: the bearer value, the

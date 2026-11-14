@@ -1,6 +1,6 @@
 package kernel
 
-import "github.com/truongpx396/nexus-agent-demo/internal/provider"
+import "github.com/truongpx396/nexus-agent/internal/provider"
 
 // settleToolResult records a result as the model-facing answer to toolUseID.
 //

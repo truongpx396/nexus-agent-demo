@@ -5,8 +5,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
-	"github.com/truongpx396/nexus-agent-demo/internal/runs"
+	"github.com/truongpx396/nexus-agent/internal/crypto"
+	"github.com/truongpx396/nexus-agent/internal/runs"
 )
 
 func newDEK(t *testing.T) crypto.DEK {

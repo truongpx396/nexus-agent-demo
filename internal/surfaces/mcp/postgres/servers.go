@@ -11,10 +11,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
-	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
-	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/mcp"
+	"github.com/truongpx396/nexus-agent/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent/internal/crypto/postgres"
+	"github.com/truongpx396/nexus-agent/internal/store"
+	"github.com/truongpx396/nexus-agent/internal/surfaces/mcp"
 )
 
 // Directory implements mcp.ServerDirectory over mcp_servers.

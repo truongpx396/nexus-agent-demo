@@ -5,7 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	restkit "github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
+	restkit "github.com/truongpx396/nexus-agent/internal/surfaces/rest"
 )
 
 // listSessionsLimit bounds GET /v1/sessions -- a sidebar has no reason to

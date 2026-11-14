@@ -9,8 +9,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/skills"
-	"github.com/truongpx396/nexus-agent-demo/internal/tools"
+	"github.com/truongpx396/nexus-agent/internal/skills"
+	"github.com/truongpx396/nexus-agent/internal/tools"
 )
 
 var activateSkillRef = tools.ToolRef{Namespace: "platform", Name: "activate_skill", Version: "v1"}

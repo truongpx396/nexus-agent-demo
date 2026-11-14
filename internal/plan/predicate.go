@@ -75,7 +75,7 @@ const (
 )
 
 // Predicate is the closed JSON AST (README task 8.2). Field is a dot-free
-// key into a Context map (this demo's step outputs are flat; a dotted path
+// key into a Context map (Nexus Agent's step outputs are flat; a dotted path
 // is future work, not a Phase 8 requirement) — used by eq/ne/lt/gt/in.
 // And/Or hold nested Predicates; every other field is ignored for those two
 // ops. maxPredicateDepth (validate.go) bounds how deep Args may nest.

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
+	"github.com/truongpx396/nexus-agent/internal/provider"
 )
 
 func use(id string) provider.Message {

@@ -13,10 +13,10 @@
 package integration
 
 import (
-	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
-	delegatepg "github.com/truongpx396/nexus-agent-demo/internal/delegate/postgres"
-	runctlpg "github.com/truongpx396/nexus-agent-demo/internal/runctl/postgres"
-	teamspg "github.com/truongpx396/nexus-agent-demo/internal/teams/postgres"
+	costpg "github.com/truongpx396/nexus-agent/internal/cost/postgres"
+	delegatepg "github.com/truongpx396/nexus-agent/internal/delegate/postgres"
+	runctlpg "github.com/truongpx396/nexus-agent/internal/runctl/postgres"
+	teamspg "github.com/truongpx396/nexus-agent/internal/teams/postgres"
 
 	"context"
 	"strings"
@@ -27,17 +27,17 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/cost"
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
-	oversightpg "github.com/truongpx396/nexus-agent-demo/internal/oversight/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
-	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
-	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
-	"github.com/truongpx396/nexus-agent-demo/internal/teams"
-	"github.com/truongpx396/nexus-agent-demo/kernel"
+	"github.com/truongpx396/nexus-agent/internal/cost"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/internal/eventlog/postgres"
+	"github.com/truongpx396/nexus-agent/internal/oversight"
+	oversightpg "github.com/truongpx396/nexus-agent/internal/oversight/postgres"
+	"github.com/truongpx396/nexus-agent/internal/provider"
+	"github.com/truongpx396/nexus-agent/internal/provider/fake"
+	"github.com/truongpx396/nexus-agent/internal/runctl"
+	"github.com/truongpx396/nexus-agent/internal/store"
+	"github.com/truongpx396/nexus-agent/internal/teams"
+	"github.com/truongpx396/nexus-agent/kernel"
 )
 
 // buildTeamsRig wires a real *teams.Service against the shared oversightRig

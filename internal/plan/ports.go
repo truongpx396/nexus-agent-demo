@@ -5,12 +5,12 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/cost"
-	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
-	"github.com/truongpx396/nexus-agent-demo/internal/delegate"
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
-	"github.com/truongpx396/nexus-agent-demo/kernel"
+	"github.com/truongpx396/nexus-agent/internal/cost"
+	"github.com/truongpx396/nexus-agent/internal/crypto"
+	"github.com/truongpx396/nexus-agent/internal/delegate"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/internal/oversight"
+	"github.com/truongpx396/nexus-agent/kernel"
 )
 
 // Tx is one open unit of work in a single tenant's scope: the orchestration

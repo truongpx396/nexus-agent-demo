@@ -3,7 +3,7 @@ package postgres
 import (
 	"testing"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/teams"
+	"github.com/truongpx396/nexus-agent/internal/teams"
 )
 
 // TestMarshalUnmarshalRoster and TestMarshalUnmarshalTaint are README task

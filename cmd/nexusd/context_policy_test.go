@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/promptctx"
+	"github.com/truongpx396/nexus-agent/internal/promptctx"
 )
 
 func TestContextPolicy_IsOffUntilAskedFor(t *testing.T) {

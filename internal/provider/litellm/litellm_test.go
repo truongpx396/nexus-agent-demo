@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
+	"github.com/truongpx396/nexus-agent/internal/provider"
 )
 
 // canned is a realistic Chat Completions streaming body: a content delta

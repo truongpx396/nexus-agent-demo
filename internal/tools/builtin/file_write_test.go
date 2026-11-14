@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/tools"
+	"github.com/truongpx396/nexus-agent/internal/tools"
 )
 
 func TestFileWrite_WritesFileCreatingParentDirs(t *testing.T) {

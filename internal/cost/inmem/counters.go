@@ -6,7 +6,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/cost"
+	"github.com/truongpx396/nexus-agent/internal/cost"
 )
 
 // Counters is a cost.Counters under one mutex, which gives each operation the

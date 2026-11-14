@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/tenancy"
+	"github.com/truongpx396/nexus-agent/internal/tenancy"
 )
 
 // Directory implements tenancy.Directory over the tenants table.

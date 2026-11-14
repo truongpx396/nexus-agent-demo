@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
-	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
+	"github.com/truongpx396/nexus-agent/internal/provider"
+	"github.com/truongpx396/nexus-agent/internal/provider/fake"
 )
 
 // RunProviderScriptCases grades every case as a deterministic code check —

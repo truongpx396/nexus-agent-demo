@@ -19,8 +19,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/config"
-	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent/internal/config"
+	"github.com/truongpx396/nexus-agent/internal/crypto"
 )
 
 // Vault is the per-user OAuth token vault: Connections (migrations/

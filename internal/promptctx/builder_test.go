@@ -6,7 +6,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
+	"github.com/truongpx396/nexus-agent/internal/provider"
 )
 
 // TestPrefixBytesEquality is README task 2.7's "prefix byte-equality test

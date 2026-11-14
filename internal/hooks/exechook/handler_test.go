@@ -5,7 +5,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/hooks"
+	"github.com/truongpx396/nexus-agent/internal/hooks"
 )
 
 func TestHandler_RunsScriptAndParsesResponse(t *testing.T) {

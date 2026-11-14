@@ -1,8 +1,8 @@
 package runstate
 
 import (
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/kernel"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/kernel"
 )
 
 // ConfigFor is the configuration a resumed run takes from its session: base (the

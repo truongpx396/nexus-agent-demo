@@ -23,7 +23,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
+	"github.com/truongpx396/nexus-agent/internal/provider"
 )
 
 // defaultBaseURL matches deploy/docker-compose.yml's litellm service, which
@@ -34,8 +34,8 @@ const defaultBaseURL = "http://localhost:4100"
 // Provider implements provider.Provider against POST /v1/chat/completions
 // with stream: true. One Provider value is bound to one model — exactly
 // anthropic.Provider's own shape, and for the same reason: model selection
-// across calls is internal/provider/router.go's job in principle, but this
-// demo's Kernel only ever holds one process-wide Provider (kernel/loop.go
+// across calls is internal/provider/router.go's job in principle, but
+// Nexus Agent's Kernel only ever holds one process-wide Provider (kernel/loop.go
 // never threads a per-call model id through provider.RunContext), so a
 // bound model is what every adapter here provides.
 type Provider struct {

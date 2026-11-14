@@ -14,7 +14,7 @@ import (
 	"golang.org/x/tools/go/packages"
 )
 
-const modulePrefix = "github.com/truongpx396/nexus-agent-demo/"
+const modulePrefix = "github.com/truongpx396/nexus-agent/"
 
 // boundaryRule declares that pkg must never import — directly or
 // transitively — any path under forbidden. A forbidden entry P forbids P

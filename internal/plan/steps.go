@@ -8,12 +8,12 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/cost"
-	"github.com/truongpx396/nexus-agent-demo/internal/delegate"
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
-	"github.com/truongpx396/nexus-agent-demo/internal/runstate"
-	"github.com/truongpx396/nexus-agent-demo/kernel"
+	"github.com/truongpx396/nexus-agent/internal/cost"
+	"github.com/truongpx396/nexus-agent/internal/delegate"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/internal/oversight"
+	"github.com/truongpx396/nexus-agent/internal/runstate"
+	"github.com/truongpx396/nexus-agent/kernel"
 )
 
 // runAgentStep appends a fresh user message (mirroring Kernel.Run's own

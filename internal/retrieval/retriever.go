@@ -7,11 +7,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/cost"
-	"github.com/truongpx396/nexus-agent-demo/internal/ingest"
-	"github.com/truongpx396/nexus-agent-demo/internal/memory"
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
-	"github.com/truongpx396/nexus-agent-demo/internal/tools"
+	"github.com/truongpx396/nexus-agent/internal/cost"
+	"github.com/truongpx396/nexus-agent/internal/ingest"
+	"github.com/truongpx396/nexus-agent/internal/memory"
+	"github.com/truongpx396/nexus-agent/internal/provider"
+	"github.com/truongpx396/nexus-agent/internal/tools"
 )
 
 // EmbeddingBudget is the narrow slice of *internal/cost.Gate this package
@@ -43,7 +43,7 @@ type Retriever struct {
 	// (cost.ReserveRequest.ModelID) — a label for the price book to key off
 	// (internal/cost/pricebook.go's own per-subject override feature), not
 	// a live credential or endpoint selector; internal/provider/fake is the
-	// only Embedder this demo ships, so in practice this is just a display
+	// only Embedder Nexus Agent ships, so in practice this is just a display
 	// name like "fake-embedder-v1".
 	ModelID string
 	TopK    int // default result count for Search; <=0 falls back to Search's own default of 5

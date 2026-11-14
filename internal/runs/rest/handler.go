@@ -20,11 +20,11 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/obs"
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
-	"github.com/truongpx396/nexus-agent-demo/internal/runs"
-	"github.com/truongpx396/nexus-agent-demo/internal/surfaces"
-	restkit "github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
+	"github.com/truongpx396/nexus-agent/internal/obs"
+	"github.com/truongpx396/nexus-agent/internal/provider"
+	"github.com/truongpx396/nexus-agent/internal/runs"
+	"github.com/truongpx396/nexus-agent/internal/surfaces"
+	restkit "github.com/truongpx396/nexus-agent/internal/surfaces/rest"
 )
 
 // Handler holds everything the run endpoints need to admit, serve and stream

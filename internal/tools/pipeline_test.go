@@ -11,9 +11,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/hooks"
-	"github.com/truongpx396/nexus-agent-demo/internal/permissions"
-	"github.com/truongpx396/nexus-agent-demo/internal/permissions/safety"
+	"github.com/truongpx396/nexus-agent/internal/hooks"
+	"github.com/truongpx396/nexus-agent/internal/permissions"
+	"github.com/truongpx396/nexus-agent/internal/permissions/safety"
 )
 
 // fakeTool is a fully scriptable Tool for pipeline tests — no builtin tool

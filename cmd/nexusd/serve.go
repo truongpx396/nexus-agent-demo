@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/version"
+	"github.com/truongpx396/nexus-agent/internal/version"
 )
 
 // runServe is the default command: print the build, then serve until ctx is

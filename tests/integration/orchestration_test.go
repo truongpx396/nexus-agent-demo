@@ -21,10 +21,10 @@ import (
 	"testing"
 	"time"
 
-	planpg "github.com/truongpx396/nexus-agent-demo/internal/plan/postgres"
+	planpg "github.com/truongpx396/nexus-agent/internal/plan/postgres"
 
-	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
-	delegatepg "github.com/truongpx396/nexus-agent-demo/internal/delegate/postgres"
+	costpg "github.com/truongpx396/nexus-agent/internal/cost/postgres"
+	delegatepg "github.com/truongpx396/nexus-agent/internal/delegate/postgres"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -32,19 +32,19 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/delegate"
-	delegatetool "github.com/truongpx396/nexus-agent-demo/internal/delegate/tool"
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/obs"
-	"github.com/truongpx396/nexus-agent-demo/internal/permissions"
-	"github.com/truongpx396/nexus-agent-demo/internal/plan"
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
-	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
-	"github.com/truongpx396/nexus-agent-demo/internal/tools"
-	"github.com/truongpx396/nexus-agent-demo/internal/tools/kerneladapter"
-	"github.com/truongpx396/nexus-agent-demo/kernel"
+	"github.com/truongpx396/nexus-agent/internal/delegate"
+	delegatetool "github.com/truongpx396/nexus-agent/internal/delegate/tool"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/internal/eventlog/postgres"
+	"github.com/truongpx396/nexus-agent/internal/obs"
+	"github.com/truongpx396/nexus-agent/internal/permissions"
+	"github.com/truongpx396/nexus-agent/internal/plan"
+	"github.com/truongpx396/nexus-agent/internal/provider"
+	"github.com/truongpx396/nexus-agent/internal/provider/fake"
+	"github.com/truongpx396/nexus-agent/internal/store"
+	"github.com/truongpx396/nexus-agent/internal/tools"
+	"github.com/truongpx396/nexus-agent/internal/tools/kerneladapter"
+	"github.com/truongpx396/nexus-agent/kernel"
 )
 
 // countingProvider wraps a real Provider and counts Stream calls — the

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"maps"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
 )
 
 type planStartedPayload struct {

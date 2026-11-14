@@ -5,8 +5,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/teams"
-	"github.com/truongpx396/nexus-agent-demo/internal/tools"
+	"github.com/truongpx396/nexus-agent/internal/teams"
+	"github.com/truongpx396/nexus-agent/internal/tools"
 )
 
 // Tools returns the four board tools over svc, in registration order.

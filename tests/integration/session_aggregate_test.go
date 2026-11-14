@@ -18,12 +18,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/delegate"
-	delegatepg "github.com/truongpx396/nexus-agent-demo/internal/delegate/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
-	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
+	"github.com/truongpx396/nexus-agent/internal/delegate"
+	delegatepg "github.com/truongpx396/nexus-agent/internal/delegate/postgres"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/internal/provider/fake"
+	"github.com/truongpx396/nexus-agent/internal/runctl"
+	"github.com/truongpx396/nexus-agent/internal/store"
 )
 
 // TestSpawn_RecordsLineageAndKeepsSpawnedSessionsOutOfTheList is the whole path

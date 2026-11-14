@@ -4,8 +4,8 @@ import (
 	"context"
 	"slices"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/internal/provider"
 )
 
 // Pinned is the part of a run's configuration that is not the same for every

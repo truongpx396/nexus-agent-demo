@@ -15,10 +15,10 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/oauth2"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/config"
-	"github.com/truongpx396/nexus-agent-demo/internal/connectors"
-	connoauth "github.com/truongpx396/nexus-agent-demo/internal/connectors/oauth2"
-	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
+	"github.com/truongpx396/nexus-agent/internal/config"
+	"github.com/truongpx396/nexus-agent/internal/connectors"
+	connoauth "github.com/truongpx396/nexus-agent/internal/connectors/oauth2"
+	"github.com/truongpx396/nexus-agent/internal/crypto"
 )
 
 // fakeConfig admits the providers it is given, for every tenant.

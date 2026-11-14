@@ -2,7 +2,7 @@ package ingest
 
 import "strings"
 
-// defaultChunkChars and defaultChunkOverlap are this demo's fixed chunking
+// defaultChunkChars and defaultChunkOverlap are Nexus Agent's fixed chunking
 // policy — task 12.1's "declared, stable chunk boundaries" only means
 // something if the same document always splits the same way, so these are
 // constants, not a caller-tunable knob that would make chunk_index

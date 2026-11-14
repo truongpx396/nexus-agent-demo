@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
 )
 
 // tableOwners says which feature owns each table: the one package tree whose SQL

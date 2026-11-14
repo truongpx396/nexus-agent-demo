@@ -1,4 +1,4 @@
-// Package anthropic is the one real hosted-model adapter this demo ships
+// Package anthropic is the one real hosted-model adapter Nexus Agent ships
 // (README task 2.8) against internal/provider.Provider — plain net/http and
 // SSE parsing, no vendor SDK, because "all provider access MUST go through
 // one internal abstraction" (constitution Principle VII) means the wire
@@ -12,7 +12,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
+	"github.com/truongpx396/nexus-agent/internal/provider"
 )
 
 const (

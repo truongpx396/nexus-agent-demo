@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/permissions/safety"
+	"github.com/truongpx396/nexus-agent/internal/permissions/safety"
 )
 
 // countingModel proxies to an underlying verdict while counting how many

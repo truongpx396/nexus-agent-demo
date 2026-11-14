@@ -5,9 +5,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/inmem"
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/logtest"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/internal/eventlog/inmem"
+	"github.com/truongpx396/nexus-agent/internal/eventlog/logtest"
 )
 
 func TestLog_SatisfiesTheEventLogContract(t *testing.T) {

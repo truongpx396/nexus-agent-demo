@@ -12,13 +12,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/audit"
-	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
-	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
-	retrievalpg "github.com/truongpx396/nexus-agent-demo/internal/retrieval/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
-	toolspg "github.com/truongpx396/nexus-agent-demo/internal/tools/postgres"
+	"github.com/truongpx396/nexus-agent/internal/audit"
+	auditpg "github.com/truongpx396/nexus-agent/internal/audit/postgres"
+	"github.com/truongpx396/nexus-agent/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent/internal/crypto/postgres"
+	retrievalpg "github.com/truongpx396/nexus-agent/internal/retrieval/postgres"
+	"github.com/truongpx396/nexus-agent/internal/store"
+	toolspg "github.com/truongpx396/nexus-agent/internal/tools/postgres"
 )
 
 // runErase is `nexusd erase --tenant=name` (or --session=<uuid>): the
@@ -56,7 +56,7 @@ func runErase(ctx context.Context, args []string) error {
 	eraser := cryptopg.Eraser{Chain: chain, Artifacts: toolspg.DerivedArtifacts{}}
 
 	if *tenantName != "" {
-		tenantID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("nexus-agent-demo/tenant/"+*tenantName))
+		tenantID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("nexus-agent/tenant/"+*tenantName))
 		var result crypto.ErasureResult
 		var deletedChunks, deletedDocs int
 		err := st.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {

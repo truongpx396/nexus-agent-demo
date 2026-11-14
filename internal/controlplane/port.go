@@ -4,7 +4,7 @@
 // "interface + v1 shapes + import-boundary test" — didn't exist). Port is
 // what a genuinely separate control-plane process would expose over RPC
 // later; LocalPort (local.go) is the one implementation this single-binary
-// demo needs today, composing the real internal/{cost,audit,oversight,obs}
+// build needs today, composing the real internal/{cost,audit,oversight,obs}
 // services directly. "One process today, two later" means splitting is a
 // matter of replacing LocalPort with an RPC client behind this same
 // interface — not a kernel change, and not a v1 shape change.

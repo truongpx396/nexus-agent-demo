@@ -7,10 +7,10 @@ import (
 
 	"github.com/rs/zerolog/log"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/cost"
-	"github.com/truongpx396/nexus-agent-demo/internal/obs"
-	"github.com/truongpx396/nexus-agent-demo/internal/promptctx"
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
+	"github.com/truongpx396/nexus-agent/internal/cost"
+	"github.com/truongpx396/nexus-agent/internal/obs"
+	"github.com/truongpx396/nexus-agent/internal/promptctx"
+	"github.com/truongpx396/nexus-agent/internal/provider"
 )
 
 // reconcile calls BudgetGate.Reconcile and logs (never terminates the run

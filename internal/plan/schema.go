@@ -12,7 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/cost"
+	"github.com/truongpx396/nexus-agent/internal/cost"
 )
 
 // StepKind is the closed set of step shapes a Plan may contain (README task

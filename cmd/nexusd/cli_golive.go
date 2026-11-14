@@ -12,15 +12,15 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/truongpx396/nexus-agent-demo/evals"
-	"github.com/truongpx396/nexus-agent-demo/internal/audit"
-	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/cost"
-	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
-	"github.com/truongpx396/nexus-agent-demo/internal/reporting"
-	reportingpg "github.com/truongpx396/nexus-agent-demo/internal/reporting/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
+	"github.com/truongpx396/nexus-agent/evals"
+	"github.com/truongpx396/nexus-agent/internal/audit"
+	auditpg "github.com/truongpx396/nexus-agent/internal/audit/postgres"
+	"github.com/truongpx396/nexus-agent/internal/cost"
+	costpg "github.com/truongpx396/nexus-agent/internal/cost/postgres"
+	"github.com/truongpx396/nexus-agent/internal/crypto"
+	"github.com/truongpx396/nexus-agent/internal/reporting"
+	reportingpg "github.com/truongpx396/nexus-agent/internal/reporting/postgres"
+	"github.com/truongpx396/nexus-agent/internal/store"
 )
 
 // runGoLive is `nexusd go-live`: docs/go-live.md's checklist, scripted

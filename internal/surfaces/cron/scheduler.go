@@ -12,9 +12,9 @@ import (
 	robfigcron "github.com/robfig/cron/v3"
 	"github.com/rs/zerolog/log"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/harness"
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
-	"github.com/truongpx396/nexus-agent-demo/internal/runs"
+	"github.com/truongpx396/nexus-agent/internal/harness"
+	"github.com/truongpx396/nexus-agent/internal/provider"
+	"github.com/truongpx396/nexus-agent/internal/runs"
 )
 
 // TenantLister lists every tenant this deployment knows about — backed by

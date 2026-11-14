@@ -6,7 +6,7 @@ import (
 	"encoding/binary"
 	"math"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
+	"github.com/truongpx396/nexus-agent/internal/provider"
 )
 
 // EmbeddingDimensions is this fake's fixed output width — see
@@ -17,7 +17,7 @@ import (
 const EmbeddingDimensions = 32
 
 // approxCharsPerToken mirrors internal/tools/budget.go's own documented
-// estimate (that file's doc comment: "this demo has no tokenizer of its
+// estimate (that file's doc comment: "Nexus Agent has no tokenizer of its
 // own") — duplicated rather than imported for the same reason
 // internal/tools/builtin/web_fetch.go duplicates its SSRF CIDR list: one
 // small constant isn't worth a cross-package dependency.

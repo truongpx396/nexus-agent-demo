@@ -1,6 +1,6 @@
 package main
 
-import "github.com/truongpx396/nexus-agent-demo/internal/promptctx"
+import "github.com/truongpx396/nexus-agent/internal/promptctx"
 
 // contextPolicy is how the kernel keeps a long conversation inside the model's
 // context. Both controls exist in the kernel and used to be unreachable from the

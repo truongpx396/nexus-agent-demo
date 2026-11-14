@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
+	"github.com/truongpx396/nexus-agent/internal/runctl"
 )
 
 // openOrFindClaim is the write-ahead half of task 6.6: it durably records a

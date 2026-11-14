@@ -201,7 +201,7 @@ type EmbedUsage struct {
 // metered through internal/cost.Gate exactly like Provider.Stream
 // (tests/contract's AST check, extended from task 4.8's original to cover
 // this call site too); internal/provider/fake ships the only implementation
-// this demo needs (task 12.5 — "no correctness test calls a live embedding
+// Nexus Agent needs (task 12.5 — "no correctness test calls a live embedding
 // model").
 type Embedder interface {
 	Embed(ctx context.Context, texts []string, rc RunContext) ([]Embedding, EmbedUsage, error)

@@ -12,7 +12,7 @@ import (
 
 	xoauth2 "golang.org/x/oauth2"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/connectors"
+	"github.com/truongpx396/nexus-agent/internal/connectors"
 )
 
 // Provider is one OAuth2 authorization-code provider this DEPLOYMENT

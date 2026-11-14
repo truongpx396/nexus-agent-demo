@@ -8,7 +8,7 @@ import (
 	"io/fs"
 	"path/filepath"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/tools"
+	"github.com/truongpx396/nexus-agent/internal/tools"
 )
 
 // FileSearch finds files in the session workspace whose path matches a

@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
+	"github.com/truongpx396/nexus-agent/internal/provider"
 )
 
 type sseUsage struct {

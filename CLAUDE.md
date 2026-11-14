@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-A single-binary Go reimplementation of `truongpx396/nexus-agent` (a multi-tenant, production-grade AI agent platform) that keeps every architectural seam and control but collapses deployment topology. Go 1.26, Postgres + PgBouncer + Redis, React web app in `web/`.
+Nexus Agent: a multi-tenant, production-grade AI agent platform in Go, implementing the design in `truongpx396/nexus-agent-spec`. It keeps every architectural seam and control the spec names and today ships one deployment topology, a single binary (`nexusd`). Go 1.26, Postgres + PgBouncer + Redis, React web app in `web/`.
 
 ## Commands
 
@@ -32,7 +32,7 @@ API contract: `api/openapi.yaml` (OpenAPI 3.0.3) describes every REST route and 
 
 API client: `bruno/` is a [Bruno](https://www.usebruno.com) collection of every REST route plus the probes (`bruno/README.md` has the setup and the `npx @usebruno/cli … --tags smoke` command). Nothing checks it against the code, so when you add, rename or change a route's request or response, update its `.bru` file in the same change.
 
-**Trap:** a stray Docker container (`nexus-agent-demo-nexusd-1`) can publish :8085 and silently shadow the native `nexusd` — symptoms look like real regressions (404 on a new route, 401 on a fresh token). Check `docker ps` before assuming a code change broke something. A stack reset: `docker compose -f deploy/docker-compose.yml down -v`, regenerate `.dev/*.key`, `make up && make migrate && make seed`.
+**Trap:** a stray Docker container (`nexus-agent-nexusd-1`, or `nexus-agent-demo-nexusd-1` left over from before the rename) can publish :8085 and silently shadow the native `nexusd` — symptoms look like real regressions (404 on a new route, 401 on a fresh token). Check `docker ps` before assuming a code change broke something. A stack reset: `docker compose -f deploy/docker-compose.yml down -v`, regenerate `.dev/*.key`, `make up && make migrate && make seed`.
 
 ## Governing documents
 

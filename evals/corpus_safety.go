@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/permissions"
-	"github.com/truongpx396/nexus-agent-demo/internal/permissions/safety"
-	"github.com/truongpx396/nexus-agent-demo/internal/skills"
-	"github.com/truongpx396/nexus-agent-demo/internal/tools"
+	"github.com/truongpx396/nexus-agent/internal/permissions"
+	"github.com/truongpx396/nexus-agent/internal/permissions/safety"
+	"github.com/truongpx396/nexus-agent/internal/skills"
+	"github.com/truongpx396/nexus-agent/internal/tools"
 )
 
 // AdversarialPermissionCorpus is the mandatory HITL adversarial suite

@@ -11,11 +11,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/logtest"
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
+	auditpg "github.com/truongpx396/nexus-agent/internal/audit/postgres"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/internal/eventlog/logtest"
+	"github.com/truongpx396/nexus-agent/internal/eventlog/postgres"
+	"github.com/truongpx396/nexus-agent/internal/store"
 )
 
 // failAfterSigner signs n digests and then fails, standing in for a signerd that

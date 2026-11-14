@@ -21,16 +21,16 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 	"golang.org/x/oauth2"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/config"
-	configpg "github.com/truongpx396/nexus-agent-demo/internal/config/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/connectors"
-	connoauth "github.com/truongpx396/nexus-agent-demo/internal/connectors/oauth2"
-	connectorspg "github.com/truongpx396/nexus-agent-demo/internal/connectors/postgres"
-	connectorsredis "github.com/truongpx396/nexus-agent-demo/internal/connectors/redis"
-	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
-	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
-	"github.com/truongpx396/nexus-agent-demo/migrations"
+	"github.com/truongpx396/nexus-agent/internal/config"
+	configpg "github.com/truongpx396/nexus-agent/internal/config/postgres"
+	"github.com/truongpx396/nexus-agent/internal/connectors"
+	connoauth "github.com/truongpx396/nexus-agent/internal/connectors/oauth2"
+	connectorspg "github.com/truongpx396/nexus-agent/internal/connectors/postgres"
+	connectorsredis "github.com/truongpx396/nexus-agent/internal/connectors/redis"
+	"github.com/truongpx396/nexus-agent/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent/internal/crypto/postgres"
+	"github.com/truongpx396/nexus-agent/internal/store"
+	"github.com/truongpx396/nexus-agent/migrations"
 )
 
 // setupConnectorsEnv mirrors tests/integration/cost_ceiling_test.go's own

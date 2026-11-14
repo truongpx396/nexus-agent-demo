@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/hooks"
-	"github.com/truongpx396/nexus-agent-demo/internal/permissions"
+	"github.com/truongpx396/nexus-agent/internal/hooks"
+	"github.com/truongpx396/nexus-agent/internal/permissions"
 )
 
 // Execute runs the 16-step pipeline (README task 3.4) for one invocation:

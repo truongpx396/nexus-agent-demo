@@ -20,12 +20,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/cost"
-	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/delegate"
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/sealed"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
+	auditpg "github.com/truongpx396/nexus-agent/internal/audit/postgres"
+	"github.com/truongpx396/nexus-agent/internal/cost"
+	cryptopg "github.com/truongpx396/nexus-agent/internal/crypto/postgres"
+	"github.com/truongpx396/nexus-agent/internal/delegate"
+	"github.com/truongpx396/nexus-agent/internal/eventlog/sealed"
+	"github.com/truongpx396/nexus-agent/internal/store"
 )
 
 // Store implements delegate.Store over Postgres.

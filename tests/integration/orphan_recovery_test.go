@@ -8,10 +8,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	runctlpg "github.com/truongpx396/nexus-agent-demo/internal/runctl/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
-	"github.com/truongpx396/nexus-agent-demo/migrations"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	runctlpg "github.com/truongpx396/nexus-agent/internal/runctl/postgres"
+	"github.com/truongpx396/nexus-agent/internal/store"
+	"github.com/truongpx396/nexus-agent/migrations"
 )
 
 // An orphan sweep that runs on a timer must not keep re-enqueueing a session whose

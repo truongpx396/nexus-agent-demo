@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/audit"
+	"github.com/truongpx396/nexus-agent/internal/audit"
 )
 
 // Verify replays every receipt and anchor for tenantID, recomputing each

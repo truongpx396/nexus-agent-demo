@@ -4,7 +4,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/tools"
+	"github.com/truongpx396/nexus-agent/internal/tools"
 )
 
 // Status is memory's own three-valued screening verdict — no "pending" state

@@ -9,7 +9,7 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/tools"
+	"github.com/truongpx396/nexus-agent/internal/tools"
 )
 
 // Shell runs a command in the session workspace — inside Docker, with

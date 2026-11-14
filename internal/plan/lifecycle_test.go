@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/plan"
+	"github.com/truongpx396/nexus-agent/internal/plan"
 )
 
 var tenant = uuid.New()

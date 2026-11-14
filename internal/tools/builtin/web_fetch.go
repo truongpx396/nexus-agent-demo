@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/tools"
+	"github.com/truongpx396/nexus-agent/internal/tools"
 )
 
 const webFetchMaxBodyBytes = 1 << 20 // 1 MiB

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/permissions"
+	"github.com/truongpx396/nexus-agent/internal/permissions"
 )
 
 // PermissionScenarioCase is a mandatory HITL adversarial case (README task

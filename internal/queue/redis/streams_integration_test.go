@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/queue"
+	"github.com/truongpx396/nexus-agent/internal/queue"
 
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/queue"
+	"github.com/truongpx396/nexus-agent/internal/queue"
 
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
@@ -40,7 +40,7 @@ const (
 )
 
 // Streams implements Port against a Redis Stream + consumer group —
-// the demo's Redis-backed successor to the retired Postgres SKIP LOCKED
+// Nexus Agent's Redis-backed successor to the retired Postgres SKIP LOCKED
 // adapter (NATS JetStream remains the deferred, real-production option
 // this package's own doc comment names). XAutoClaim's reclaim of an
 // abandoned consumer-group entry is the direct analogue of SKIP LOCKED's

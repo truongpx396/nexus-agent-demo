@@ -1,6 +1,6 @@
 package promptctx
 
-import "github.com/truongpx396/nexus-agent-demo/internal/provider"
+import "github.com/truongpx396/nexus-agent/internal/provider"
 
 // bytesPerEstimatedToken is how many bytes of prompt EstimateTokens counts as one
 // token. English text averages about four bytes a token and code or JSON fewer, so

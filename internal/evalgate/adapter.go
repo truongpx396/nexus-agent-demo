@@ -12,8 +12,8 @@ package evalgate
 import (
 	"context"
 
-	"github.com/truongpx396/nexus-agent-demo/evals"
-	"github.com/truongpx396/nexus-agent-demo/internal/plan"
+	"github.com/truongpx396/nexus-agent/evals"
+	"github.com/truongpx396/nexus-agent/internal/plan"
 )
 
 // PlanGate returns a plan.EvalGate closure bound to g and in (README task

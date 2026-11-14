@@ -7,7 +7,7 @@ import (
 
 	"github.com/rs/zerolog/log"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/queue"
+	"github.com/truongpx396/nexus-agent/internal/queue"
 )
 
 // writeQueueGauges adds the job queue's depth to /metrics: how many jobs wait, are

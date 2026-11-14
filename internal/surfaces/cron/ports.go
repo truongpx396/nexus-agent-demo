@@ -6,7 +6,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/runs"
+	"github.com/truongpx396/nexus-agent/internal/runs"
 )
 
 // Schedule is one cron_schedules row the scheduler acts on.

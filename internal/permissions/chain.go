@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/permissions/safety"
+	"github.com/truongpx396/nexus-agent/internal/permissions/safety"
 )
 
 // ApprovalPolicy is layer 8: a per-effect-class tenant policy that can

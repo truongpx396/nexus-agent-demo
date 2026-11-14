@@ -5,9 +5,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	oversightrest "github.com/truongpx396/nexus-agent-demo/internal/oversight/rest"
-	runsrest "github.com/truongpx396/nexus-agent-demo/internal/runs/rest"
-	restkit "github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
+	oversightrest "github.com/truongpx396/nexus-agent/internal/oversight/rest"
+	runsrest "github.com/truongpx396/nexus-agent/internal/runs/rest"
+	restkit "github.com/truongpx396/nexus-agent/internal/surfaces/rest"
 )
 
 // These are the REST surface's conformance tests (README task 7.12:

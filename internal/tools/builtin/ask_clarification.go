@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/tools"
+	"github.com/truongpx396/nexus-agent/internal/tools"
 )
 
 var askClarificationRef = tools.ToolRef{Namespace: "platform", Name: "ask_clarification", Version: "v1"}

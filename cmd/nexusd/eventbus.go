@@ -9,10 +9,10 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
-	"github.com/truongpx396/nexus-agent-demo/internal/runs"
-	runsrest "github.com/truongpx396/nexus-agent-demo/internal/runs/rest"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/internal/runctl"
+	"github.com/truongpx396/nexus-agent/internal/runs"
+	runsrest "github.com/truongpx396/nexus-agent/internal/runs/rest"
 )
 
 // redisEventBus adapts *redis.Client to runsrest.EventBus — a single Publish
@@ -30,7 +30,7 @@ func (b redisEventBus) Publish(ctx context.Context, channel string, payload []by
 // a per-session dynamic subscribe/unsubscribe mirroring rest's own
 // broker.subscribe/unsubscribe lifecycle: that would be the more
 // scale-correct design (bounded to real local demand) but needs
-// reference-counting bookkeeping this repo's actual scale (a demo, dozens
+// reference-counting bookkeeping this repo's actual scale (dozens
 // of sessions, not millions) doesn't justify. One static
 // pattern-subscription per process is O(1) regardless of session count and
 // needs no lifecycle beyond process start/stop. If PSUBSCRIBE's

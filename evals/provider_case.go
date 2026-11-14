@@ -8,7 +8,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
+	"github.com/truongpx396/nexus-agent/internal/provider/fake"
 )
 
 // ProviderScriptCase grades the deterministic fake provider itself: given a

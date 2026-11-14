@@ -15,12 +15,12 @@ import (
 	"context"
 	"testing"
 
-	delegatepg "github.com/truongpx396/nexus-agent-demo/internal/delegate/postgres"
-	planpg "github.com/truongpx396/nexus-agent-demo/internal/plan/postgres"
+	delegatepg "github.com/truongpx396/nexus-agent/internal/delegate/postgres"
+	planpg "github.com/truongpx396/nexus-agent/internal/plan/postgres"
 
-	"github.com/truongpx396/nexus-agent-demo/evals"
-	"github.com/truongpx396/nexus-agent-demo/internal/evalgate"
-	"github.com/truongpx396/nexus-agent-demo/internal/plan"
+	"github.com/truongpx396/nexus-agent/evals"
+	"github.com/truongpx396/nexus-agent/internal/evalgate"
+	"github.com/truongpx396/nexus-agent/internal/plan"
 )
 
 func minimalPlan(name string) plan.Plan {

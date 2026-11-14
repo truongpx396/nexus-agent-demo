@@ -14,7 +14,7 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/hooks"
+	"github.com/truongpx396/nexus-agent/internal/hooks"
 )
 
 // Handler POSTs the same hooks.Request shape CommandHandler sends over

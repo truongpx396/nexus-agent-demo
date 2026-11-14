@@ -6,7 +6,7 @@
 # heavy, opt-in infrastructure — same "must keep working with it off" rule
 # docker-compose.yml's own app profile follows (README §5). `name:` matches
 # docker-compose.yml's own project name so containers/volumes share its
-# naming (`nexus-agent-demo-litellm-1`, etc.) and — if both files are ever
+# naming (`nexus-agent-litellm-1`, etc.) and — if both files are ever
 # brought up together — its default network, though nothing here depends on
 # that: nexusd is documented to run natively and reach litellm over its
 # published host port (docs/local-llm.md), never by container DNS.
@@ -14,7 +14,7 @@
 # Ollama itself is deliberately NOT a service here: it runs natively on the
 # Mac host (Metal acceleration), started separately (`ollama serve`, or the
 # menubar app).
-name: nexus-agent-demo
+name: nexus-agent
 
 services:
   # `docker compose --profile llm up` (make llm-up): a pure OpenAI-compatible
@@ -164,8 +164,8 @@ services:
       # value.
       LANGFUSE_INIT_ORG_ID: dev-org
       LANGFUSE_INIT_ORG_NAME: "Nexus Dev"
-      LANGFUSE_INIT_PROJECT_ID: nexus-demo
-      LANGFUSE_INIT_PROJECT_NAME: nexus-agent-demo
+      LANGFUSE_INIT_PROJECT_ID: nexus-agent
+      LANGFUSE_INIT_PROJECT_NAME: nexus-agent
       LANGFUSE_INIT_PROJECT_PUBLIC_KEY: pk-lf-c0b5ea2f6fb8990d1f59215e5f79c163
       LANGFUSE_INIT_PROJECT_SECRET_KEY: sk-lf-1ce1762967990aacbff57c894cea6e39
       LANGFUSE_INIT_USER_EMAIL: dev@nexus.local
@@ -235,8 +235,8 @@ services:
       TELEMETRY_ENABLED: "false"
       LANGFUSE_INIT_ORG_ID: dev-org
       LANGFUSE_INIT_ORG_NAME: "Nexus Dev"
-      LANGFUSE_INIT_PROJECT_ID: nexus-demo
-      LANGFUSE_INIT_PROJECT_NAME: nexus-agent-demo
+      LANGFUSE_INIT_PROJECT_ID: nexus-agent
+      LANGFUSE_INIT_PROJECT_NAME: nexus-agent
       LANGFUSE_INIT_PROJECT_PUBLIC_KEY: pk-lf-c0b5ea2f6fb8990d1f59215e5f79c163
       LANGFUSE_INIT_PROJECT_SECRET_KEY: sk-lf-1ce1762967990aacbff57c894cea6e39
       LANGFUSE_INIT_USER_EMAIL: dev@nexus.local

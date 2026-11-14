@@ -9,12 +9,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/cost"
-	"github.com/truongpx396/nexus-agent-demo/internal/cost/costtest"
-	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
-	costredis "github.com/truongpx396/nexus-agent-demo/internal/cost/redis"
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
+	"github.com/truongpx396/nexus-agent/internal/cost"
+	"github.com/truongpx396/nexus-agent/internal/cost/costtest"
+	costpg "github.com/truongpx396/nexus-agent/internal/cost/postgres"
+	costredis "github.com/truongpx396/nexus-agent/internal/cost/redis"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/internal/store"
 )
 
 // TestPostgresLedger_SatisfiesTheLedgerContract runs the suite the in-memory

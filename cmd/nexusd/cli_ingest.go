@@ -12,11 +12,11 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/ingest"
-	"github.com/truongpx396/nexus-agent-demo/internal/retrieval"
-	retrievalpg "github.com/truongpx396/nexus-agent-demo/internal/retrieval/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/internal/ingest"
+	"github.com/truongpx396/nexus-agent/internal/retrieval"
+	retrievalpg "github.com/truongpx396/nexus-agent/internal/retrieval/postgres"
+	"github.com/truongpx396/nexus-agent/internal/store"
 )
 
 // runIngest is Phase 12's admin operation (README §5's Demo: "ingest a
@@ -62,7 +62,7 @@ func runIngest(ctx context.Context, args []string) error {
 	gate := newCostGate(st, redisClient)
 	retriever := &retrieval.Retriever{Index: retrievalpg.NewIndex(st), Gate: gate, Embedder: newEmbedder(), ModelID: "fake-embedder-v1"}
 
-	tenantID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("nexus-agent-demo/tenant/"+*tenantName))
+	tenantID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("nexus-agent/tenant/"+*tenantName))
 	sessionID := uuid.New()
 
 	// cost_records.session_id and budget_decisions.session_id are both

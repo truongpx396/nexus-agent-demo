@@ -5,10 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
-	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
-	"github.com/truongpx396/nexus-agent-demo/internal/tools"
-	"github.com/truongpx396/nexus-agent-demo/internal/tools/builtin"
+	"github.com/truongpx396/nexus-agent/internal/provider"
+	"github.com/truongpx396/nexus-agent/internal/provider/fake"
+	"github.com/truongpx396/nexus-agent/internal/tools"
+	"github.com/truongpx396/nexus-agent/internal/tools/builtin"
 )
 
 // The live track existed to show the model what production shows it, but its tools

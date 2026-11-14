@@ -7,11 +7,11 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
-	"github.com/truongpx396/nexus-agent-demo/internal/plan"
-	"github.com/truongpx396/nexus-agent-demo/internal/runstate"
+	"github.com/truongpx396/nexus-agent/internal/crypto"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/internal/oversight"
+	"github.com/truongpx396/nexus-agent/internal/plan"
+	"github.com/truongpx396/nexus-agent/internal/runstate"
 )
 
 // startPlan runs p to its end on a fresh session and returns the store. The

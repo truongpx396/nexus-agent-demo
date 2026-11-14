@@ -4,7 +4,7 @@ import (
 	"errors"
 
 	"github.com/gin-gonic/gin"
-	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/capability"
+	"github.com/truongpx396/nexus-agent/internal/surfaces/capability"
 )
 
 // Descriptor is this surface's static capability declaration (README task

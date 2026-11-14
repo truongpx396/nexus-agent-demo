@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/cost"
+	"github.com/truongpx396/nexus-agent/internal/cost"
 )
 
 // GetBudget looks up the budget for one scope (and, for BudgetScopeSession,

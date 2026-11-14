@@ -12,7 +12,7 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/hooks"
+	"github.com/truongpx396/nexus-agent/internal/hooks"
 )
 
 // Handler runs an operator-configured local script per invocation.
