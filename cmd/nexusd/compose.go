@@ -104,7 +104,7 @@ func buildServices(in *infra, prov provider.Provider, spanExp spanExporter) (*se
 	inputs := oversight.NewInputs(oversightStore)
 	prunePolicy, condenseAtBytes := contextPolicy()
 	k := &kernel.Kernel{
-		Provider: provider.Wrap([]provider.Provider{prov}),
+		Provider: provider.Wrap([]provider.Provider{provider.WithRetry(prov, provider.RetryConfig{OnRetry: logProviderRetry})}),
 		Tools:    kerneladapter.PipelineExecutor{Pipeline: pipeline}, // real tool pipeline, Phase 3
 		Budget:   gate,                                               // real reserve-then-reconcile cost gate, Phase 4
 		Log: postgres.New(st, postgres.Hooks{

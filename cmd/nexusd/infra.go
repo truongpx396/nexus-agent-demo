@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"fmt"
 	"time"
 
@@ -53,11 +54,11 @@ func openInfra(ctx context.Context, cfg serverConfig) (_ *infra, err error) {
 	}
 	in.keys = cryptopg.NewKeyStore(kek)
 
-	signingKey, err := loadOrGenerateSigningKey(cfg.AuthnSigningKeyPath, devMode)
+	verifyingKey, err := loadVerifyingKey(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("load AuthN signing key: %w", err)
+		return nil, err
 	}
-	in.verifier = authn.NewDevVerifier(authn.PublicKey(signingKey))
+	in.verifier = authn.NewDevVerifier(verifyingKey)
 
 	// Sign-only audit key custody (README task 5.1): nexusd dials signerd's unix
 	// socket and can ask it to sign, never read the key itself —
@@ -66,7 +67,10 @@ func openInfra(ctx context.Context, cfg serverConfig) (_ *infra, err error) {
 	in.signer = audit.NewSignerClient(cfg.SignerdSocket)
 	in.chain = auditpg.NewChain(in.signer)
 
-	in.redis = redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
+	in.redis, err = newRedisClientFrom(cfg.RedisURL, cfg.RedisAddr)
+	if err != nil {
+		return nil, fmt.Errorf("configure redis: %w", err)
+	}
 
 	// internal/queue's Redis Streams adapter (the retired Postgres queue_jobs
 	// table's successor): the run starter and run control both enqueue through it
@@ -76,6 +80,25 @@ func openInfra(ctx context.Context, cfg serverConfig) (_ *infra, err error) {
 		return nil, fmt.Errorf("configure queue: %w", err)
 	}
 	return in, nil
+}
+
+// loadVerifyingKey is the key bearer tokens are verified with: the public key file
+// when one is configured, which is always the case outside --dev. Only under --dev,
+// with no public key file, is it derived from the signing key `nexusd --dev token`
+// mints with (generated on first run), so `make up && make run` needs no setup.
+func loadVerifyingKey(cfg serverConfig) (ed25519.PublicKey, error) {
+	if cfg.AuthnPublicKeyPath != "" {
+		key, err := loadPublicKey(cfg.AuthnPublicKeyPath)
+		if err != nil {
+			return nil, fmt.Errorf("load AuthN public key: %w", err)
+		}
+		return key, nil
+	}
+	signingKey, err := loadOrGenerateSigningKey(cfg.AuthnSigningKeyPath, devMode)
+	if err != nil {
+		return nil, fmt.Errorf("load AuthN signing key: %w", err)
+	}
+	return authn.PublicKey(signingKey), nil
 }
 
 // close releases the Redis client and the pool. Call it after everything built

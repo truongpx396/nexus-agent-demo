@@ -16,12 +16,36 @@ import (
 // `nexusd seed` or `nexusd dashboard` — those keep their existing envOr
 // defaults.
 type serverConfig struct {
-	DatabaseURL         string
-	RedisAddr           string
-	SignerdSocket       string
-	KEKPath             string
+	DatabaseURL   string
+	RedisAddr     string
+	SignerdSocket string
+	KEKPath       string
+	HTTPAddr      string
+
+	// RedisURL, when set, is used instead of RedisAddr: redis:// or rediss:// (TLS),
+	// with an optional user and password (newRedisClient). Outside --dev one of the
+	// two is required.
+	RedisURL string
+
+	// AuthnPublicKeyPath is the Ed25519 public key bearer tokens are verified with.
+	// The server only verifies, so outside --dev it is given this and never the
+	// signing key, whose file would let anyone who can read it mint a token for any
+	// tenant. Under --dev, when it is unset, the verifying key is derived from
+	// AuthnSigningKeyPath, which is where `nexusd --dev token` mints from.
+	AuthnPublicKeyPath string
+	// AuthnSigningKeyPath is only read under --dev (see AuthnPublicKeyPath).
 	AuthnSigningKeyPath string
-	HTTPAddr            string
+
+	// AdminDatabaseURL is the superuser DSN the few cross-tenant operations use (the
+	// tenant directory, the orphan scan, the queue workers' admission). adminDSN
+	// reads it from the environment and falls back to a local default, which is
+	// right for --dev and wrong anywhere else: a deployment that forgot it would
+	// start and then fail those loops quietly against localhost.
+	AdminDatabaseURL string
+	// MetricsToken is the bearer token /metrics requires. It lists every tenant's
+	// id, spend and tool names, so it is not served to whoever can reach the port.
+	// Empty only under --dev.
+	MetricsToken string
 }
 
 // loadServerConfig reads serverConfig from the environment. In dev mode
@@ -36,10 +60,14 @@ func loadServerConfig(dev bool) (serverConfig, error) {
 		return serverConfig{
 			DatabaseURL:         envOr("NEXUS_DATABASE_URL", defaultAppDSN),
 			RedisAddr:           envOr("NEXUS_REDIS_ADDR", defaultRedisAddr),
+			RedisURL:            os.Getenv("NEXUS_REDIS_URL"),
 			SignerdSocket:       envOr("NEXUS_SIGNERD_SOCKET", defaultSignerdSocket),
 			KEKPath:             envOr("NEXUS_KEK_PATH", defaultKEKPath),
 			AuthnSigningKeyPath: envOr("NEXUS_AUTHN_SIGNING_KEY_PATH", defaultAuthnSigningKeyPath),
+			AuthnPublicKeyPath:  os.Getenv("NEXUS_AUTHN_PUBLIC_KEY_PATH"), // optional under --dev: derived from the signing key when unset
 			HTTPAddr:            envOr("NEXUS_HTTP_ADDR", ":8085"),
+			AdminDatabaseURL:    adminDSN(),
+			MetricsToken:        os.Getenv("NEXUS_METRICS_TOKEN"), // optional under --dev: /metrics stays open for the local scrape
 		}, nil
 	}
 
@@ -52,12 +80,18 @@ func loadServerConfig(dev bool) (serverConfig, error) {
 		return v
 	}
 	cfg := serverConfig{
-		DatabaseURL:         require("NEXUS_DATABASE_URL"),
-		RedisAddr:           require("NEXUS_REDIS_ADDR"),
-		SignerdSocket:       require("NEXUS_SIGNERD_SOCKET"),
-		KEKPath:             require("NEXUS_KEK_PATH"),
-		AuthnSigningKeyPath: require("NEXUS_AUTHN_SIGNING_KEY_PATH"),
-		HTTPAddr:            envOr("NEXUS_HTTP_ADDR", ":8085"), // a listen address has no unsafe-default failure mode; --dev doesn't change what this defaults to
+		DatabaseURL:        require("NEXUS_DATABASE_URL"),
+		RedisAddr:          os.Getenv("NEXUS_REDIS_ADDR"),
+		RedisURL:           os.Getenv("NEXUS_REDIS_URL"),
+		SignerdSocket:      require("NEXUS_SIGNERD_SOCKET"),
+		KEKPath:            require("NEXUS_KEK_PATH"),
+		AuthnPublicKeyPath: require("NEXUS_AUTHN_PUBLIC_KEY_PATH"),
+		HTTPAddr:           envOr("NEXUS_HTTP_ADDR", ":8085"), // a listen address has no unsafe-default failure mode; --dev doesn't change what this defaults to
+		AdminDatabaseURL:   require("NEXUS_ADMIN_DATABASE_URL"),
+		MetricsToken:       require("NEXUS_METRICS_TOKEN"),
+	}
+	if cfg.RedisAddr == "" && cfg.RedisURL == "" {
+		missing = append(missing, "NEXUS_REDIS_URL or NEXUS_REDIS_ADDR")
 	}
 	if len(missing) > 0 {
 		return serverConfig{}, fmt.Errorf(

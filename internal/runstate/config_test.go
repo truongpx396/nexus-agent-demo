@@ -72,6 +72,8 @@ var runConfigFields = map[string]resumeClass{
 	"Input":            freshOnly,
 	"LoadedTools":      freshOnly,
 	"MemorySources":    freshOnly,
+	"MemoryText":       freshOnly,
+	"ExtraCatalog":     freshOnly,
 }
 
 func TestRunConfigFieldsAreAllClassified(t *testing.T) {

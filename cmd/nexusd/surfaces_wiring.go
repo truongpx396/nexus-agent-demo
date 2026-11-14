@@ -24,7 +24,7 @@ import (
 // check). The chat surfaces are thin translators over the same kernel — each
 // starts runs through the one launcher every surface shares, and resumes a paused
 // conversation through the same runctl.Control.
-func newMux(in *infra, svc *services, restAPI http.Handler) http.Handler {
+func newMux(in *infra, svc *services, restAPI http.Handler, metricsToken string) http.Handler {
 	// sessionLock serializes each conversational webhook surface's
 	// decide-then-act sequence (look up the session, then resume it or start
 	// a fresh one) and the turn it kicks off, keyed on the surface's own
@@ -67,7 +67,10 @@ func newMux(in *infra, svc *services, restAPI http.Handler) http.Handler {
 	// a load balancer or Kubernetes probe has no bearer token to send.
 	mux.HandleFunc("GET /healthz", handleHealthz)
 	mux.HandleFunc("GET /readyz", handleReadyz(in.pool, in.redis, in.signer))
-	mux.HandleFunc("GET /metrics", handleMetrics(reportingpg.New(in.st), in.queue))
+	// /metrics lists every tenant's id, spend and tool names, and each render runs
+	// several queries per tenant, so it needs the metrics token (a static bearer
+	// token, not a tenant's) and is served from a short cache.
+	mux.Handle("GET /metrics", requireBearer(metricsToken, newMetricsHandler(tenantDirectory().ListTenantIDs, reportingpg.New(in.st), in.queue)))
 	mux.Handle("/v1/webhooks/telegram/", telegramSrv.Handler())
 	mux.Handle("/v1/webhooks/zalo/", zaloSrv.Handler())
 	mux.Handle("/v1/webhooks/email/", emailSrv.Handler())

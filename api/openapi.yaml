@@ -551,11 +551,22 @@ paths:
       summary: Prometheus metrics
       description: >-
         Per-tenant golden signals, with per-tool and per-model breakdowns, in
-        Prometheus text format. Unauthenticated, like the probes.
-      security: []
+        Prometheus text format. Needs the server's static metrics token
+        (`NEXUS_METRICS_TOKEN`), not a tenant token: it lists every tenant's id,
+        spend and tool names. The response is cached for 15 seconds. Under
+        `--dev` with no token configured it is open, so a local scrape needs no
+        setup.
+      security:
+        - metricsAuth: []
       responses:
         '200':
           description: The metrics.
+          content:
+            text/plain:
+              schema:
+                type: string
+        '401':
+          description: The metrics token is missing or wrong.
           content:
             text/plain:
               schema:
@@ -569,6 +580,12 @@ components:
       description: >-
         A token from the configured issuer. It names the tenant and the user; a
         client never supplies either as a header.
+    metricsAuth:
+      type: http
+      scheme: bearer
+      description: >-
+        The static token `NEXUS_METRICS_TOKEN` sets, for the `/metrics` scrape
+        only. It is not a tenant token and names no tenant.
 
   parameters:
     RunId:

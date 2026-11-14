@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"time"
 
@@ -87,6 +88,7 @@ func (s Shell) Call(ctx context.Context, in json.RawMessage, rc tools.RunContext
 	if rc.WorkspaceDir != "" {
 		cmd.Dir = rc.WorkspaceDir
 	}
+	cmd.Env = shellEnv(cmd.Dir)
 	// WaitDelay bounds how long Wait (inside CombinedOutput) will wait, once
 	// the context is done, for the killed process's own I/O to actually
 	// finish — without it, a command that backgrounds or forks a
@@ -130,4 +132,18 @@ func (Shell) callSandboxed(ctx context.Context, rc tools.RunContext, req shellIn
 		return tools.Result{Output: out, IsError: true, Reason: fmt.Sprintf("exit status %d", exitCode)}, nil
 	}
 	return tools.Result{Output: out}, nil
+}
+
+// shellEnv is the whole environment of an unsandboxed command. exec.Cmd.Env left
+// nil means "inherit the process's", which here would hand a model-written command
+// the model provider's API key, the database URLs and the paths of the key files.
+// The command gets a path, a home and a locale and nothing else; a sandbox
+// (rc.Sandbox) has its own environment and does not come through here. dir is the
+// working directory the command runs in, or empty for the system temp directory,
+// which is also what HOME points at.
+func shellEnv(dir string) []string {
+	if dir == "" {
+		dir = os.TempDir()
+	}
+	return []string{"PATH=/usr/local/bin:/usr/bin:/bin", "HOME=" + dir, "LANG=C.UTF-8"}
 }

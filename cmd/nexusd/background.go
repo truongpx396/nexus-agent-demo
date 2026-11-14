@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -18,6 +19,7 @@ import (
 	oversightpg "github.com/truongpx396/nexus-agent-demo/internal/oversight/postgres"
 	"github.com/truongpx396/nexus-agent-demo/internal/queue"
 	queueredis "github.com/truongpx396/nexus-agent-demo/internal/queue/redis"
+	"github.com/truongpx396/nexus-agent-demo/internal/reliability"
 	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
 	runctlpg "github.com/truongpx396/nexus-agent-demo/internal/runctl/postgres"
 	runsrest "github.com/truongpx396/nexus-agent-demo/internal/runs/rest"
@@ -39,6 +41,15 @@ const (
 	// the sweep at startup has to skip that session as if it were live; this
 	// one, a TTL later, finds the lock gone and recovers it.
 	orphanRecheckAfter = sessionLockTTL + 5*time.Second
+
+	// orphanSweepEvery is how often the recurring orphan sweep runs, and
+	// orphanReenqueueEvery how long recovery leaves a session alone after
+	// re-enqueueing it. A job can be lost while every process stays up (Redis
+	// restarted without its append-only file, a job dead-lettered by mistake), and
+	// the startup sweep only runs at boot; the throttle keeps a session whose resume
+	// keeps failing from being re-enqueued on every pass.
+	orphanSweepEvery     = 5 * time.Minute
+	orphanReenqueueEvery = 15 * time.Minute
 
 	// queueWorkerCount is how many workers this process runs to drain the job
 	// queue; each takes one job at a time, so it is also this process's ceiling
@@ -216,22 +227,63 @@ func startQueueWorkers(ctx context.Context, redisClient *redis.Client, port queu
 	lock := queueredis.NewSessionLock(redisClient, sessionLockTTL)
 	runner := &queueRunner{ctl: ctl, approvals: approvals, runsAPI: runsAPI}
 
+	// Two contexts, because stopping and cancelling are different things. leaseCtx
+	// ends when the process is told to stop: workers stop leasing and the recovery
+	// loops stop. jobCtx outlives it (it keeps ctx's values, not its cancellation)
+	// and is what a leased job runs under, so a deploy lets runs already under way
+	// finish instead of cutting every one off mid-turn; it is cancelled only when the
+	// shutdown grace period runs out.
 	workerCtx, cancel := context.WithCancel(ctx)
+	jobCtx, cancelJobs := context.WithCancel(context.WithoutCancel(ctx))
 	runctl.StartRecovery(workerCtx, func(ctx context.Context) ([]runctl.Orphan, error) { return listOrphans(ctx, adminPool) }, lock, port, orphanRecheckAfter)
+	stopOrphanSweep := startOrphanSweep(workerCtx, adminPool, lock, port, queueredis.NewRecoveryThrottle(redisClient, orphanReenqueueEvery))
+
+	// One breaker registry for every worker, so a session's failures are counted
+	// together whichever worker ran them. Each worker used to build its own, and a
+	// session's failures were split across them and never tripped any.
+	breakers := reliability.NewBreakerRegistry(3)
 
 	var workers sync.WaitGroup
 	for i := range queueWorkers() {
 		w := queue.NewWorker(queue.WorkerConfig{
-			Port: port, Lock: lock, Runner: runner, RenewEvery: sessionLockTTL / 3,
+			Port: port, Lock: lock, Runner: runner, Breakers: breakers, RenewEvery: sessionLockTTL / 3, JobContext: jobCtx,
 			Owner: fmt.Sprintf("nexusd-worker-%d-%d", os.Getpid(), i),
 		})
 		workers.Go(func() { w.Run(workerCtx) })
 	}
 	return func() {
-		cancel()
-		workers.Wait() // a worker mid-job finishes unwinding before the pool it leases through closes
+		cancel() // stop leasing and stop the recovery loops
+		stopOrphanSweep()
+		// A worker mid-job finishes, up to the grace period, before the pool it leases
+		// through closes; past it the runs are cancelled.
+		drainWorkers(&workers, shutdownGrace(), cancelJobs)
+		cancelJobs() // release jobCtx's resources; every job has returned by now
 		adminPool.Close()
 	}
+}
+
+// startOrphanSweep runs the recurring orphan sweep: every orphanSweepEvery, list the
+// sessions a durable record says need a worker and re-enqueue the ones no worker is
+// driving, at most once per orphanReenqueueEvery each. Its stop cancels the loop and
+// waits for a pass in flight, so it is done before the pool it lists through closes.
+func startOrphanSweep(ctx context.Context, adminPool *pgxpool.Pool, live runctl.Liveness, port queue.Port, throttle runctl.Throttle) (stop func()) {
+	return startPeriodic(ctx, orphanSweepEvery, func(ctx context.Context) {
+		candidates, err := listOrphans(ctx, adminPool)
+		if err != nil {
+			log.Error().Err(err).Str("pass", "periodic").Msg("runctl: list orphaned sessions failed")
+			// listOrphans still returns what it found before the failure.
+		}
+		runctl.RecoverOrphans(ctx, "periodic", candidates, live, port, throttle)
+	})
+}
+
+// staleJob reports whether err says the job's session is in a state that does not
+// call for a worker: runctl.ErrSessionState, which Resume returns for a session
+// that is terminal, suspended on an approval or awaiting the next message. A job
+// that arrives at such a session (a copy a reclaimed lease made, a recovery sweep
+// that raced a finish) has nothing to do, which is not a failure.
+func staleJob(err error) bool {
+	return err != nil && errors.Is(err, runctl.ErrSessionState)
 }
 
 // listOrphans is every session a durable record says needs a worker: the ones
@@ -273,6 +325,15 @@ type queueRunner struct {
 
 func (r *queueRunner) Run(ctx context.Context, job queue.Job) error {
 	for ev, err := range jobEvents(ctx, r.ctl, r.approvals, job) {
+		if staleJob(err) {
+			// The session no longer needs a worker (it finished, or it is waiting on a
+			// person, between this job being queued and it being leased). Nothing is
+			// wrong, so no error goes to the session's event stream and the job
+			// completes instead of being retried and dead-lettered.
+			log.Info().Err(err).Any("job_id", job.JobID).Str("kind", string(job.Kind)).Any("session_id", job.SessionID).
+				Msg("nexusd: queue: session no longer needs driving; completing the job without running it")
+			return nil
+		}
 		if r.runsAPI != nil {
 			r.runsAPI.PublishEvent(job.TenantID, job.SessionID, ev, err)
 		}

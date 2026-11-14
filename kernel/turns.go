@@ -22,6 +22,10 @@ import (
 // before it is yielded, so a caller forwarding these events (e.g. over SSE)
 // never shows a client something that isn't already in the log.
 func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yield func(eventlog.Event, error) bool) {
+	// Every entry into the loop passes through here, so this is the one place the
+	// session's own memory and tools are added to the process-wide config the
+	// caller built (pinned.go).
+	cfg = st.Pinned.Apply(cfg)
 	maxTurns := cfg.MaxTurns
 	if maxTurns <= 0 {
 		maxTurns = defaultMaxTurns
@@ -65,8 +69,14 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 			st.Transcript = append(st.Transcript, provider.Message{Role: "tool", Blocks: synthBlocks})
 		}
 
+		// The reservation is sized from what this turn will send, not a fixed 8,000
+		// tokens: an agent turn with a long history sends far more, and a ceiling
+		// reserved at the fixed figure is overshot by the difference in one call. It is
+		// measured on the whole transcript, before pruning or condensing trims it, so it
+		// errs high.
 		reservation, reserveErr := k.Budget.Reserve(ctx, cost.ReserveRequest{
 			TenantID: st.TenantID, SessionID: st.SessionID, ModelID: cfg.ModelID, Purpose: cost.PurposeTurn,
+			InputTokenEstimate: promptctx.EstimateTokens(cfg.System, cfg.Catalog, st.Transcript),
 		})
 		bev, err := k.appendBudgetDecision(ctx, st, reservation)
 		if err != nil {
@@ -132,6 +142,7 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 				CoveredThroughSeq: cond.CoveredThroughSeq,
 				Summary:           cond.Summary,
 				Degraded:          degraded,
+				CoveredMessages:   covered,
 			})
 			if err != nil {
 				yield(eventlog.Event{}, err)
@@ -147,9 +158,7 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 			// view pruning stays scoped to). st.Transcript[covered:] (not
 			// view[covered:]) so the retained tail keeps its ORIGINAL text,
 			// never a pruned preview/marker baked in permanently.
-			newTranscript := make([]provider.Message, 0, 1+len(st.Transcript)-covered)
-			newTranscript = append(newTranscript, provider.TextMessage("assistant", "[condensed summary] "+summary))
-			newTranscript = append(newTranscript, st.Transcript[covered:]...)
+			newTranscript := condensedTranscript(st.Transcript, covered, summary)
 			st.Transcript = newTranscript
 			view = newTranscript
 		}
@@ -278,7 +287,7 @@ func (k *Kernel) runTurns(ctx context.Context, st *RunState, cfg RunConfig, yiel
 		}
 
 		if done == provider.DoneMaxOutput {
-			k.terminate(ctx, st, yield, TerminalError(errors.New("provider truncated output at max_output without a natural stop")))
+			k.terminate(ctx, st, yield, TerminalError(errors.New("provider stopped at max_tokens before finishing its reply; raise NEXUS_ANTHROPIC_MAX_TOKENS or ask for a shorter output")))
 			return
 		}
 		if done == provider.DoneRefusal {

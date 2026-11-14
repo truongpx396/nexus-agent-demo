@@ -27,8 +27,8 @@ type kernelRunStarter struct {
 	maxTurns    int
 
 	// memory backs README task 7.1's "injected at session start": a nil
-	// memory leaves cfg.System untouched and cfg.MemorySources empty, exactly
-	// the pre-Phase-7 behavior every earlier test still gets.
+	// memory leaves cfg.MemoryText and cfg.MemorySources empty, exactly the
+	// pre-Phase-7 behavior every earlier test still gets.
 	memory *memory.Store
 
 	// queue is where StartRun enqueues the queue.KindStart job that
@@ -89,28 +89,31 @@ func drainSeed(seq iter.Seq2[eventlog.Event, error]) (ch chan runs.Event, failed
 // kernel.Kernel.Continue: the same "rehydrate arbitrary existing history,
 // then continue" path a crash-recovered session already uses.
 func (a *kernelRunStarter) StartRun(ctx context.Context, req runs.Request) (<-chan runs.Event, error) {
-	system := a.system
+	// The tenant's memory and a run's own MCP tools are not folded into the
+	// process-wide system prompt and catalog here. They go on the config as
+	// MemoryText and ExtraCatalog, which Seed records in the session's opening
+	// events; the worker that drives the turns reads them back from the log
+	// (kernel.RehydratePinned), so the model sees what the session started with
+	// whichever process runs it. Folding them in here changed only this call's
+	// config, which never reaches the model.
+	var memoryText string
 	var memorySources []string
 	if a.memory != nil {
 		snap, err := a.memory.Load(ctx, req.TenantID)
 		if err != nil {
 			return nil, fmt.Errorf("load memory for tenant %s: %w", req.TenantID, err)
 		}
-		if snap.Text != "" {
-			system = system + "\n\n" + snap.Text
-		}
+		memoryText = snap.Text
 		memorySources = snap.SourceIDs
 	}
 
-	// Task 11.1: a run's own MCP catalog addition (runs.Request's own
-	// doc comment) is appended to the process-wide base catalog/loadedTools
-	// here — additive, the same shape memorySources already is for a
-	// per-run addition to a base config. Every pre-Phase-11 caller leaves
-	// both nil, so append is a no-op and this path is unchanged for them.
-	catalog := a.catalog
+	// Task 11.1: a run's own MCP tool ids (runs.Request's own doc comment) are
+	// appended to the process-wide base list here — additive, the same shape
+	// memorySources already is for a per-run addition to a base config. Every
+	// pre-Phase-11 caller leaves it nil, so append is a no-op and this path is
+	// unchanged for them.
 	loadedTools := a.loadedTools
-	if len(req.ExtraCatalog) > 0 {
-		catalog = append(append([]provider.ToolSchema{}, a.catalog...), req.ExtraCatalog...)
+	if len(req.ExtraLoadedTools) > 0 {
 		loadedTools = append(append([]string{}, a.loadedTools...), req.ExtraLoadedTools...)
 	}
 
@@ -120,10 +123,12 @@ func (a *kernelRunStarter) StartRun(ctx context.Context, req runs.Request) (<-ch
 		Seal:      kernel.SealFunc(req.Seal),
 	}
 	cfg := kernel.RunConfig{
-		System:         system,
-		Catalog:        catalog,
+		System:         a.system,
+		Catalog:        a.catalog,
 		LoadedTools:    loadedTools,
 		MemorySources:  memorySources,
+		MemoryText:     memoryText,
+		ExtraCatalog:   req.ExtraCatalog,
 		ModelID:        req.ModelID,
 		MaxTurns:       a.maxTurns,
 		Input:          req.Input,

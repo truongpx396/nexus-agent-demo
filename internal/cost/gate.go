@@ -49,6 +49,15 @@ type ReserveRequest struct {
 	SessionID uuid.UUID
 	ModelID   string
 	Purpose   Purpose
+
+	// InputTokenEstimate is the caller's estimate of the input the call is about to
+	// send. The reservation prices the larger of it and the configured
+	// MaxInputTokenEstimate, so a prompt bigger than that fixed figure (a turn with a
+	// long history can send many times 8,000 tokens) is reserved at its own size and
+	// a ceiling is not overshot by the difference. Zero means "use the configured
+	// estimate", which is what a caller with no prompt to measure passes. Ignored for
+	// an embedding reservation, which has its own estimate.
+	InputTokenEstimate int64
 }
 
 // Reservation is Reserve's result and Reconcile's input. Both the

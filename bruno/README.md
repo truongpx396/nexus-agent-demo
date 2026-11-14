@@ -38,7 +38,7 @@ A runtime variable wins over an environment variable of the same name, so you ca
 | `run-control` | `POST /v1/runs/{id}/steer`, `/autonomy`, `/fork`, `/cancel` |
 | `approvals` | `GET /v1/approvals`, `GET /v1/approvals/{id}`, `POST /v1/approvals/{id}/grant` (as proposed and with a modified input), `/deny` |
 | `content-access` | `POST /v1/sessions/{id}/content-access-grants`, `GET /v1/sessions/{id}/content-access-grants/read` |
-| `ops` | `GET /healthz`, `/readyz`, `/metrics`, unauthenticated |
+| `ops` | `GET /healthz`, `/readyz` (unauthenticated) and `/metrics` (the static `NEXUS_METRICS_TOKEN`, as the `metricsToken` secret) |
 
 Not covered: the Telegram, Zalo and email webhooks (`POST /v1/webhooks/{telegram,zalo,email}/{tenant_id}`). They are authenticated by a per-tenant secret or an HMAC over the raw body, not by a bearer token, so they do not fit this collection's auth.
 

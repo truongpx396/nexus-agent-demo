@@ -80,7 +80,7 @@ func TestRecoverOrphans_SkipsSessionsAWorkerIsDriving(t *testing.T) {
 	q := &recordingQueue{}
 	live := &fakeLiveness{held: map[string]bool{"b": true}}
 
-	got := runctl.RecoverOrphans(context.Background(), "test", []runctl.Orphan{a, b, c}, live, q)
+	got := runctl.RecoverOrphans(context.Background(), "test", []runctl.Orphan{a, b, c}, live, q, nil)
 
 	if got != 2 {
 		t.Errorf("recovered = %d, want 2", got)
@@ -106,7 +106,7 @@ func TestRecoverOrphans_LeavesASessionWhoseLivenessIsUnknown(t *testing.T) {
 	q := &recordingQueue{}
 	live := &fakeLiveness{broken: map[string]bool{"b": true}}
 
-	got := runctl.RecoverOrphans(context.Background(), "test", []runctl.Orphan{a, b}, live, q)
+	got := runctl.RecoverOrphans(context.Background(), "test", []runctl.Orphan{a, b}, live, q, nil)
 
 	if ids := q.enqueuedSessions(); got != 1 || len(ids) != 1 || ids[0] != a.SessionID {
 		t.Errorf("recovered %d, enqueued %v: want only a", got, ids)
@@ -117,7 +117,7 @@ func TestRecoverOrphans_ContinuesPastAFailedEnqueue(t *testing.T) {
 	a, b := candidate("a"), candidate("b")
 	q := &recordingQueue{failFor: map[uuid.UUID]bool{a.SessionID: true}}
 
-	got := runctl.RecoverOrphans(context.Background(), "test", []runctl.Orphan{a, b}, &fakeLiveness{}, q)
+	got := runctl.RecoverOrphans(context.Background(), "test", []runctl.Orphan{a, b}, &fakeLiveness{}, q, nil)
 
 	if ids := q.enqueuedSessions(); got != 1 || len(ids) != 1 || ids[0] != b.SessionID {
 		t.Errorf("recovered %d, enqueued %v: a failed enqueue must not stop the sweep", got, ids)
@@ -182,13 +182,98 @@ func TestStartOrphanRecovery_NoRecheckOnceTheContextIsCancelled(t *testing.T) {
 // An orphan names the job that recovers it: a session still marked running is a
 // resume, and an approval decided but never resumed is an approval job carrying
 // its id.
+// fakeThrottle allows each session key a set number of times, then refuses; the keys
+// in broken return an error.
+type fakeThrottle struct {
+	mu     sync.Mutex
+	allow  int
+	used   map[string]int
+	broken map[string]bool
+	asked  []string
+}
+
+func (f *fakeThrottle) Allow(_ context.Context, key string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.asked = append(f.asked, key)
+	if f.broken[key] {
+		return false, errors.New("redis: timeout")
+	}
+	if f.used == nil {
+		f.used = map[string]int{}
+	}
+	if f.used[key] >= f.allow {
+		return false, nil
+	}
+	f.used[key]++
+	return true, nil
+}
+
+// A recurring sweep must not pile a job on a session every pass: with a throttle
+// that allows a session once, two sweeps over the same orphan enqueue one job.
+func TestRecoverOrphans_AThrottleKeepsARecurringSweepFromReEnqueueingTheSameSession(t *testing.T) {
+	q := &recordingQueue{}
+	orphan := candidate("a")
+	throttle := &fakeThrottle{allow: 1}
+
+	first := runctl.RecoverOrphans(context.Background(), "periodic", []runctl.Orphan{orphan}, &fakeLiveness{}, q, throttle)
+	second := runctl.RecoverOrphans(context.Background(), "periodic", []runctl.Orphan{orphan}, &fakeLiveness{}, q, throttle)
+
+	if first != 1 || second != 0 || len(q.enqueuedSessions()) != 1 {
+		t.Fatalf("first=%d second=%d enqueued=%d, want 1, 0 and one job in all", first, second, len(q.enqueuedSessions()))
+	}
+}
+
+// nil is today's behaviour: every sweep enqueues.
+func TestRecoverOrphans_ANilThrottleEnqueuesEveryTime(t *testing.T) {
+	q := &recordingQueue{}
+	orphan := candidate("a")
+	runctl.RecoverOrphans(context.Background(), "startup", []runctl.Orphan{orphan}, &fakeLiveness{}, q, nil)
+	runctl.RecoverOrphans(context.Background(), "recheck", []runctl.Orphan{orphan}, &fakeLiveness{}, q, nil)
+	if got := len(q.enqueuedSessions()); got != 2 {
+		t.Fatalf("%d jobs enqueued by two unthrottled sweeps, want 2", got)
+	}
+}
+
+// A held lock is checked first and never spends the throttle: the session is being
+// driven, and is not one recovery re-enqueued.
+func TestRecoverOrphans_ALiveSessionDoesNotSpendTheThrottle(t *testing.T) {
+	q := &recordingQueue{}
+	live := candidate("live")
+	throttle := &fakeThrottle{allow: 1}
+
+	runctl.RecoverOrphans(context.Background(), "periodic", []runctl.Orphan{live}, &fakeLiveness{held: map[string]bool{"live": true}}, q, throttle)
+	if len(throttle.asked) != 0 {
+		t.Fatalf("the throttle was asked about a live session: %v", throttle.asked)
+	}
+	// Once its lock is gone the session is recovered, because the throttle was never used up.
+	if got := runctl.RecoverOrphans(context.Background(), "periodic", []runctl.Orphan{live}, &fakeLiveness{}, q, throttle); got != 1 {
+		t.Fatalf("recovered %d once the lock was gone, want 1", got)
+	}
+}
+
+// A throttle that cannot answer leaves the session for the next pass, as an unreadable
+// lock does: unknown is not permission.
+func TestRecoverOrphans_AThrottleThatCannotAnswerLeavesTheSession(t *testing.T) {
+	q := &recordingQueue{}
+	a, b := candidate("a"), candidate("b")
+	throttle := &fakeThrottle{allow: 1, broken: map[string]bool{"a": true}}
+
+	if got := runctl.RecoverOrphans(context.Background(), "periodic", []runctl.Orphan{a, b}, &fakeLiveness{}, q, throttle); got != 1 {
+		t.Fatalf("recovered %d, want only the session the throttle could answer for", got)
+	}
+	if ids := q.enqueuedSessions(); len(ids) != 1 || ids[0] != b.SessionID {
+		t.Fatalf("enqueued %v, want only b", ids)
+	}
+}
+
 func TestRecoverOrphans_EnqueuesTheKindAndPayloadTheOrphanNames(t *testing.T) {
 	q := &recordingQueue{}
 	plain := candidate("a")
 	decided := candidate("b")
 	decided.Kind, decided.Payload = queue.KindApproval, json.RawMessage(`{"approval_id":"x"}`)
 
-	runctl.RecoverOrphans(context.Background(), "test", []runctl.Orphan{plain, decided}, &fakeLiveness{}, q)
+	runctl.RecoverOrphans(context.Background(), "test", []runctl.Orphan{plain, decided}, &fakeLiveness{}, q, nil)
 
 	if len(q.jobs) != 2 {
 		t.Fatalf("%d jobs enqueued, want 2", len(q.jobs))

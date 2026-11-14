@@ -18,5 +18,18 @@ func newCostGate(st *store.Store, redisClient *redis.Client) *cost.Gate {
 	if redisClient != nil {
 		counters = costredis.New(redisClient, 0)
 	}
-	return cost.NewGate(costpg.New(st), counters, cost.DefaultMeters(), cost.GateConfig{})
+	return cost.NewGate(costpg.New(st), counters, cost.DefaultMeters(), costGateConfig())
+}
+
+// costGateConfig sizes the gate's worst-case reservation to what the configured
+// provider may actually produce. The gate reserves a fixed output estimate before
+// every call; against Anthropic that must cover the output limit the adapter now
+// sends (anthropicMaxTokens), or a call that runs to its limit overshoots the
+// reservation. Any other provider keeps the gate's default.
+func costGateConfig() cost.GateConfig {
+	var cfg cost.GateConfig
+	if envOr("NEXUS_PROVIDER", "fake") == "anthropic" {
+		cfg.MaxOutputTokenEstimate = int64(anthropicMaxTokens())
+	}
+	return cfg
 }

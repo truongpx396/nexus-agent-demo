@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"net/http"
+	"io"
 
 	"github.com/rs/zerolog/log"
 
@@ -16,7 +16,7 @@ import (
 // workers falling behind looks like, which no golden signal shows. A queue that
 // cannot report its depth, or a read that fails, leaves the gauges out and logs;
 // it never fails the scrape.
-func writeQueueGauges(ctx context.Context, w http.ResponseWriter, depth queue.Stater) {
+func writeQueueGauges(ctx context.Context, w io.Writer, depth queue.Stater) {
 	if depth == nil {
 		return
 	}

@@ -2,9 +2,13 @@ package litellm
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 )
@@ -207,7 +211,7 @@ func TestToChatMessagesDropsThinkingAndSplitsToolResults(t *testing.T) {
 			{Kind: provider.BlockToolResult, ToolUseID: "call_1", Text: "sunny"},
 		}},
 	}
-	out := toChatMessages("", msgs)
+	out := toChatMessages("", msgs, provider.WireNames{})
 	if len(out) != 2 {
 		t.Fatalf("got %d messages, want 2 (thinking block dropped): %+v", len(out), out)
 	}
@@ -219,5 +223,107 @@ func TestToChatMessagesDropsThinkingAndSplitsToolResults(t *testing.T) {
 	}
 	if out[1].Role != "tool" || out[1].Content != "sunny" || out[1].ToolCallID != "call_1" {
 		t.Fatalf("tool result message = %+v", out[1])
+	}
+}
+
+// TestStreamSendsWireSafeToolNames is the R1 regression for the
+// OpenAI-compatible adapter, which accepts only [a-zA-Z0-9_-]{1,64}: the
+// internal reference goes out as `platform_shell_v1` in the tool list and in a
+// replayed call, and a call the model names that way is reported under the
+// internal reference.
+func TestStreamSendsWireSafeToolNames(t *testing.T) {
+	const ref = "platform/shell@v1"
+	body := "" +
+		`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_9","function":{"name":"platform_shell_v1","arguments":"{}"}}]},"finish_reason":null}]}` + "\n\n" +
+		`data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}` + "\n\n" +
+		`data: [DONE]` + "\n\n"
+	var gotBody []byte
+	srv := newTestServer(t, http.StatusOK, body, func(r *http.Request) { gotBody, _ = io.ReadAll(r.Body) })
+	defer srv.Close()
+
+	prompt := provider.Prompt{Messages: []provider.Message{
+		provider.TextMessage("user", "list files"),
+		{Role: "assistant", Blocks: []provider.ContentBlock{
+			{Kind: provider.BlockToolUse, ToolUseID: "call_1", ToolName: ref, Input: json.RawMessage(`{"cmd":"pwd"}`)},
+		}},
+		provider.ToolResultMessage("call_1", "/work", false),
+	}}
+	tools := []provider.ToolSchema{{Name: ref, Description: "run a command", InputSchema: json.RawMessage(`{"type":"object"}`)}}
+
+	p := &Provider{BaseURL: srv.URL, Model: "m"}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s, err := p.Stream(ctx, prompt, tools, provider.RunContext{})
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+
+	var req struct {
+		Tools []struct {
+			Function struct{ Name string } `json:"function"`
+		} `json:"tools"`
+		Messages []struct {
+			ToolCalls []struct {
+				Function struct{ Name string } `json:"function"`
+			} `json:"tool_calls"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(gotBody, &req); err != nil {
+		t.Fatalf("unmarshal request: %v", err)
+	}
+	if len(req.Tools) != 1 || req.Tools[0].Function.Name != "platform_shell_v1" {
+		t.Fatalf("tools = %+v, want one tool named platform_shell_v1", req.Tools)
+	}
+	if calls := req.Messages[1].ToolCalls; len(calls) != 1 || calls[0].Function.Name != "platform_shell_v1" {
+		t.Fatalf("replayed tool_calls = %+v, want name platform_shell_v1", calls)
+	}
+
+	for {
+		c, ok, err := s.Next(ctx)
+		if err != nil {
+			t.Fatalf("Next: %v", err)
+		}
+		if !ok {
+			t.Fatal("stream ended without a tool_use chunk")
+		}
+		if c.Kind == provider.ChunkToolUse {
+			if c.ToolName != ref {
+				t.Fatalf("ChunkToolUse.ToolName = %q, want the internal reference %q", c.ToolName, ref)
+			}
+			return
+		}
+	}
+}
+
+func TestStreamRefusesCollidingToolNames(t *testing.T) {
+	srv := newTestServer(t, http.StatusOK, canned, func(*http.Request) { t.Error("a request was sent") })
+	defer srv.Close()
+	p := &Provider{BaseURL: srv.URL, Model: "m"}
+	_, err := p.Stream(context.Background(), provider.Prompt{}, []provider.ToolSchema{{Name: "a/b@v1"}, {Name: "a_b_v1"}}, provider.RunContext{})
+	if !errors.Is(err, provider.ErrWireNameCollision) {
+		t.Fatalf("err = %v, want ErrWireNameCollision", err)
+	}
+}
+
+func TestStreamThrottleCarriesRetryAfterAndACancelledCallIsNotRetryable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("retry-after", "3")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":{"type":"rate_limit","message":"slow down"}}`))
+	}))
+	defer srv.Close()
+
+	p := &Provider{BaseURL: srv.URL, Model: "m"}
+	_, err := p.Stream(context.Background(), provider.Prompt{}, nil, provider.RunContext{})
+	te, ok := errors.AsType[*provider.ThrottleError](err)
+	if !ok || te.RetryAfter != 3*time.Second {
+		t.Fatalf("err = %v, want a ThrottleError with RetryAfter 3s", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = p.Stream(ctx, provider.Prompt{}, nil, provider.RunContext{})
+	if !errors.Is(err, context.Canceled) || provider.ClassifyTrigger(err) == provider.TriggerRetryable {
+		t.Fatalf("a cancelled call returned %v (%s), want context.Canceled, not retryable", err, provider.ClassifyTrigger(err))
 	}
 }

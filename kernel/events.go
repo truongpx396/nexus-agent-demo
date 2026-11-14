@@ -25,12 +25,24 @@ type thoughtPayload struct {
 	Opaque []byte `json:"opaque"`
 }
 
+// toolLoadedPayload records one tool pinned into the session at its start. A
+// resident tool needs only its id: every process holds the same catalog. A tool
+// the run itself added (a per-user MCP server) also carries its schema, because
+// no other process has it, and whichever worker resumes the run must show the
+// model the same tool list the session started with.
 type toolLoadedPayload struct {
-	ToolID string `json:"tool_id"`
+	ToolID      string          `json:"tool_id"`
+	Description string          `json:"description,omitempty"`
+	InputSchema json.RawMessage `json:"input_schema,omitempty"`
 }
 
+// memoryLoadedPayload records the tenant memory a session started with. Text is
+// the screened memory that was folded into the system prompt; keeping it in the
+// (sealed) log means a resume reads what the session began with, not whatever
+// the files say by then, so the system prompt never changes mid-session.
 type memoryLoadedPayload struct {
 	Sources []string `json:"sources"`
+	Text    string   `json:"text,omitempty"`
 }
 
 type contextPrunedPayload struct {
@@ -49,6 +61,11 @@ type condensationPayload struct {
 	CoveredThroughSeq int64  `json:"covered_through_seq"`
 	Summary           string `json:"summary"`
 	Degraded          bool   `json:"degraded"`
+	// CoveredMessages is how many of the transcript's oldest messages the summary
+	// replaced. Rehydrate uses it to rebuild the condensed transcript, so a resumed
+	// run keeps the condensation instead of paying for another one. Zero, which is
+	// what a payload written before this field has, means "not replayable".
+	CoveredMessages int `json:"covered_messages,omitempty"`
 }
 
 type toolUsePayload struct {

@@ -94,6 +94,16 @@ type Stater interface {
 	Stats(ctx context.Context) (Stats, error)
 }
 
+// LeaseExtender is an optional part of a Port. Extend tells the queue a leased
+// job is still being worked, so its lease is not treated as abandoned and handed
+// to another worker. A lease is only as long as Worker's LeaseFor, which is much
+// shorter than a run can take, so a Port that reclaims by idle time needs this: a
+// worker calls it for as long as its job runs (Worker.holdLock). A Port that does
+// not implement it keeps working, and its leases lapse on LeaseFor as before.
+type LeaseExtender interface {
+	Extend(ctx context.Context, jobID uuid.UUID) error
+}
+
 // Port is the queue's own abstract interface (mirrors internal/cost.
 // BudgetGate / kernel.ToolExecutor's own decoupling idiom): RedisStreams
 // (redis_streams.go) is the demo's own adapter — NATS JetStream remains

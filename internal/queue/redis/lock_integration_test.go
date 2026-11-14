@@ -81,3 +81,40 @@ func TestSessionLock_HeldTracksAcquireReleaseAndExpiry(t *testing.T) {
 		t.Error("Held = true after the TTL with no renewal: a dead worker's session would never be recovered")
 	}
 }
+
+// Recovery may re-enqueue one session once per window, however many processes sweep.
+func TestRecoveryThrottle_AllowsASessionOncePerWindowAndPerKey(t *testing.T) {
+	_, client := newTestQueue(t)
+	ctx := context.Background()
+	throttle := NewRecoveryThrottle(client, 300*time.Millisecond)
+
+	if ok, err := throttle.Allow(ctx, "session-a"); err != nil || !ok {
+		t.Fatalf("first Allow = %v, %v, want true", ok, err)
+	}
+	if ok, err := throttle.Allow(ctx, "session-a"); err != nil || ok {
+		t.Fatalf("second Allow inside the window = %v, %v, want false", ok, err)
+	}
+	if ok, err := throttle.Allow(ctx, "session-b"); err != nil || !ok {
+		t.Fatalf("Allow for another session = %v, %v, want true: the window is per session", ok, err)
+	}
+
+	// The other process sweeping at the same moment sees the same answer.
+	other := NewRecoveryThrottle(client, 300*time.Millisecond)
+	if ok, _ := other.Allow(ctx, "session-a"); ok {
+		t.Fatal("a second throttle on the same Redis allowed a session the first just spent")
+	}
+
+	if ttl := client.PTTL(ctx, recoveryKey("session-a")).Val(); ttl <= 0 || ttl > 300*time.Millisecond {
+		t.Fatalf("recovery key TTL = %v, want within the window", ttl)
+	}
+	time.Sleep(350 * time.Millisecond)
+	if ok, err := throttle.Allow(ctx, "session-a"); err != nil || !ok {
+		t.Fatalf("Allow after the window = %v, %v, want true", ok, err)
+	}
+}
+
+func TestNewRecoveryThrottle_DefaultWindowIsFifteenMinutes(t *testing.T) {
+	if got := NewRecoveryThrottle(nil, 0).every; got != 15*time.Minute {
+		t.Fatalf("default window = %v, want 15m", got)
+	}
+}

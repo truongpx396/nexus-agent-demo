@@ -122,6 +122,19 @@ func Rehydrate(ctx context.Context, history []eventlog.Event, decrypt DecryptFun
 				return nil, nil, err
 			}
 			transcript = append(transcript, provider.TextMessage("user", p.Body))
+		case eventlog.EventCondensation:
+			// The run replaced its oldest messages with a summary at this point in
+			// the log. Replaying that keeps a resumed run from having the whole
+			// history back, and from condensing it again with another model call.
+			flushAssistant()
+			flushResults()
+			var p condensationPayload
+			if err := decodeEvent(ctx, e, decrypt, &p); err != nil {
+				return nil, nil, err
+			}
+			if p.CoveredMessages > 0 && p.CoveredMessages <= len(transcript) {
+				transcript = condensedTranscript(transcript, p.CoveredMessages, p.Summary)
+			}
 		case eventlog.EventToolResult:
 			a, ok := answers[e.EventID]
 			if !ok {

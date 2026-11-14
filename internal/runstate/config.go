@@ -31,7 +31,10 @@ import (
 // rather than two copies. The one run that does not is a fresh one started by a
 // request (cmd/nexusd's kernelRunStarter), which takes the values from that
 // request, the same ones the session was admitted with. Fields only a fresh run
-// reads (Input, LoadedTools, MemorySources) are never set here.
+// reads (Input, LoadedTools, MemorySources, MemoryText, ExtraCatalog) are never set
+// here. The last two are what makes a session's prompt differ from the process-wide
+// one; a resumed run gets them from the session's log through RunState.Pinned, which
+// Load fills with kernel.RehydratePinned and the turn loop applies.
 func ConfigFor(sess eventlog.Session, base kernel.RunConfig) kernel.RunConfig {
 	base.AutonomyLevel = sess.AutonomyLevel
 	base.ModelID = sess.RouteModelID

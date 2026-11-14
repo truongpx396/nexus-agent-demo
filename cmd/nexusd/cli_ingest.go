@@ -11,7 +11,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/redis/go-redis/v9"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
 	"github.com/truongpx396/nexus-agent-demo/internal/ingest"
@@ -55,7 +54,11 @@ func runIngest(ctx context.Context, args []string) error {
 	defer pool.Close()
 	st := store.New(pool)
 
-	redisClient := redis.NewClient(&redis.Options{Addr: envOr("NEXUS_REDIS_ADDR", defaultRedisAddr)})
+	redisClient, err := newRedisClient()
+	if err != nil {
+		return fmt.Errorf("configure redis: %w", err)
+	}
+	defer redisClient.Close() //nolint:errcheck // a one-shot command's client; nothing to flush
 	gate := newCostGate(st, redisClient)
 	retriever := &retrieval.Retriever{Index: retrievalpg.NewIndex(st), Gate: gate, Embedder: newEmbedder(), ModelID: "fake-embedder-v1"}
 

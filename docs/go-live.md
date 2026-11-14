@@ -38,3 +38,35 @@ prints green is worse than no checklist at all.
 
 See `internal/reporting/golden_signals.go` (the golden-signal queries) and
 `cmd/nexusd`'s `runGoLive` for the implementation of every AUTOMATED item.
+
+## Configuring a production server
+
+Outside `--dev`, `nexusd` refuses to start unless these are set, and reports every
+missing one at once (`cmd/nexusd/config.go`'s `loadServerConfig`). `.env.example`
+documents each.
+
+| Setting | What it is |
+|---|---|
+| `NEXUS_DATABASE_URL` | The runtime role (`nexus_app`) through PgBouncer. |
+| `NEXUS_ADMIN_DATABASE_URL` | The superuser DSN for the few cross-tenant operations (the tenant directory, orphan recovery). Outside `--dev` it has no default: a deployment that forgot it would otherwise start and fail those loops quietly against localhost. |
+| `NEXUS_REDIS_URL` (or `NEXUS_REDIS_ADDR`) | The job queue, session locks, cost counters and live content previews. Use the URL form (`rediss://user:password@host:6380/0`) so the connection authenticates and is encrypted: the address form carries neither. The URL wins when both are set. |
+| `NEXUS_SIGNERD_SOCKET` | `signerd`, the only holder of the audit signing key. |
+| `NEXUS_KEK_PATH` | The key-encryption key. |
+| `NEXUS_AUTHN_PUBLIC_KEY_PATH` | The Ed25519 **public** key bearer tokens are verified with. The server only verifies, so it is never given the signing key: anyone who can read that file could mint a token for any tenant. Produce the file where the signing key lives with `nexusd token --public-key-out <path>` and mount only that. |
+| `NEXUS_METRICS_TOKEN` | The static bearer token `GET /metrics` requires (it lists every tenant's id, spend and tool names). Give Prometheus the same value. |
+| `NEXUS_SANDBOX` | `docker` or `opensandbox`: without a sandbox `platform/shell` would run commands on the host as the `nexusd` user. |
+
+### Shutting a server down
+
+A `SIGTERM` stops the queue workers leasing at once and lets the runs already under
+way finish, so a deploy does not cut an agent off mid-task (constitution Principle
+VIII). `NEXUS_SHUTDOWN_GRACE` (a Go duration, default `25s`) is how long they get; a run
+still going after that is cancelled, failed back onto the queue and resumed by the next
+worker, though a tool call that was executing is recorded as interrupted and may need a
+person to resolve its claim. The HTTP server drains for up to 30s alongside. **The
+orchestrator's termination grace period must be longer than the HTTP drain plus
+`NEXUS_SHUTDOWN_GRACE`** (60s or more with the default: `terminationGracePeriodSeconds` in
+Kubernetes, `stop_grace_period` in Compose), or it will `SIGKILL` the process before the
+drain finishes and the grace period is worth nothing. Raise both together if your runs are
+longer than 25s.
+

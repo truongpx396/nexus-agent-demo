@@ -170,6 +170,13 @@ type RunState struct {
 	History    []eventlog.Event
 	Transcript []provider.Message
 
+	// Pinned is the tenant memory and the run's own tools this session was
+	// started with (pinned.go). Seed sets it for a fresh run; a service that
+	// rebuilds a RunState from the log sets it from RehydratePinned
+	// (internal/runstate.Load does), and runTurns applies it to every turn's
+	// config. Zero changes nothing.
+	Pinned Pinned
+
 	// ToolUseIDs maps a tool_use event's internal EventID to the
 	// PROVIDER-assigned tool_use_id Rehydrate reconstructed it under
 	// (kernel/rehydrate.go's second return value) — how Resume/
@@ -248,15 +255,16 @@ func (k *Kernel) seed(ctx context.Context, st *RunState, cfg RunConfig, yield fu
 	// resident tool, so as separate writes they are a transaction, a lock, a
 	// receipt and a signer round trip each, all before the caller has its answer.
 	// None of the tool_loaded and memory_loaded events is added to st.Transcript:
-	// the model already sees the resident catalog through cfg.Catalog on every
-	// Provider.Stream call, and the memory text is already folded into cfg.System,
-	// so they are audit records of what was pinned, not messages.
+	// the model sees the resident catalog through cfg.Catalog on every
+	// Provider.Stream call, and the memory text and the run's own tools through
+	// st.Pinned (pinned.go), so they are records of what was pinned, not messages.
 	var opening []openingEvent
+	extras := cfg.extraTools()
 	for _, toolID := range cfg.LoadedTools {
-		opening = append(opening, openingEvent{typ: eventlog.EventToolLoaded, actor: eventlog.ActorSystem, toolID: &toolID, payload: toolLoadedPayload{ToolID: toolID}})
+		opening = append(opening, openingEvent{typ: eventlog.EventToolLoaded, actor: eventlog.ActorSystem, toolID: &toolID, payload: toolLoadedFor(toolID, extras)})
 	}
-	if len(cfg.MemorySources) > 0 {
-		opening = append(opening, openingEvent{typ: eventlog.EventMemoryLoaded, actor: eventlog.ActorSystem, payload: memoryLoadedPayload{Sources: cfg.MemorySources}})
+	if len(cfg.MemorySources) > 0 || cfg.MemoryText != "" {
+		opening = append(opening, openingEvent{typ: eventlog.EventMemoryLoaded, actor: eventlog.ActorSystem, payload: memoryLoadedPayload{Sources: cfg.MemorySources, Text: cfg.MemoryText}})
 	}
 	if cfg.Input != "" {
 		opening = append(opening, openingEvent{typ: eventlog.EventUserMessage, actor: eventlog.ActorUser, payload: userMessagePayload{Body: cfg.Input}})
@@ -267,6 +275,7 @@ func (k *Kernel) seed(ctx context.Context, st *RunState, cfg RunConfig, yield fu
 		yield(eventlog.Event{}, err)
 		return false
 	}
+	st.Pinned = cfg.pinnedFor()
 	for _, ev := range written {
 		if ev.Type == eventlog.EventUserMessage {
 			st.Transcript = append(st.Transcript, provider.TextMessage("user", cfg.Input))

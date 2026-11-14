@@ -3,10 +3,13 @@ package anthropic
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/truongpx396/nexus-agent-demo/internal/provider"
 )
@@ -345,5 +348,341 @@ func TestStreamInvalidRequestIsPermanent(t *testing.T) {
 	}
 	if provider.ClassifyTrigger(err) != provider.TriggerPermanent {
 		t.Fatalf("ClassifyTrigger(%v) = %v, want permanent", err, provider.ClassifyTrigger(err))
+	}
+}
+
+// TestStreamSendsWireSafeToolNames is the R1 regression: the Messages API
+// rejects a tool name outside [a-zA-Z0-9_-]{1,128}, so the internal reference
+// `platform/shell@v1` must reach the wire as `platform_shell_v1` — in the tool
+// list and in a replayed tool_use — and a tool_use block the model names that
+// way must come back to the kernel under the internal reference.
+func TestStreamSendsWireSafeToolNames(t *testing.T) {
+	const ref = "platform/shell@v1"
+	body := "event: message_start\n" +
+		`data: {"type":"message_start","message":{"usage":{"input_tokens":10}}}` + "\n\n" +
+		"event: content_block_start\n" +
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_9","name":"platform_shell_v1"}}` + "\n\n" +
+		"event: content_block_delta\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"cmd\":\"ls\"}"}}` + "\n\n" +
+		"event: content_block_stop\n" +
+		`data: {"type":"content_block_stop","index":0}` + "\n\n" +
+		"event: message_delta\n" +
+		`data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":3}}` + "\n\n" +
+		"event: message_stop\n" +
+		`data: {"type":"message_stop"}` + "\n\n"
+	var gotBody []byte
+	srv := newTestServer(t, http.StatusOK, body, func(r *http.Request) { gotBody, _ = io.ReadAll(r.Body) })
+	defer srv.Close()
+
+	prompt := provider.Prompt{Messages: []provider.Message{
+		provider.TextMessage("user", "list files"),
+		{Role: "assistant", Blocks: []provider.ContentBlock{
+			{Kind: provider.BlockToolUse, ToolUseID: "toolu_1", ToolName: ref, Input: json.RawMessage(`{"cmd":"pwd"}`)},
+		}},
+		provider.ToolResultMessage("toolu_1", "/work", false),
+	}}
+	tools := []provider.ToolSchema{{Name: ref, Description: "run a command", InputSchema: json.RawMessage(`{"type":"object"}`)}}
+
+	p := &Provider{APIKey: "k", Model: "m", BaseURL: srv.URL}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s, err := p.Stream(ctx, prompt, tools, provider.RunContext{})
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+
+	var req struct {
+		Tools    []struct{ Name string } `json:"tools"`
+		Messages []struct {
+			Content []struct {
+				Type string `json:"type"`
+				Name string `json:"name"`
+			} `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(gotBody, &req); err != nil {
+		t.Fatalf("unmarshal request: %v", err)
+	}
+	if len(req.Tools) != 1 || req.Tools[0].Name != "platform_shell_v1" {
+		t.Fatalf("tools = %+v, want one tool named platform_shell_v1", req.Tools)
+	}
+	if got := req.Messages[1].Content[0]; got.Type != "tool_use" || got.Name != "platform_shell_v1" {
+		t.Fatalf("replayed tool_use = %+v, want name platform_shell_v1", got)
+	}
+
+	for {
+		c, ok, err := s.Next(ctx)
+		if err != nil {
+			t.Fatalf("Next: %v", err)
+		}
+		if !ok {
+			t.Fatal("stream ended without a tool_use chunk")
+		}
+		if c.Kind == provider.ChunkToolUse {
+			if c.ToolName != ref {
+				t.Fatalf("ChunkToolUse.ToolName = %q, want the internal reference %q", c.ToolName, ref)
+			}
+			return
+		}
+	}
+}
+
+// Two references that sanitize to one wire name cannot be told apart in the
+// model's reply, so the call is refused before anything is sent.
+func TestStreamRefusesCollidingToolNames(t *testing.T) {
+	srv := newTestServer(t, http.StatusOK, canned, func(*http.Request) { t.Error("a request was sent") })
+	defer srv.Close()
+	p := &Provider{APIKey: "k", Model: "m", BaseURL: srv.URL}
+	_, err := p.Stream(context.Background(), provider.Prompt{}, []provider.ToolSchema{{Name: "a/b@v1"}, {Name: "a_b_v1"}}, provider.RunContext{})
+	if !errors.Is(err, provider.ErrWireNameCollision) {
+		t.Fatalf("err = %v, want ErrWireNameCollision", err)
+	}
+}
+
+// TestStreamSendsTheConfiguredMaxTokens: the output limit is a setting
+// (NEXUS_ANTHROPIC_MAX_TOKENS), not the adapter's fixed 4096.
+func TestStreamSendsTheConfiguredMaxTokens(t *testing.T) {
+	for name, tc := range map[string]struct {
+		maxTokens int
+		want      int
+	}{
+		"configured": {16000, 16000},
+		"unset":      {0, defaultMaxTokens},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var gotBody []byte
+			srv := newTestServer(t, http.StatusOK, canned, func(r *http.Request) { gotBody, _ = io.ReadAll(r.Body) })
+			defer srv.Close()
+			p := &Provider{APIKey: "k", Model: "m", BaseURL: srv.URL, MaxTokens: tc.maxTokens}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if _, err := p.Stream(ctx, provider.Prompt{}, nil, provider.RunContext{}); err != nil {
+				t.Fatalf("Stream: %v", err)
+			}
+			var req struct {
+				MaxTokens int `json:"max_tokens"`
+			}
+			if err := json.Unmarshal(gotBody, &req); err != nil {
+				t.Fatal(err)
+			}
+			if req.MaxTokens != tc.want {
+				t.Fatalf("max_tokens = %d, want %d", req.MaxTokens, tc.want)
+			}
+		})
+	}
+}
+
+// A 429 carries the provider's Retry-After, which the retry wrapper honours.
+func TestStreamThrottleCarriesRetryAfter(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("retry-after", "7")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}`))
+	}))
+	defer srv.Close()
+
+	p := &Provider{APIKey: "k", Model: "m", BaseURL: srv.URL}
+	_, err := p.Stream(context.Background(), provider.Prompt{}, nil, provider.RunContext{})
+	te, ok := errors.AsType[*provider.ThrottleError](err)
+	if !ok {
+		t.Fatalf("err = %v, want a ThrottleError", err)
+	}
+	if te.RetryAfter != 7*time.Second {
+		t.Fatalf("RetryAfter = %v, want 7s", te.RetryAfter)
+	}
+}
+
+// A run cancelled mid-request is the caller's doing; reporting it as a throttle
+// would have the retry layer start the call again.
+func TestStreamCancelledContextIsNotClassifiedRetryable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { <-r.Context().Done() }))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	p := &Provider{APIKey: "k", Model: "m", BaseURL: srv.URL}
+	_, err := p.Stream(ctx, provider.Prompt{}, nil, provider.RunContext{})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if got := provider.ClassifyTrigger(err); got == provider.TriggerRetryable {
+		t.Fatalf("a cancelled call classified as %s", got)
+	}
+}
+
+// TestContentBlocksSerialiseWithExactlyTheirOwnFields is R5: one struct with
+// omitempty on every field dropped the fields the API requires whenever they were
+// empty. A thinking block that comes back with a signature but no text must still
+// carry "thinking", and a tool_use with no input must still carry "input".
+func TestContentBlocksSerialiseWithExactlyTheirOwnFields(t *testing.T) {
+	for name, tc := range map[string]struct {
+		block provider.ContentBlock
+		want  string
+	}{
+		"text": {
+			provider.ContentBlock{Kind: provider.BlockText, Text: "hi"},
+			`{"type":"text","text":"hi"}`,
+		},
+		"thinking with its text": {
+			provider.ContentBlock{Kind: provider.BlockThinking, Text: "hmm", Signature: "sig"},
+			`{"type":"thinking","thinking":"hmm","signature":"sig"}`,
+		},
+		"thinking with empty text keeps the field": {
+			provider.ContentBlock{Kind: provider.BlockThinking, Signature: "sig"},
+			`{"type":"thinking","thinking":"","signature":"sig"}`,
+		},
+		"tool_use": {
+			provider.ContentBlock{Kind: provider.BlockToolUse, ToolUseID: "tu1", ToolName: "get_weather", Input: json.RawMessage(`{"city":"nyc"}`)},
+			`{"type":"tool_use","id":"tu1","name":"get_weather","input":{"city":"nyc"}}`,
+		},
+		"tool_use with nil input sends an empty object": {
+			provider.ContentBlock{Kind: provider.BlockToolUse, ToolUseID: "tu1", ToolName: "ping"},
+			`{"type":"tool_use","id":"tu1","name":"ping","input":{}}`,
+		},
+		"tool_use with empty input sends an empty object": {
+			provider.ContentBlock{Kind: provider.BlockToolUse, ToolUseID: "tu1", ToolName: "ping", Input: json.RawMessage{}},
+			`{"type":"tool_use","id":"tu1","name":"ping","input":{}}`,
+		},
+		"tool_result": {
+			provider.ContentBlock{Kind: provider.BlockToolResult, ToolUseID: "tu1", Text: "sunny"},
+			`{"type":"tool_result","tool_use_id":"tu1","content":"sunny"}`,
+		},
+		"tool_result error": {
+			provider.ContentBlock{Kind: provider.BlockToolResult, ToolUseID: "tu1", Text: "boom", IsError: true},
+			`{"type":"tool_result","tool_use_id":"tu1","content":"boom","is_error":true}`,
+		},
+		"tool_result with no content omits it": {
+			provider.ContentBlock{Kind: provider.BlockToolResult, ToolUseID: "tu1"},
+			`{"type":"tool_result","tool_use_id":"tu1"}`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			// A closing user message takes the history's cache breakpoint, so the block
+			// under test is marshalled with only the fields its own type defines.
+			msgs := toAnthMessages([]provider.Message{
+				{Role: "assistant", Blocks: []provider.ContentBlock{tc.block}},
+				provider.TextMessage("user", "end"),
+			}, provider.WireNames{})
+			if len(msgs) != 2 || len(msgs[0].Content) != 1 {
+				t.Fatalf("messages = %+v", msgs)
+			}
+			got, err := json.Marshal(msgs[0].Content[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != tc.want {
+				t.Fatalf("block = %s\nwant    %s", got, tc.want)
+			}
+		})
+	}
+
+	t.Run("an unknown type is an error", func(t *testing.T) {
+		if _, err := json.Marshal(anthContentBlock{Type: "image"}); err == nil {
+			t.Fatal("expected an error for a block type the adapter does not produce")
+		}
+	})
+
+	t.Run("a whole request body round trips through its own decoder", func(t *testing.T) {
+		raw, err := json.Marshal(messagesRequest{Model: "m", MaxTokens: 1, Messages: toAnthMessages([]provider.Message{
+			provider.TextMessage("user", "go"),
+			{Role: "assistant", Blocks: []provider.ContentBlock{
+				{Kind: provider.BlockThinking, Signature: "sig"},
+				{Kind: provider.BlockToolUse, ToolUseID: "tu1", ToolName: "ping"},
+			}},
+			provider.ToolResultMessage("tu1", "pong", false),
+		}, provider.WireNames{})})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var back messagesRequest
+		if err := json.Unmarshal(raw, &back); err != nil {
+			t.Fatalf("unmarshal: %v (%s)", err, raw)
+		}
+		if got := back.Messages[1].Content[0]; got.Type != "thinking" || got.Signature != "sig" {
+			t.Fatalf("thinking block did not survive: %+v", got)
+		}
+		if got := string(back.Messages[1].Content[1].Input); got != "{}" {
+			t.Fatalf("tool_use input = %q, want {}", got)
+		}
+	})
+}
+
+// TestStreamCachesTheConversationHistory is R8: the system block's breakpoint
+// covers only the tools and the system prompt, so an agent loop, whose growing
+// history is most of the input, was re-sent in full every turn. A second
+// breakpoint on the last block makes each call read what the previous one wrote.
+func TestStreamCachesTheConversationHistory(t *testing.T) {
+	var gotBody []byte
+	srv := newTestServer(t, http.StatusOK, canned, func(r *http.Request) { gotBody, _ = io.ReadAll(r.Body) })
+	defer srv.Close()
+
+	p := &Provider{APIKey: "k", Model: "m", BaseURL: srv.URL}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	prompt := provider.Prompt{System: "sys", Messages: []provider.Message{
+		provider.TextMessage("user", "go"),
+		{Role: "assistant", Blocks: []provider.ContentBlock{
+			{Kind: provider.BlockThinking, Signature: "sig"},
+			{Kind: provider.BlockToolUse, ToolUseID: "tu1", ToolName: "ping"},
+		}},
+		provider.ToolResultMessage("tu1", "pong", false),
+	}}
+	if _, err := p.Stream(ctx, prompt, nil, provider.RunContext{}); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+
+	var req struct {
+		System []struct {
+			CacheControl *anthCacheControl `json:"cache_control"`
+		} `json:"system"`
+		Messages []struct {
+			Content []map[string]any `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(gotBody, &req); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	breakpoints := 0
+	if len(req.System) == 1 && req.System[0].CacheControl != nil {
+		breakpoints++ // the system breakpoint stays
+	}
+	var onBlocks []string
+	for mi, m := range req.Messages {
+		for bi, b := range m.Content {
+			if cc, ok := b["cache_control"]; ok {
+				breakpoints++
+				onBlocks = append(onBlocks, fmt.Sprintf("%v@%d.%d", b["type"], mi, bi))
+				if cc.(map[string]any)["type"] != "ephemeral" {
+					t.Errorf("cache_control = %v, want ephemeral", cc)
+				}
+			}
+		}
+	}
+	if len(onBlocks) != 1 || onBlocks[0] != "tool_result@2.0" {
+		t.Fatalf("history breakpoints on %v, want exactly the last block (the tool_result of the last message)", onBlocks)
+	}
+	if breakpoints != 2 || breakpoints > 4 {
+		t.Fatalf("%d breakpoints in the request, want the system one and the history one (the API allows 4)", breakpoints)
+	}
+}
+
+// A thinking block cannot carry a breakpoint, so the last block that can does.
+func TestCacheLastBlockSkipsThinkingAndHandlesEmpty(t *testing.T) {
+	cacheLastBlock(nil) // no messages: nothing to do, no panic
+
+	msgs := toAnthMessages([]provider.Message{{Role: "assistant", Blocks: []provider.ContentBlock{
+		{Kind: provider.BlockText, Text: "so"},
+		{Kind: provider.BlockThinking, Text: "hmm", Signature: "sig"},
+	}}}, provider.WireNames{})
+	if msgs[0].Content[0].CacheControl == nil || msgs[0].Content[1].CacheControl != nil {
+		t.Fatalf("breakpoint on %+v, want the text block and not the thinking block", msgs[0].Content)
+	}
+	raw, err := json.Marshal(msgs[0].Content[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != `{"type":"thinking","thinking":"hmm","signature":"sig"}` {
+		t.Fatalf("thinking block = %s, want no cache_control", raw)
 	}
 }

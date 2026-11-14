@@ -111,6 +111,10 @@ func (c BackoffConfig) Delay(attempt int, rng *rand.Rand) Delay {
 	return Delay{Duration: d, Reason: fmt.Sprintf("attempt %d: exponential backoff capped at %s, jittered to %s", attempt, ceiling, d)}
 }
 
+// defaultBreakerCooldown is how long an open breaker stays open before it lets
+// one more attempt through.
+const defaultBreakerCooldown = 5 * time.Minute
+
 // CircuitBreaker trips open after `threshold` CONSECUTIVE failures that all
 // carry the same reason string (task 6.7: "circuit break after 3 identical
 // failures") — a run of failures with DIFFERENT reasons never trips it,
@@ -119,20 +123,45 @@ func (c BackoffConfig) Delay(attempt int, rng *rand.Rand) Delay {
 // instance is meant to be shared per failure-domain (internal/queue keys
 // one per session_key, not one per process — a single stuck session must
 // never trip the breaker for every OTHER session sharing the worker pool).
+//
+// An open breaker closes by itself after its cool-down: the next attempt is let
+// through, and one more identical failure opens it again for another cool-down.
+// Without that, a breaker opened on a failure that has since been fixed (a provider
+// outage, a bad deploy) refused its session for as long as the process lived, since
+// only a success could close it and an open breaker never runs the job.
 type CircuitBreaker struct {
 	threshold int
+	cooldown  time.Duration
+	now       func() time.Time // test seam; nil means time.Now
 
 	mu          sync.Mutex
 	consecutive int
 	lastReason  string
 	open        bool
+	openedAt    time.Time
 }
 
 func NewCircuitBreaker(threshold int) *CircuitBreaker {
 	if threshold <= 0 {
 		threshold = 3
 	}
-	return &CircuitBreaker{threshold: threshold}
+	return &CircuitBreaker{threshold: threshold, cooldown: defaultBreakerCooldown}
+}
+
+func (b *CircuitBreaker) clock() time.Time {
+	if b.now != nil {
+		return b.now()
+	}
+	return time.Now()
+}
+
+// expireLocked closes the breaker once its cool-down has passed, leaving it one
+// identical failure short of tripping again.
+func (b *CircuitBreaker) expireLocked() {
+	if b.open && b.cooldown > 0 && b.clock().Sub(b.openedAt) >= b.cooldown {
+		b.open = false
+		b.consecutive = b.threshold - 1
+	}
 }
 
 // RecordFailure folds in one more failure and returns true the moment the
@@ -141,6 +170,7 @@ func NewCircuitBreaker(threshold int) *CircuitBreaker {
 func (b *CircuitBreaker) RecordFailure(reason string) (tripped bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.expireLocked()
 	if b.open {
 		return false
 	}
@@ -152,6 +182,7 @@ func (b *CircuitBreaker) RecordFailure(reason string) (tripped bool) {
 	}
 	if b.consecutive >= b.threshold {
 		b.open = true
+		b.openedAt = b.clock()
 		return true
 	}
 	return false
@@ -168,9 +199,12 @@ func (b *CircuitBreaker) RecordSuccess() {
 	b.open = false
 }
 
+// Open reports whether the breaker is refusing attempts: tripped, and not yet past
+// its cool-down.
 func (b *CircuitBreaker) Open() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.expireLocked()
 	return b.open
 }
 
@@ -178,10 +212,20 @@ func (b *CircuitBreaker) Open() bool {
 // internal/queue's usage), created lazily on first touch — the same
 // per-key-lazy-map idiom internal/tools.Pipeline's own sessions map and
 // internal/cost.Gate's own caches already use.
+//
+// One registry is shared by every worker in a process, so a session's failures are
+// counted together whichever worker ran them, and Forget drops a key once its
+// session has succeeded: the map would otherwise grow by one entry per session for
+// the life of the process.
 type BreakerRegistry struct {
 	threshold int
-	mu        sync.Mutex
-	breakers  map[string]*CircuitBreaker
+	// Cooldown is how long a tripped breaker stays open; 0 means five minutes. Set
+	// it before the registry is first used.
+	Cooldown time.Duration
+	now      func() time.Time // test seam, handed to every breaker; nil means time.Now
+
+	mu       sync.Mutex
+	breakers map[string]*CircuitBreaker
 }
 
 func NewBreakerRegistry(threshold int) *BreakerRegistry {
@@ -194,7 +238,25 @@ func (r *BreakerRegistry) For(key string) *CircuitBreaker {
 	b, ok := r.breakers[key]
 	if !ok {
 		b = NewCircuitBreaker(r.threshold)
+		if r.Cooldown > 0 {
+			b.cooldown = r.Cooldown
+		}
+		b.now = r.now
 		r.breakers[key] = b
 	}
 	return b
+}
+
+// Forget drops key's breaker. A key that comes back starts with a fresh one.
+func (r *BreakerRegistry) Forget(key string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.breakers, key)
+}
+
+// Len is how many keys the registry is tracking.
+func (r *BreakerRegistry) Len() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.breakers)
 }

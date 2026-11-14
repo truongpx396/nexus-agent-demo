@@ -74,9 +74,11 @@ func TestAPISpec_DescribesExactlyTheRoutesTheRESTKitMounts(t *testing.T) {
 	}
 }
 
-// Every route the kit mounts needs a bearer token, and the probes need none, so
-// the spec's security declarations are checkable against what the kit does.
-func TestAPISpec_DeclaresBearerAuthOnEveryKitRouteAndNoneOnTheProbes(t *testing.T) {
+// Every route the kit mounts needs a tenant's bearer token. Of the routes nexusd
+// serves itself, the probes need none (a load balancer has no token to send) and
+// /metrics needs its own static one, which is not a tenant's: the spec's security
+// declarations are checkable against what the code does.
+func TestAPISpec_DeclaresBearerAuthOnEveryKitRouteAndTheRightAuthOnTheOpsRoutes(t *testing.T) {
 	doc := loadAPISpec(t)
 	for path, item := range doc.Paths.Map() {
 		for method, op := range item.Operations() {
@@ -84,9 +86,23 @@ func TestAPISpec_DeclaresBearerAuthOnEveryKitRouteAndNoneOnTheProbes(t *testing.
 			if op.Security != nil {
 				security = *op.Security
 			}
-			authenticated := len(security) > 0
-			if wantAuth := !slices.Contains(op.Tags, opsTag); authenticated != wantAuth {
-				t.Errorf("%s %s: security declares authentication = %v, want %v", method, path, authenticated, wantAuth)
+			var schemes []string
+			for _, req := range security {
+				for name := range req {
+					schemes = append(schemes, name)
+				}
+			}
+			slices.Sort(schemes)
+
+			want := []string{"bearerAuth"}
+			switch {
+			case path == "/metrics":
+				want = []string{"metricsAuth"}
+			case slices.Contains(op.Tags, opsTag):
+				want = nil
+			}
+			if !slices.Equal(schemes, want) {
+				t.Errorf("%s %s: security declares %v, want %v", method, path, schemes, want)
 			}
 		}
 	}
