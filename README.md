@@ -1,4 +1,4 @@
-# 🧭 Nexus Agent — A Governed Agent Platform Designed for Enterprise Readiness and Flexible Deployment Topology
+# 🤖 Nexus Agent 🧭 — A Governed Agent Platform Designed for Enterprise Readiness and Flexible Deployment Topology
 
 ### Held to enterprise standards: tenant isolation, tamper-evident audit, human approval, cost ceilings. Runs as one process today and keeps the seam that lets it split later
 
