@@ -1,6 +1,6 @@
 // Package teams implements peer agent teams: shared task boards with
 // Kanban-style claiming (README.md §9, Phase 9). New scope, not derived from
-// the original's 67 patterns (README §3's own note) — it borrows every
+// the spec's 67 patterns (README §3's own note) — it borrows every
 // primitive it can from what already shipped (internal/queue's SKIP LOCKED
 // claim, internal/delegate's copy-at-spawn/fold-at-boundary taint discipline
 // and fan-out envelope, internal/memory's injection scanner) rather than
@@ -46,7 +46,7 @@ const (
 // honest simplification internal/memory.Screen already makes for a memory
 // file. "pending" stays in the schema as a seam for a hypothetical future
 // async scanner, exactly like tools.AdmissionPending is a seam no code path
-// in this demo actually produces yet.
+// in Nexus Agent actually produces yet.
 type ScanStatus string
 
 const (

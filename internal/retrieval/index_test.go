@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/ingest"
+	"github.com/truongpx396/nexus-agent/internal/ingest"
 )
 
 // fakeIndex is an in-memory Index: it records what a Retriever hands it, so

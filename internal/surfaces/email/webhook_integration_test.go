@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
+	costpg "github.com/truongpx396/nexus-agent/internal/cost/postgres"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -20,15 +20,15 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/controlplane"
-	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
-	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/runs"
-	runspg "github.com/truongpx396/nexus-agent-demo/internal/runs/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
-	surfpg "github.com/truongpx396/nexus-agent-demo/internal/surfaces/postgres"
-	"github.com/truongpx396/nexus-agent-demo/migrations"
+	"github.com/truongpx396/nexus-agent/internal/controlplane"
+	"github.com/truongpx396/nexus-agent/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent/internal/crypto/postgres"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/internal/runs"
+	runspg "github.com/truongpx396/nexus-agent/internal/runs/postgres"
+	"github.com/truongpx396/nexus-agent/internal/store"
+	surfpg "github.com/truongpx396/nexus-agent/internal/surfaces/postgres"
+	"github.com/truongpx396/nexus-agent/migrations"
 )
 
 // setupEmailEnv mirrors internal/surfaces/telegram's own setupTelegramEnv

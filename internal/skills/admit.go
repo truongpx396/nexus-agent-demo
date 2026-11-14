@@ -3,7 +3,7 @@ package skills
 import (
 	"fmt"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/tools"
+	"github.com/truongpx396/nexus-agent/internal/tools"
 )
 
 // ScanBundle runs the same injection scanner internal/tools/admit.go uses

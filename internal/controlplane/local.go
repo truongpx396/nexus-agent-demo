@@ -50,7 +50,7 @@ type (
 	}
 )
 
-// LocalPort is the one implementation of Port this single-binary demo
+// LocalPort is the one implementation of Port this single-binary build
 // ships (README task 13.15, closing production-readiness finding F15) —
 // real orchestration over the four backend seams above, not a stub: it
 // owns the one piece of validation logic that belongs at THIS boundary

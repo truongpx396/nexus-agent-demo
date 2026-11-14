@@ -20,7 +20,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/controlplane"
+	"github.com/truongpx396/nexus-agent/internal/controlplane"
 )
 
 const (

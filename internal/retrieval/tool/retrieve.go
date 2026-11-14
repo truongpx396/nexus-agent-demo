@@ -14,8 +14,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/retrieval"
-	"github.com/truongpx396/nexus-agent-demo/internal/tools"
+	"github.com/truongpx396/nexus-agent/internal/retrieval"
+	"github.com/truongpx396/nexus-agent/internal/tools"
 )
 
 // RetrievedChunk is the tool's own view of one search hit: what the model is

@@ -12,7 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/cost"
+	"github.com/truongpx396/nexus-agent/internal/cost"
 )
 
 // Ledger is a cost.Ledger over maps, safe for concurrent use. Tenancy is a

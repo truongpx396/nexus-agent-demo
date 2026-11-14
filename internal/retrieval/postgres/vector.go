@@ -8,7 +8,7 @@ import (
 
 // formatVector renders a []float32 in pgvector's own text input format —
 // "[v1,v2,v3]" — passed as a plain string parameter cast with `::vector` in
-// SQL. This demo has no reason to pull in the pgvector-go driver module
+// SQL. Nexus Agent has no reason to pull in the pgvector-go driver module
 // just to register one pgx type: pgvector's text format is simple, stable,
 // and documented, and a plain string round-trip through ::vector is exactly
 // as correct as a binary encoding for this package's read/write volume.

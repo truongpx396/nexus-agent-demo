@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/tools"
+	"github.com/truongpx396/nexus-agent/internal/tools"
 )
 
 // fakeSandbox records what it was asked to run and answers with a fixed result.

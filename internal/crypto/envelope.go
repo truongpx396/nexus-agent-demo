@@ -25,7 +25,7 @@ type KEK struct {
 	key []byte
 }
 
-// LoadKEK reads exactly 32 raw bytes from r as the KEK. In this demo the KEK
+// LoadKEK reads exactly 32 raw bytes from r as the KEK. Today the KEK
 // lives in a local file (README.md's `.dev/` — gitignored); a production
 // deployment would source it from an external vault/HSM instead, behind the
 // same type.

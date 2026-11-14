@@ -10,13 +10,13 @@ post-ledger increments (Phase 18 in [tasks.md](tasks.md)); ledger Phases 18–20
 
 ## Summary
 
-A single-binary Go reimplementation of `truongpx396/nexus-agent`: one kernel loop (an `iter.Seq2` generator) driven by a
+Nexus Agent, a Go implementation of `truongpx396/nexus-agent-spec`, built so far as a single binary: one kernel loop (an `iter.Seq2` generator) driven by a
 durable queue, reaching the world through thin surfaces, governed by a 16-step tool pipeline and a 10-layer permission
 chain, bounded by pre-spend cost reservation, and grounded in an append-only, envelope-encrypted, hash-chain-audited
 event log under forced row-level security. The control-plane/data-plane split is a Go interface rather than a network
-boundary. The governing design rule, inherited from the original's MVP cut line: **seams and schema are decided early
-because they are expensive to retrofit; infrastructure is added late because it is cheap** — so the demo keeps every
-seam, contract and control and collapses only deployment topology, scale-out infrastructure and the commercial tail.
+boundary. The governing design rule, inherited from the spec's MVP cut line: **seams and schema are decided early
+because they are expensive to retrofit; infrastructure is added late because it is cheap** — so Nexus Agent keeps every
+seam, contract and control and, for now, collapses only deployment topology, scale-out infrastructure and the commercial tail.
 
 ## Technical Context
 

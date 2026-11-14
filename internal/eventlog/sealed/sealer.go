@@ -13,11 +13,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
-	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
+	auditpg "github.com/truongpx396/nexus-agent/internal/audit/postgres"
+	"github.com/truongpx396/nexus-agent/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent/internal/crypto/postgres"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/internal/store"
 )
 
 // Sealer builds eventlog.Appenders over Postgres. It holds the collaborators
@@ -48,7 +48,7 @@ var _ eventlog.Appender = sealedAppender{}
 // activeKeyID finds the key_id a session's events are currently sealed
 // under — its most recent event whose KeyID isn't crypto.ErasureKeyID (an
 // erasure record is deliberately plaintext, never a real key). Every session
-// in this demo has exactly one DEK for its whole lifetime (one is minted per
+// today has exactly one DEK for its whole lifetime (one is minted per
 // session and never rotated), so this is equivalent to "the session's DEK".
 func activeKeyID(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) (string, error) {
 	var keyID string

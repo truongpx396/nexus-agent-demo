@@ -5,9 +5,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/cost"
-	"github.com/truongpx396/nexus-agent-demo/internal/cost/costtest"
-	"github.com/truongpx396/nexus-agent-demo/internal/cost/inmem"
+	"github.com/truongpx396/nexus-agent/internal/cost"
+	"github.com/truongpx396/nexus-agent/internal/cost/costtest"
+	"github.com/truongpx396/nexus-agent/internal/cost/inmem"
 )
 
 func TestLedger_SatisfiesTheLedgerContract(t *testing.T) {

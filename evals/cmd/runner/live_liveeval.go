@@ -11,8 +11,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
-	"github.com/truongpx396/nexus-agent-demo/internal/provider/anthropic"
+	"github.com/truongpx396/nexus-agent/internal/provider"
+	"github.com/truongpx396/nexus-agent/internal/provider/anthropic"
 )
 
 const liveEvalBuilt = true

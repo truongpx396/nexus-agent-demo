@@ -24,8 +24,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/dotenv"
-	"github.com/truongpx396/nexus-agent-demo/internal/obs"
+	"github.com/truongpx396/nexus-agent/internal/dotenv"
+	"github.com/truongpx396/nexus-agent/internal/obs"
 )
 
 const (
@@ -74,7 +74,7 @@ const (
 
 // devMode is set once, at the top of main(), from a --dev flag scanned out
 // of os.Args before the subcommand switch (README task 13.11/F12): with it,
-// every zero-setup default this demo has always had keeps working
+// every zero-setup default Nexus Agent has always had keeps working
 // (auto-generated KEK and AuthN signing key, localhost DSNs); without it,
 // serve() fails closed on anything security/connectivity-critical left
 // unset rather than silently minting a fresh key or dialing a

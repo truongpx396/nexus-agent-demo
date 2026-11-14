@@ -21,7 +21,7 @@ import (
 // untracked (every pre-Phase-5 caller, including every test in this file).
 type DerivedArtifactRecorder func(ctx context.Context, tenantID, sessionID uuid.UUID, kind, path string) error
 
-// approxCharsPerToken is a rough, documented estimate — this demo has no
+// approxCharsPerToken is a rough, documented estimate — Nexus Agent has no
 // tokenizer of its own in internal/tools, and an approximation is the
 // pragmatic choice budget-shaping a preview needs (the exact count a real
 // deployment bills on comes from Provider.Usage, a different concern).

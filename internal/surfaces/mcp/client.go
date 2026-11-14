@@ -127,7 +127,7 @@ func (c *Client) Initialize(ctx context.Context) error {
 	params := map[string]any{
 		"protocolVersion": "2025-06-18",
 		"capabilities":    map[string]any{},
-		"clientInfo":      map[string]any{"name": "nexus-agent-demo", "version": "1"},
+		"clientInfo":      map[string]any{"name": "nexus-agent", "version": "1"},
 	}
 	return c.do(ctx, "initialize", params, nil)
 }

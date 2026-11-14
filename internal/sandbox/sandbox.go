@@ -117,7 +117,7 @@ func NewDocker() (*Docker, error) {
 // bind-mounted at /workspace as the working directory. There is no warm
 // pool and no exec-into-a-long-lived-container path (README §2's
 // infrastructure-collapse table: "Docker sandbox (no warm pool)") — one
-// container per call is the honest, simple interim this demo needs, not a
+// container per call is the honest, simple interim Nexus Agent needs, not a
 // performance-tuned runtime. Every path — clean exit, a breach, or a
 // mid-setup error — reclaims (force-removes) the container before
 // returning; nothing this call creates outlives it, matching task 5.12's

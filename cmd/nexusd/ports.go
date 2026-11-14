@@ -4,17 +4,17 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/runs"
+	"github.com/truongpx396/nexus-agent/internal/runs"
 
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/config"
-	"github.com/truongpx396/nexus-agent-demo/internal/delegate"
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
-	"github.com/truongpx396/nexus-agent-demo/internal/skills"
-	"github.com/truongpx396/nexus-agent-demo/kernel"
+	"github.com/truongpx396/nexus-agent/internal/config"
+	"github.com/truongpx396/nexus-agent/internal/delegate"
+	"github.com/truongpx396/nexus-agent/internal/eventlog/postgres"
+	"github.com/truongpx396/nexus-agent/internal/oversight"
+	"github.com/truongpx396/nexus-agent/internal/skills"
+	"github.com/truongpx396/nexus-agent/kernel"
 )
 
 // onSuspendFunc adapts oversight.Approvals.Create to the Postgres event log's
@@ -43,7 +43,7 @@ func onDelegateFunc(delegations *delegate.Delegations) postgres.DelegateFunc {
 	}
 }
 
-// logSender is the demo's stand-in surfaces.Sender (README task 7.14) —
+// logSender is Nexus Agent's stand-in surfaces.Sender (README task 7.14) —
 // logs the notification rather than actually reaching a human, the same
 // honest-interim posture demoSafetyModel and the unsandboxed platform/shell
 // fallback already take elsewhere in this file. A real Telegram/email

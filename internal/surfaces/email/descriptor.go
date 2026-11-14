@@ -1,6 +1,6 @@
 package email
 
-import "github.com/truongpx396/nexus-agent-demo/internal/surfaces/capability"
+import "github.com/truongpx396/nexus-agent/internal/surfaces/capability"
 
 // Descriptor: an email thread has no rich approval-context UI and no
 // server-push streaming channel of its own — the same shape

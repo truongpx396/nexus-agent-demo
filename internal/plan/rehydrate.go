@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/runstate"
+	"github.com/truongpx396/nexus-agent/internal/runstate"
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/kernel"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/kernel"
 )
 
 // loadRunState rebuilds the session's RunState from its own durable history

@@ -1,6 +1,6 @@
 # nexus web
 
-A small React + TypeScript (Vite) web app for the nexus-agent-demo REST API
+A small React + TypeScript (Vite) web app for the nexus-agent REST API
 (`internal/surfaces/rest`). This is Phase 11 task 11.7 — the last of several
 thin surfaces (Telegram, Zalo, email, cron, MCP, and this one) added on top
 of the same unmodified REST API and kernel, to demonstrate that the API was

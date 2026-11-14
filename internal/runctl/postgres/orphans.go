@@ -6,7 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
+	"github.com/truongpx396/nexus-agent/internal/runctl"
 )
 
 // ListRunning returns every session, in every tenant, that the database still

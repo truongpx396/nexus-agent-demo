@@ -11,9 +11,9 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/google/uuid"
 
-	runsrest "github.com/truongpx396/nexus-agent-demo/internal/runs/rest"
-	restkit "github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
-	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest/resttest"
+	runsrest "github.com/truongpx396/nexus-agent/internal/runs/rest"
+	restkit "github.com/truongpx396/nexus-agent/internal/surfaces/rest"
+	"github.com/truongpx396/nexus-agent/internal/surfaces/rest/resttest"
 )
 
 // pathParam matches an OpenAPI path parameter, "{id}".

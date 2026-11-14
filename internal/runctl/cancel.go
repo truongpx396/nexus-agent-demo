@@ -6,9 +6,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
-	"github.com/truongpx396/nexus-agent-demo/kernel"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/internal/oversight"
+	"github.com/truongpx396/nexus-agent/kernel"
 )
 
 type terminalPayload struct {
@@ -25,7 +25,7 @@ type terminalPayload struct {
 //     input request (oversight.Inputs.Invalidate) before terminating —
 //     exactly the sequencing kernel/loop.go's own Resume already documents
 //     for a denial: release the paired result, THEN decide the run is over.
-//   - Running: this demo has no live-goroutine interrupt wired for the
+//   - Running: Nexus Agent has no live-goroutine interrupt wired for the
 //     synchronous REST fast path (internal/tools/pipeline.go's own step-12
 //     doc comment names the analogous gap for cross-worker concurrency) —
 //     Cancel still marks the session aborted here; a live turn loop that

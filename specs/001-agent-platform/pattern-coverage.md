@@ -1,14 +1,14 @@
-# Pattern coverage: the original's 67 patterns against this demo
+# Pattern coverage: the spec's 67 patterns against Nexus Agent
 
 **Spec**: [spec.md](spec.md) | **Status**: Maintained (checked: `tests/contract/specs_test.go` fails if a path named here stops existing)
 
 > This table was section 1 of the build ledger (`docs/build-phases.md`, deleted; frozen at `09d54f8`). It answers a different question from the
-> tasks: not "what was built, in what order" but "for each pattern in the original design, how faithfully does this demo implement it".
+> tasks: not "what was built, in what order" but "for each pattern in the spec, how faithfully does Nexus Agent implement it".
 > **F** is full fidelity, **S** simplified, **K** a seam only, **✗** deliberately out of scope. The README's "57 of 67" badge links here.
 
 Legend: **F** = full fidelity · **S** = simplified but structurally identical · **K** = seam/schema kept, behavior deferred · **✗** = out of scope.
 
-| # | Pattern (original) | Demo | Where it lands | Note |
+| # | Pattern (spec) | Nexus Agent | Where it lands | Note |
 |---|---|---|---|---|
 | 1 | Single kernel loop, async generator | **F** | `kernel/` via Go 1.23 `iter.Seq2` range-over-func | The generator seam survives translation exactly |
 | 2 | Typed response classification (`TOOL_CALLS`/`CONTENT`/`EMPTY`) | **F** | `kernel/classify.go` | `exhaustive` linter enforces the switch |
@@ -54,7 +54,7 @@ Legend: **F** = full fidelity · **S** = simplified but structurally identical �
 | 42 | Typed failure classification, logged backoff+jitter, circuit break at 3 | **F** | `internal/reliability/` | Silent retry is impossible by construction |
 | 43 | Stuck detection escalating from `stuck_suspected` to terminate | **F** | `internal/reliability/stuck.go` | Second corroborating trip terminates |
 | 44 | Sandbox: hard CPU/mem/PID/wall limits, network default-deny | **S** | `internal/sandbox/` | Docker + `--network none` + rlimits; `isolation` field carries `gvisor`/`kata` as unshipped values |
-| 45 | In-sandbox broker = the only route from sandbox code to a tool | **S** | — (not built; task T136 in [tasks.md](tasks.md)) | Optional Phase 8 stretch; until then connectors are in the egress deny set (the original's own interim posture) |
+| 45 | In-sandbox broker = the only route from sandbox code to a tool | **S** | — (not built; task T136 in [tasks.md](tasks.md)) | Optional Phase 8 stretch; until then connectors are in the egress deny set (the spec's own interim posture) |
 | 46 | File-first memory, injected at session start, injection-screened, retention-bounded | **F** | `internal/memory/` | Writes take effect next session (cache stability) |
 | 47 | Skills as signed content-addressed bundles, 3-tier disclosure | **F** | `internal/skills/` | `bundle_digest`, per-file scan, `declared_tool_ids` **intersects** |
 | 48 | A skill's script is a tool or the bundle is refused | **F** | `internal/skills/admit.go` | No execution path for attachment-borne code |
@@ -72,17 +72,17 @@ Legend: **F** = full fidelity · **S** = simplified but structurally identical �
 | 60 | Trajectory grading, not only end state | **F** | `evals/trajectory.go` | Tool-selection accuracy, ask-vs-guess, turns consumed |
 | 61 | Config-not-forks onboarding | **F** | `internal/config/` | Tenant/agent/profile/policy are DB rows + markdown bootstrap |
 | 62 | Control↔data-plane versioned contract | **F** | `internal/controlplane/` | `Port` + `v1` shapes + a real `LocalPort` implementation; import-boundary test activates (Phase 15, task 15.4) |
-| 63 | Integration ports + authority boundary | **K** | port interfaces only | No third-party adapters — the state the original calls "must keep working forever" |
+| 63 | Integration ports + authority boundary | **K** | port interfaces only | No third-party adapters — the state the spec calls "must keep working forever" |
 | 64 | MCP client, per-user OAuth connectors, Telegram/Zalo, email, cron, web UI | **S** | `internal/surfaces/{mcp,telegram,zalo,email,cron}/`, `internal/connectors/`, `web/` | Phase 11 — six more thin adapters over the existing capability-descriptor pattern (#49); zero kernel change |
 | 65 | Credit ledger, billing periods, FX, price overrides, chargeback | **✗** | — | Commercial process, not architecture |
 | 66 | Multi-region residency, BYOK, four-topology packaging, rainbow deploy | **✗** | — | `region` and `key_id` columns kept as seams |
-| 67 | Retrieval/pgvector tier, document conversion, adversarial scan, adaptation proposals | **S** / ✗ | `internal/retrieval/`, `internal/ingest/` | Phase 12 ships retrieval + document conversion; adversarial scan and adaptation proposals stay out — each still gated on a trigger the demo never reaches |
+| 67 | Retrieval/pgvector tier, document conversion, adversarial scan, adaptation proposals | **S** / ✗ | `internal/retrieval/`, `internal/ingest/` | Phase 12 ships retrieval + document conversion; adversarial scan and adaptation proposals stay out — each still gated on a trigger Nexus Agent has not reached |
 
 **Score: 57 of 67 patterns at full or simplified fidelity, 4 as seams, 6 deliberately out.**
 Every omission is a deployment, commercial, or connector concern — no architectural idea is dropped.
 
 One addition sits outside this count: peer agent teams (Phase 9) — shared task boards with
-Kanban-style claiming. It is not a simplification of anything in the original's 67; it is new
+Kanban-style claiming. It is not a simplification of anything in the spec's 67; it is new
 scope, added after the fact and scoped tightly (fixed roster, shared budget envelope, read-time
 taint propagation) so it reuses this plan's existing primitives instead of adding a second set of
 rules alongside them.

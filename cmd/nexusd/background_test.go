@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
+	"github.com/truongpx396/nexus-agent/internal/runctl"
 )
 
 func TestStartPeriodic_StopWaitsForThePassAndIsSafeToRepeat(t *testing.T) {

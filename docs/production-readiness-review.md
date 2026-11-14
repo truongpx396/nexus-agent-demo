@@ -1,6 +1,6 @@
 # Production readiness review
 
-**Subject**: `nexus-agent-demo` @ `ccde613` (main, clean tree)
+**Subject**: `nexus-agent` @ `ccde613` (main, clean tree)
 **Scope**: 328 Go files · 45,377 lines · go 1.25.4
 **Date**: 2026-09-04
 **Method**: `go build ./...`, `go vet ./...`, full `go test -race -cover ./...`, and targeted reads. Every

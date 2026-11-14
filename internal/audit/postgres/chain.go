@@ -17,7 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/audit"
+	"github.com/truongpx396/nexus-agent/internal/audit"
 )
 
 // Chain builds and persists receipts. Construct once, share across every

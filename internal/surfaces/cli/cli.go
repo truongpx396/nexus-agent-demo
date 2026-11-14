@@ -22,8 +22,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/capability"
-	"github.com/truongpx396/nexus-agent-demo/internal/version"
+	"github.com/truongpx396/nexus-agent/internal/surfaces/capability"
+	"github.com/truongpx396/nexus-agent/internal/version"
 )
 
 // Descriptor is this surface's static capability declaration (README task

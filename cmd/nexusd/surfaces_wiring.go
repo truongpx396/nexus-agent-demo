@@ -8,15 +8,15 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 
-	queueredis "github.com/truongpx396/nexus-agent-demo/internal/queue/redis"
-	reportingpg "github.com/truongpx396/nexus-agent-demo/internal/reporting/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
-	"github.com/truongpx396/nexus-agent-demo/internal/runs"
-	runspg "github.com/truongpx396/nexus-agent-demo/internal/runs/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/email"
-	surfpg "github.com/truongpx396/nexus-agent-demo/internal/surfaces/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/telegram"
-	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/zalo"
+	queueredis "github.com/truongpx396/nexus-agent/internal/queue/redis"
+	reportingpg "github.com/truongpx396/nexus-agent/internal/reporting/postgres"
+	"github.com/truongpx396/nexus-agent/internal/runctl"
+	"github.com/truongpx396/nexus-agent/internal/runs"
+	runspg "github.com/truongpx396/nexus-agent/internal/runs/postgres"
+	"github.com/truongpx396/nexus-agent/internal/surfaces/email"
+	surfpg "github.com/truongpx396/nexus-agent/internal/surfaces/postgres"
+	"github.com/truongpx396/nexus-agent/internal/surfaces/telegram"
+	"github.com/truongpx396/nexus-agent/internal/surfaces/zalo"
 )
 
 // newMux is the process's outer mux: the unauthenticated probes, the three chat

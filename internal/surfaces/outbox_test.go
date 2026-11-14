@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/surfaces"
+	"github.com/truongpx396/nexus-agent/internal/surfaces"
 )
 
 // fakeLedger answers Open from fields and records what Record is told, so

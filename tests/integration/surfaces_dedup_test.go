@@ -8,8 +8,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
-	surfpg "github.com/truongpx396/nexus-agent-demo/internal/surfaces/postgres"
+	"github.com/truongpx396/nexus-agent/internal/store"
+	surfpg "github.com/truongpx396/nexus-agent/internal/surfaces/postgres"
 )
 
 // TestInboundDedup pins provider-retry dedup through the real adapter: a

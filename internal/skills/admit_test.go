@@ -3,7 +3,7 @@ package skills
 import (
 	"testing"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/tools"
+	"github.com/truongpx396/nexus-agent/internal/tools"
 )
 
 func TestScanBundle_InjectionInFileIsRejected(t *testing.T) {

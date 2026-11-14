@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
+	"github.com/truongpx396/nexus-agent/internal/provider"
 )
 
 type stubProvider struct{}

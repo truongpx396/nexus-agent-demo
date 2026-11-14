@@ -15,15 +15,15 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/cost"
-	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/ingest"
-	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
-	"github.com/truongpx396/nexus-agent-demo/internal/retrieval"
-	retrievalpg "github.com/truongpx396/nexus-agent-demo/internal/retrieval/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
-	"github.com/truongpx396/nexus-agent-demo/migrations"
+	"github.com/truongpx396/nexus-agent/internal/cost"
+	costpg "github.com/truongpx396/nexus-agent/internal/cost/postgres"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/internal/ingest"
+	"github.com/truongpx396/nexus-agent/internal/provider/fake"
+	"github.com/truongpx396/nexus-agent/internal/retrieval"
+	retrievalpg "github.com/truongpx396/nexus-agent/internal/retrieval/postgres"
+	"github.com/truongpx396/nexus-agent/internal/store"
+	"github.com/truongpx396/nexus-agent/migrations"
 )
 
 // setupRetrievalEnv starts a SINGLE pgvector-enabled postgres container

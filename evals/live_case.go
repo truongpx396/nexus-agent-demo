@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/cost"
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
+	"github.com/truongpx396/nexus-agent/internal/cost"
+	"github.com/truongpx396/nexus-agent/internal/provider"
 )
 
 // LiveToolResult is the canned response one LiveTaskCase's tool returns when

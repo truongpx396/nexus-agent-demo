@@ -202,7 +202,7 @@ are leaves (their `session_lineage` depth is already at the bound).
 | Table | Key columns | Rules |
 |---|---|---|
 | `documents` | `source_name`, `mime_type`, `source_digest`, `chunk_count`, `admission_status`, `admission_findings jsonb` | `CHECK admission_status IN ('pending','clean','flagged','rejected')`; fail closed before any chunk is indexed |
-| `retrieval_chunks` | `doc_id → documents ON DELETE CASCADE`, `chunk_index`, `content`, **`embedding vector(32)`**, `source_digest`, `injection_scan_status` | `UNIQUE (doc_id, chunk_index)`; `CHECK injection_scan_status IN ('clean','flagged','rejected')`; the demo's 32-dimension vector is a deterministic fake embedder's width, **not** a production dimension; deleted in the erasure transaction |
+| `retrieval_chunks` | `doc_id → documents ON DELETE CASCADE`, `chunk_index`, `content`, **`embedding vector(32)`**, `source_digest`, `injection_scan_status` | `UNIQUE (doc_id, chunk_index)`; `CHECK injection_scan_status IN ('clean','flagged','rejected')`; the 32-dimension vector is a deterministic fake embedder's width, **not** a production dimension; deleted in the erasure transaction |
 
 ## Validation rules that cross entities
 

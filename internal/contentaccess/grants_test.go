@@ -9,7 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/contentaccess"
+	"github.com/truongpx396/nexus-agent/internal/contentaccess"
 )
 
 // fakeGrantStore records what Grants asks of storage and answers from fields.

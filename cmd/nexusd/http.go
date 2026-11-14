@@ -6,13 +6,13 @@ import (
 	"net/http"
 	"time"
 
-	queueredis "github.com/truongpx396/nexus-agent-demo/internal/queue/redis"
+	queueredis "github.com/truongpx396/nexus-agent/internal/queue/redis"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/audit"
+	"github.com/truongpx396/nexus-agent/internal/audit"
 )
 
 // runHTTPServer serves handler on addr until ctx is cancelled, then drains it:

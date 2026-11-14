@@ -11,11 +11,11 @@ import (
 
 	"github.com/google/uuid"
 
-	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
-	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/sealed"
-	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
+	auditpg "github.com/truongpx396/nexus-agent/internal/audit/postgres"
+	cryptopg "github.com/truongpx396/nexus-agent/internal/crypto/postgres"
+	"github.com/truongpx396/nexus-agent/internal/eventlog/sealed"
+	"github.com/truongpx396/nexus-agent/internal/runctl"
+	"github.com/truongpx396/nexus-agent/internal/store"
 )
 
 // Store implements runctl.Store over Postgres. Every call runs in the named

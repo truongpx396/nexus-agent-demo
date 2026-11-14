@@ -10,7 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/authn"
+	"github.com/truongpx396/nexus-agent/internal/authn"
 )
 
 // runToken is `nexusd token --tenant=<name> [--user=<uuid>] [--ttl=1h]`
@@ -37,7 +37,7 @@ func runToken(_ context.Context, args []string) error {
 	if *tenantName == "" && *pubOut == "" {
 		return errors.New("--tenant is required")
 	}
-	tenantID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("nexus-agent-demo/tenant/"+*tenantName))
+	tenantID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("nexus-agent/tenant/"+*tenantName))
 
 	userID := uuid.New()
 	if *userArg != "" {

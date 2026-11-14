@@ -3,12 +3,12 @@ package runctl
 import (
 	"context"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/runstate"
+	"github.com/truongpx396/nexus-agent/internal/runstate"
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/kernel"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/kernel"
 )
 
 // loadRunState rebuilds a kernel.RunState from sessionID's own durable history

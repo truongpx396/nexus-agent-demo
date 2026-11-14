@@ -42,9 +42,9 @@ const dockerSocket = "/var/run/docker.sock"
 
 // composeProjects scopes this exporter to a comma-separated list of
 // projects' own containers — the APP stack's project (docker-compose.yml's/
-// docker-compose.local-llm.yml's own `name: nexus-agent-demo` directive)
+// docker-compose.local-llm.yml's own `name: nexus-agent` directive)
 // plus the agentic add-on's own separate project (docker-compose.agentic.
-// yml's `name: nexus-agent-demo-agentic` — Crawl4AI/OpenSandbox are still
+// yml's `name: nexus-agent-agentic` — Crawl4AI/OpenSandbox are still
 // app-driven work, not observability-of-observability, so they belong on
 // the same "Infrastructure" dashboard once `make agentic-up` brings them
 // up; an unlisted project just contributes zero containers, same tolerant
@@ -55,7 +55,7 @@ const dockerSocket = "/var/run/docker.sock"
 // APP's containers back to real names, not to report on its own sibling
 // observability containers. Overridable so this same image could map a
 // different project set without a code change.
-var composeProjects = strings.Split(envOr("COMPOSE_PROJECT", "nexus-agent-demo,nexus-agent-demo-agentic"), ",")
+var composeProjects = strings.Split(envOr("COMPOSE_PROJECT", "nexus-agent,nexus-agent-agentic"), ",")
 
 func envOr(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
@@ -140,7 +140,7 @@ func handleMetrics(client *http.Client) http.HandlerFunc {
 			name := c.ID
 			if len(c.Names) > 0 {
 				// Docker's own Names entries carry a leading slash
-				// ("/nexus-agent-demo-postgres-1") — stripped so this
+				// ("/nexus-agent-postgres-1") — stripped so this
 				// matches `docker ps`'s own display.
 				name = trimLeadingSlash(c.Names[0])
 			}

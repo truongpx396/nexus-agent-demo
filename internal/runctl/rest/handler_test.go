@@ -12,9 +12,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/runctl"
-	restkit "github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
-	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest/resttest"
+	"github.com/truongpx396/nexus-agent/internal/runctl"
+	restkit "github.com/truongpx396/nexus-agent/internal/surfaces/rest"
+	"github.com/truongpx396/nexus-agent/internal/surfaces/rest/resttest"
 )
 
 // fakeController records the last operation and answers with a fixed error.

@@ -15,7 +15,7 @@ import (
 	"io"
 	"sync"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
+	"github.com/truongpx396/nexus-agent/internal/provider"
 )
 
 // ChunkSpec is the YAML/Go-literal shape of one scripted chunk. Input is a

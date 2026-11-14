@@ -1,8 +1,8 @@
-# 🧭 Nexus Agent Demo — A Governed Agent Platform Designed for Enterprise Readiness and Flexible Deployment Topology
+# 🧭 Nexus Agent — A Governed Agent Platform Designed for Enterprise Readiness and Flexible Deployment Topology
 
 ### Held to enterprise standards: tenant isolation, tamper-evident audit, human approval, cost ceilings. Runs as one process today and keeps the seam that lets it split later
 
-**Enterprise readiness is a design property, not a feature list.** The platform is held to the original design's constitution
+**Enterprise readiness is a design property, not a feature list.** The platform is held to the spec's constitution
 (tenant isolation, tamper-evident audit, human approval of consequential actions, cost ceilings enforced before the spend,
 telemetry that is content-free by default), and each control has a code location and, where it can, a test or lint rule that fails the build.
 [Enterprise readiness](#-enterprise-readiness) says which controls are built, partial or only a seam. It is a design target, not a
@@ -10,9 +10,9 @@ certification.
 
 **Topology is a deployment decision, not an architecture.** The control plane, the data plane and the surfaces meet only at Go
 interfaces (`controlplane.Port` v1, the durable queue, the event log, the cost gate, the model provider and the audit signer), and
-an import-graph test fails the build if a package reaches across one. The [original design](https://github.com/truongpx396/nexus-agent#deployment-topologies)
-runs one build as multi-tenant SaaS, single-tenant, self-hosted in a customer's VPC, or a split control-plane/data-plane hybrid.
-This demo ships the smallest of those, the original's one-process collapse: `nexusd`, plus a separate key-custody `signerd`, over
+an import-graph test fails the build if a package reaches across one. The [Nexus Agent Spec](https://github.com/truongpx396/nexus-agent-spec#deployment-topologies)
+defines one build that runs as multi-tenant SaaS, single-tenant, self-hosted in a customer's VPC, or a split control-plane/data-plane hybrid.
+Nexus Agent ships the smallest of those today, the spec's one-process collapse: `nexusd`, plus a separate key-custody `signerd`, over
 Postgres + PgBouncer + Redis. It keeps the seam the others need, but no split ships, and topology is not yet selected by
 configuration ([Deployment topology](#-deployment-topology)).
 
@@ -20,12 +20,12 @@ Inside, every conversation is an **append-only, envelope-encrypted event log** w
 trail**. One kernel loop serves every surface, every tool call walks a **16-step pipeline** and a **10-layer permission chain**,
 and every model call is **budget-reserved before it streams**.
 
-It is a simplified Go reimplementation of [`truongpx396/nexus-agent`](https://github.com/truongpx396/nexus-agent) that keeps every
-architectural seam and control and collapses only deployment topology, scale-out infrastructure and the commercial tail
-([§2](#2-the-simplification-thesis)): the original's three Go binaries run here as one process, behind the same seams. Around the
-kernel sit tools (built-ins, an MCP client, per-user OAuth connectors), skills, sub-agent delegation and peer teams, a declarative
-orchestration plane, file-first memory, a pgvector retrieval tier and a Docker or OpenSandbox sandbox. The model is behind one port
-with three adapters: a scripted `fake` (the default, so everything runs with no credentials), `anthropic`, and `litellm` for any
+Nexus Agent is a Go implementation of the platform designed in [`truongpx396/nexus-agent-spec`](https://github.com/truongpx396/nexus-agent-spec).
+It builds every architectural seam and control of that design and, for now, defers deployment-topology selection, scale-out
+infrastructure and the commercial tail ([§2](#2-scope-against-the-spec)): the spec's three Go binaries run here as one process,
+behind the same seams. Around the kernel sit tools (built-ins, an MCP client, per-user OAuth connectors), skills, sub-agent
+delegation and peer teams, a declarative orchestration plane, file-first memory, a pgvector retrieval tier and a Docker or
+OpenSandbox sandbox. The model is behind one port with three adapters: a scripted `fake` (the default, so everything runs with no credentials), `anthropic`, and `litellm` for any
 OpenAI-compatible model, local Ollama included.
 
 > **Status:** a reference implementation, not a deployed service. The `--dev` path is zero-setup; outside it `nexusd`
@@ -33,7 +33,7 @@ OpenAI-compatible model, local Ollama included.
 > [`docs/production-readiness-review.md`](docs/production-readiness-review.md) and [`docs/go-live.md`](docs/go-live.md).
 > What it is held to, and which parts are built, partial or only a seam: [Enterprise readiness](#-enterprise-readiness).
 
-[![CI](https://github.com/truongpx396/nexus-agent-demo/actions/workflows/ci.yml/badge.svg)](https://github.com/truongpx396/nexus-agent-demo/actions/workflows/ci.yml)
+[![CI](https://github.com/truongpx396/nexus-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/truongpx396/nexus-agent/actions/workflows/ci.yml)
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](#-quickstart)
 [![Topology](https://img.shields.io/badge/Topology-one%20process%20today%2C%20seams%20for%20a%20split-0a7d5a)](#-deployment-topology)
 [![Enterprise](https://img.shields.io/badge/Enterprise-designed%20to%20standards%2C%20not%20certified-5319e7)](#-enterprise-readiness)
@@ -59,9 +59,9 @@ OpenAI-compatible model, local Ollama included.
 - [📊 Observability](#-observability)
 - [🔧 Make targets](#-make-targets)
 - **Design narrative** (cited across the code and docs by number)
-  - [1. What the original is, in one page](#1-what-the-original-is-in-one-page)
-  - [2. The simplification thesis](#2-the-simplification-thesis)
-  - [3. Target architecture of the demo](#3-target-architecture-of-the-demo)
+  - [1. What the spec defines, in one page](#1-what-the-spec-defines-in-one-page)
+  - [2. Scope against the spec](#2-scope-against-the-spec)
+  - [3. Target architecture](#3-target-architecture)
   - [4. Testing strategy](#4-testing-strategy)
   - [5. Explicitly out of scope](#5-explicitly-out-of-scope-and-the-trigger-that-would-change-that)
   - [6. Source references](#6-source-references)
@@ -73,7 +73,7 @@ OpenAI-compatible model, local Ollama included.
 
 | Layer | What it is |
 |---|---|
-| 🧱 **Topology** | Control plane, data plane and surfaces meet only at Go interfaces, enforced by an import-graph test. Ships as one process (`nexusd` plus `signerd`; containers with `make docker-up`), the original's one-process collapse. The seams for its SaaS, BYOC and hybrid topologies exist; those topologies do not |
+| 🧱 **Topology** | Control plane, data plane and surfaces meet only at Go interfaces, enforced by an import-graph test. Ships as one process (`nexusd` plus `signerd`; containers with `make docker-up`), the spec's one-process collapse. The seams for its SaaS, BYOC and hybrid topologies exist; those topologies do not |
 | 🏦 **Enterprise standards** | Held to the constitution's security, delivery and quality gates: tenant isolation, tamper-evident audit, digest-bound approvals, pre-spend cost ceilings, content-free-by-default telemetry. Each control has a code location and, where it can, a failing test; [the table](#-enterprise-readiness) says which are built, partial or only a seam, and what is deliberately not built |
 | 🧠 **Kernel** | `kernel/`: one `iter.Seq2` generator (observe → think → act). Typed response classification, 10 typed terminal reasons, and a paired `tool_use`/`tool_result` invariant that is property-tested over generated histories |
 | 🔀 **Models** | `internal/provider`: one port and one normalized stream. `fake` (default) · `anthropic` · `litellm`, with a deterministic router (data label × difficulty) and failover that commits at the first emitted chunk |
@@ -146,31 +146,31 @@ flowchart TB
 ```
 
 - 🚪 **Surfaces only translate I/O.** REST, Telegram, Zalo and email start a run through `runs.Launcher`; cron calls `StartRun` directly. `nexusctl` and the web app are clients of the REST API, and MCP is a tool source, not a way in.
-- 🎛️ **The control plane is a Go interface, `controlplane.Port` (v1).** Six operations, each backed by a component the composition root wires in: `AdmitRun` (sessions), `ReserveBudget` and `ReportCost` (`cost.Gate`), `EmitAuditReceipt` (the audit chain), `RequestApproval` (`oversight`) and `AuthorizeContentAccess` (content grants). Today `runs.Launcher` is the only caller outside the package, and only for `AdmitRun`; the loop reaches the cost gate directly, in process. It is slimmer than the original's control plane, which also owns SSO/OIDC, RBAC and per-tenant rate limits: here a signed-JWT dev issuer stands in for OIDC, there is no RBAC layer or per-tenant rate limiting, the principal comes from the verified token's claims, and routing (which model, and why) is decided in the launcher before admission.
-- 🧱 **Topology is a composition decision.** `kernel/` may not import the control plane, a surface or a storage adapter, and the control plane may not import `sandbox`, `memory` or `provider` (the same data-plane set as the original); `tests/contract/boundaries_test.go` walks the import graph and fails the build on a violation. `cmd/nexusd` is the one package that wires both sides, so what a split would change is there ([Deployment topology](#-deployment-topology)).
+- 🎛️ **The control plane is a Go interface, `controlplane.Port` (v1).** Six operations, each backed by a component the composition root wires in: `AdmitRun` (sessions), `ReserveBudget` and `ReportCost` (`cost.Gate`), `EmitAuditReceipt` (the audit chain), `RequestApproval` (`oversight`) and `AuthorizeContentAccess` (content grants). Today `runs.Launcher` is the only caller outside the package, and only for `AdmitRun`; the loop reaches the cost gate directly, in process. It is slimmer than the spec's control plane, which also owns SSO/OIDC, RBAC and per-tenant rate limits: here a signed-JWT dev issuer stands in for OIDC, there is no RBAC layer or per-tenant rate limiting, the principal comes from the verified token's claims, and routing (which model, and why) is decided in the launcher before admission.
+- 🧱 **Topology is a composition decision.** `kernel/` may not import the control plane, a surface or a storage adapter, and the control plane may not import `sandbox`, `memory` or `provider` (the same data-plane set as the spec); `tests/contract/boundaries_test.go` walks the import graph and fails the build on a violation. `cmd/nexusd` is the one package that wires both sides, so what a split would change is there ([Deployment topology](#-deployment-topology)).
 - 🔁 **Workers are interchangeable.** `StartRun` seeds the run's opening events and enqueues a start job carrying only ids, never the input's plaintext. A worker leases it under the per-session-key lock, which it renews for as long as the job runs, and re-enters the loop through `runctl.Control.Resume`, the same path crash recovery uses.
 - 🧾 **The loop reaches durable state only through `kernel.EventLog`.** The Postgres adapter appends the event and its audit receipt in one tenant-scoped transaction, and `signerd` signs the receipt.
 - ✋ **An approval suspends the run.** An `ASK` from the permission chain records a suspension and stops the generator with no terminal event; a human decision resumes it.
 
-Layout, import boundaries, schema and interfaces are in [§3](#3-target-architecture-of-the-demo). Zoomed-in views (the feature dependency graph, the kernel loop, the tool pipeline and permission chain) and sequence diagrams for the critical flows are in [`docs/architecture.md`](docs/architecture.md).
+Layout, import boundaries, schema and interfaces are in [§3](#3-target-architecture). Zoomed-in views (the feature dependency graph, the kernel loop, the tool pipeline and permission chain) and sequence diagrams for the critical flows are in [`docs/architecture.md`](docs/architecture.md).
 
 * * *
 
 ## 🚢 Deployment topology
 
-The [original design](https://github.com/truongpx396/nexus-agent#deployment-topologies) runs **one build in four topologies, selected by configuration**, plus a one-process collapse of it for a single trusted tenant. This demo ships that collapse and keeps the seams the other four need. **Ships** means this repo builds and runs it; **Seam only** means the boundary exists and is enforced, but nothing here deploys it.
+The [spec](https://github.com/truongpx396/nexus-agent-spec#deployment-topologies) defines **one build in four topologies, selected by configuration**, plus a one-process collapse of it for a single trusted tenant. Nexus Agent ships that collapse and keeps the seams the other four need. **Ships** means this repo builds and runs it; **Seam only** means the boundary exists and is enforced, but nothing here deploys it.
 
-| Original topology | What it is | In this demo |
+| Spec topology | What it is | In Nexus Agent |
 |---|---|---|
-| 🧩 **One-process collapse** (the original's "mini") | Control plane, surface gateway and worker pool merged into one binary, NATS folded into Redis | **Ships.** `nexusd` plus `signerd`, native (`make up && make migrate && make seed && make run`) or in containers (`make docker-up`: static, distroless, non-root images sharing the signer's unix socket on a volume). Redis Streams stands in for NATS |
+| 🧩 **One-process collapse** (the spec's "mini") | Control plane, surface gateway and worker pool merged into one binary, NATS folded into Redis | **Ships.** `nexusd` plus `signerd`, native (`make up && make migrate && make seed && make run`) or in containers (`make docker-up`: static, distroless, non-root images sharing the signer's unix socket on a volume). Redis Streams stands in for NATS |
 | 🏢 **Multi-tenant SaaS** | Shared planes; isolation by RLS and per-tenant gVisor or Kata sandboxes | **Partial.** RLS through PgBouncer, per-tenant envelope encryption and tenant-scoped state are in. The sandbox is Docker or OpenSandbox (gVisor and Kata are deferred, [§5](#5-explicitly-out-of-scope-and-the-trigger-that-would-change-that)), and SSO/OIDC, RBAC and per-tenant rate limits are not built |
 | 🏠 **Single-tenant** | A dedicated stack; the tenant boundary is the deployment | **Runs, unpackaged.** `make seed` creates one tenant; there is no dedicated-stack packaging |
-| 🖥️ **Self-hosted / BYOC** | The data plane in the customer's VPC | **Seam only.** The boundary test keeps `sandbox`, `memory` and `provider` out of the control plane, as in the original; there is no transport, no NATS and no deployment |
+| 🖥️ **Self-hosted / BYOC** | The data plane in the customer's VPC | **Seam only.** The boundary test keeps `sandbox`, `memory` and `provider` out of the control plane, as in the spec; there is no transport, no NATS and no deployment |
 | 🔀 **Hybrid** | Control plane and data plane split across a versioned contract | **Seam only.** `controlplane.Port` v1 with a wire encoding and a loopback HTTP transport that tests prove carry every operation and field; no deployed split, and what is missing is listed below |
 
-Where this departs from the original, so the headline is not read as more than it is:
+Where this departs from the spec, so the headline is not read as more than it is:
 
-- **Composition, not configuration.** The original selects a topology by configuration. Here `cmd/nexusd` hard-wires the in-process `LocalPort`, and there is no role or mode setting. The pattern map marks four-topology packaging out of scope ([`pattern-coverage.md`](specs/001-agent-platform/pattern-coverage.md), row 66), and the original's own cut line defers "multi-topology packaging".
+- **Composition, not configuration.** The spec selects a topology by configuration. Here `cmd/nexusd` hard-wires the in-process `LocalPort`, and there is no role or mode setting. The pattern map marks four-topology packaging out of scope ([`pattern-coverage.md`](specs/001-agent-platform/pattern-coverage.md), row 66), and the spec's own cut line defers "multi-topology packaging".
 - **The contract has a wire encoding, but almost nothing crosses it.** The Port's v1 types carry `json` tags and `internal/controlplane/wire` is a JSON-over-HTTP `Handler` and `Client`; its tests send every operation, with every field set, through a real HTTP server and pin the wire names. Nothing deployed uses it, only `AdmitRun` has a caller outside the package, and the transport has no authentication or TLS. A hybrid split needs those and a second `main`.
 - **Several `nexusd` processes have never been run together.** The queue is a Redis Streams consumer group with a per-session lock, and events cross processes over Pub/Sub, which is the right shape. A worker now renews that lock for as long as a job runs (before, it lapsed after 30 seconds, so a long run was not serial per session even in one process), and startup recovery skips a session whose lock is held instead of resuming every `running` one. Those make two processes safe by construction, not by test: the periodic loops (audit anchor, team backstop, idle sweep) are not audited for it, and the multi-process worker pool is deferred in §5 until concurrency needs it.
 - **A slimmer control plane**, described under [Architecture](#-architecture).
@@ -310,7 +310,7 @@ auto-loaded from the working directory; **a real environment variable always win
 
 ## 🏦 Enterprise readiness
 
-What an enterprise reviewer asks of an agent platform is the second governing equation of the original design: *enterprise-ready ≈ harness quality × trust surface* ([§1](#1-what-the-original-is-in-one-page)). The [constitution](docs/constitution.md) turns that into binding constraints (a Security & Trust Surface, Delivery & Scale constraints and Quality Gates), and this demo is held to them: each control below has a code location and, where it can, a test or lint rule that fails the build. It is a **design target, not a certification**. Nothing here claims SOC 2, ISO 27001 or GDPR conformance, nothing is deployed, and every row says what exists.
+What an enterprise reviewer asks of an agent platform is the second governing equation of the spec: *enterprise-ready ≈ harness quality × trust surface* ([§1](#1-what-the-spec-defines-in-one-page)). The [constitution](docs/constitution.md) turns that into binding constraints (a Security & Trust Surface, Delivery & Scale constraints and Quality Gates), and Nexus Agent is held to them: each control below has a code location and, where it can, a test or lint rule that fails the build. It is a **design target, not a certification**. Nothing here claims SOC 2, ISO 27001 or GDPR conformance, nothing is deployed, and every row says what exists.
 
 Four habits run through the design:
 
@@ -344,7 +344,7 @@ Each row ends with a status (**Built**, **Partial**, **Seam only** or **Not buil
 
 **Open work.** The telemetry content flag, the external audit anchor with break alerting, webhook replay and per-sender limits, digest pinning and egress masking are specified in [spec 003](specs/003-trust-surface-conformance/spec.md); a rehearsed restore, SLOs, an SBOM with signing and a routing capability floor are in [spec 004](specs/004-delivery-and-quality-gates/spec.md).
 
-**Not built, on purpose.** SSO/OIDC, RBAC and act-as scoping, per-tenant rate limiting on the API, KMS/HSM and customer-managed keys, an external vault, gVisor/Kata, an SBOM with signing, residency enforcement, a rehearsed restore, and SLOs with error budgets are out of this demo's scope. Some have a recorded trigger in [§5](#5-explicitly-out-of-scope-and-the-trigger-that-would-change-that) (gVisor/Kata, multi-region residency, BYOK); the rest are named here so they are not mistaken for built.
+**Not built, on purpose.** SSO/OIDC, RBAC and act-as scoping, per-tenant rate limiting on the API, KMS/HSM and customer-managed keys, an external vault, gVisor/Kata, an SBOM with signing, residency enforcement, a rehearsed restore, and SLOs with error budgets are out of scope for now. Some have a recorded trigger in [§5](#5-explicitly-out-of-scope-and-the-trigger-that-would-change-that) (gVisor/Kata, multi-region residency, BYOK); the rest are named here so they are not mistaken for built.
 
 **Check it yourself:**
 
@@ -356,7 +356,7 @@ Each row ends with a status (**Built**, **Partial**, **Seam only** or **Not buil
 | `make eval` | The release gate over the scripted corpus |
 | `go test ./tests/contract/ ./tests/property/` | The import boundaries, the file cap, money as integers and the paired-result invariant |
 
-**Where the bar came from.** It is the original design's constitution. An audit of the as-built code against it ([production-readiness review](docs/production-readiness-review.md)) found fifteen gaps, for example that tenant identity was an unverified request header and sandbox containers ran as root; Phases 13–15 (the production-readiness user story in [spec 001](specs/001-agent-platform/tasks.md)) were written to close them.
+**Where the bar came from.** It is the spec's constitution. An audit of the as-built code against it ([production-readiness review](docs/production-readiness-review.md)) found fifteen gaps, for example that tenant identity was an unverified request header and sandbox containers ran as root; Phases 13–15 (the production-readiness user story in [spec 001](specs/001-agent-platform/tasks.md)) were written to close them.
 
 * * *
 
@@ -400,13 +400,13 @@ Before calling a change done: `go build ./... && go vet ./... && golangci-lint r
 
 * * *
 
-> **The design narrative (§1–§6).** What follows is the design record: what the original is, what this demo collapses and
+> **The design narrative (§1–§6).** What follows is the design record: what the spec defines, what Nexus Agent scopes out today and
 > why, the architecture and its enforced boundaries, the test strategy and what is deliberately out of scope. Code comments and
 > docs cite these sections by number (`README §5`), so the numbering is stable; add new topics above this line, not between sections.
 
 ---
 
-## 1. What the original is, in one page
+## 1. What the spec defines, in one page
 
 Two governing equations drive everything:
 
@@ -439,22 +439,22 @@ The nine constitutional principles, compressed:
 
 ---
 
-## 2. The simplification thesis
+## 2. Scope against the spec
 
-The original's own MVP cut line states the rule this plan inherits verbatim:
+The spec's own MVP cut line states the rule this plan inherits verbatim:
 
 > **Seams and schema decisions are made early because they are expensive to retrofit;
 > infrastructure is added late because it is cheap to add and expensive to carry.**
 
-So the demo keeps **every seam, every contract, and every control**, and collapses only
+So Nexus Agent keeps **every seam, every contract, and every control**, and for now collapses only
 **deployment topology, scale-out infrastructure, and the commercial/compliance tail**.
 
 Concretely, three collapses:
 
-| Collapse | Original | Demo | Why it's honest |
+| Collapse | Spec | Nexus Agent today | Why it's honest |
 |---|---|---|---|
 | **Deployment** | 3 Go binaries (`control-plane`, `runtime-worker`, `surface-gateway`) + Python helper + React app | 1 binary `nexusd` (+ `nexusctl` CLI, + `signerd` for key custody) | The control↔data-plane split stays a **Go interface** (`controlplane.Port`) with a versioned request/response shape, and the packages never import across the boundary. Splitting into processes later is a `main.go` change, not a rewrite. |
-| **Infrastructure** | NATS JetStream, gVisor/Kata warm pool, S3, KMS/HSM, external vault, PgBouncer, OTel collector, pgvector | Redis Streams (`internal/queue/redis/streams.go` — a consumer group + `XAUTOCLAIM`; Postgres `SKIP LOCKED` was the original demo's own stand-in, retired in `migrations/0024_retire_queue_jobs.sql`), Docker sandbox (no warm pool), local blob dir, file-backed KEK + `signerd`, PgBouncer (kept — it's load-bearing), stdout OTLP | Each sits behind a port with one adapter — `internal/queue.Port`'s own doc comment names this exact swap as the reason it exists. The original's own cut line still defers NATS JetStream; Redis Streams is a second, closer-to-production demo stand-in ahead of it, not the final word. **PgBouncer is kept** because the transaction-local RLS rule is meaningless without a transaction pooler to prove it against. |
+| **Infrastructure** | NATS JetStream, gVisor/Kata warm pool, S3, KMS/HSM, external vault, PgBouncer, OTel collector, pgvector | Redis Streams (`internal/queue/redis/streams.go` — a consumer group + `XAUTOCLAIM`; Postgres `SKIP LOCKED` was this repo's own first stand-in, retired in `migrations/0024_retire_queue_jobs.sql`), Docker sandbox (no warm pool), local blob dir, file-backed KEK + `signerd`, PgBouncer (kept — it's load-bearing), stdout OTLP | Each sits behind a port with one adapter — `internal/queue.Port`'s own doc comment names this exact swap as the reason it exists. The spec's own cut line still defers NATS JetStream; Redis Streams is a second, closer-to-production stand-in ahead of it, not the final word. **PgBouncer is kept** because the transaction-local RLS rule is meaningless without a transaction pooler to prove it against. |
 | **Commercial + compliance tail** | Credit ledger, billing periods, FX, price overrides, multi-region residency, BYOK, chargeback export, MCP/OAuth connectors, Telegram/Zalo, document conversion, retrieval tier, adversarial scan, adaptation proposals | Dropped (columns kept where they're schema seams) | These are business processes, not patterns. Dropping them removes ~60 of 191 FRs and zero architectural ideas. |
 
 Everything else — the kernel, the pipeline, the permission chain, the approval transaction,
@@ -472,14 +472,14 @@ them changes that score.
 
 ---
 
-## 3. Target architecture of the demo
+## 3. Target architecture
 
 The architecture diagram lives in [🧭 Architecture](#-architecture) at the top of this README. What follows is what sits behind it: the repository layout, the import-boundary rules that keep it true, the core schema and the key interfaces.
 
 ### Repository layout
 
 ```text
-nexus-agent-demo/
+nexus-agent/
 ├── cmd/
 │   ├── nexusd/                 # the single binary: control plane + worker pool + REST surface
 │   ├── nexusctl/               # CLI surface adapter — the second surface that proves Principle I
@@ -732,7 +732,7 @@ Plus, all with `tenant_id` + RLS: `checkpoints`, `snapshots`, `idempotency_claim
 `surfaces`, `surface_identities`, `delivery_records`, `delegations`,
 `orchestration_plans`, `content_access_grants`.
 
-37 tenant tables today (`nexusd migrate` asserts RLS on every one). The original has ~50; the dropped set is billing, FX, connectors, integration
+37 tenant tables today (`nexusd migrate` asserts RLS on every one). The spec has ~50; the dropped set is billing, FX, connectors, integration
 adapters, the eval entities (which live in `evals/` as files here, not rows), and — as of
 `migrations/0024_retire_queue_jobs.sql` — the job queue itself, now a Redis Streams
 consumer group (`internal/queue/redis/streams.go`) instead of a Postgres table.
@@ -832,7 +832,7 @@ type Port interface { // v1
 }
 ```
 
-### The permission chain, verbatim from the original
+### The permission chain, verbatim from the spec
 
 ```go
 // internal/permissions/chain.go — one published TOTAL order. Every invocation walks it.
@@ -868,7 +868,7 @@ type Port interface { // v1
 | **Adversarial** | Consent suppression/simulation, mid-run autonomy widening, standing-scope escape, descriptor swap after admission, skill capability widening | `evals/corpus/safety/` |
 | **Eval gate** | The only place live models are called; governed by trial statistics rather than determinism | `evals/` |
 
-Two rules carried over verbatim from the original, because they are what make the rest mean anything:
+Two rules carried over verbatim from the spec, because they are what make the rest mean anything:
 
 1. **The eval gate ships in Phase 1**, before the first behavior-bearing slice — the window in
    which changes have the largest effect sizes is otherwise the window in which they go unmeasured.
@@ -877,7 +877,7 @@ Two rules carried over verbatim from the original, because they are what make th
 
 ## 5. Explicitly out of scope (and the trigger that would change that)
 
-Same discipline as the original's cut line — each is additive against the Phase 1 schema, so
+Same discipline as the spec's cut line — each is additive against the Phase 1 schema, so
 none requires migrating the event log, the audit chain, or the encryption model.
 
 | Deferred | Trigger |
@@ -893,17 +893,17 @@ none requires migrating the event log, the audit chain, or the encryption model.
 
 ## 6. Source references
 
-Read alongside this document. These links go to `truongpx396/nexus-agent@2ad2a6a`; this repo's own [`specs/`](specs/README.md) has files with the same names, reconstructed from this code rather than copied from there:
+Read alongside this document. These links go to `truongpx396/nexus-agent-spec@2ad2a6a`; this repo's own [`specs/`](specs/README.md) has files with the same names, reconstructed from this code rather than copied from there:
 
 | Document | Why |
 |---|---|
-| [`.specify/memory/constitution.md`](https://github.com/truongpx396/nexus-agent/blob/2ad2a6a/.specify/memory/constitution.md) | The nine principles. Every design decision here maps to one; it is also the code-review checklist. |
-| [`specs/001-agent-platform/contracts/kernel-abi.md`](https://github.com/truongpx396/nexus-agent/blob/2ad2a6a/specs/001-agent-platform/contracts/kernel-abi.md) | The interface seams translated in §3 — Provider, Tool, Delegation, Memory, Workspace, Surface, Skills, RunControl, Oversight, BudgetGate, Persistence, Telemetry. |
-| [`specs/001-agent-platform/contracts/tool-contract.md`](https://github.com/truongpx396/nexus-agent/blob/2ad2a6a/specs/001-agent-platform/contracts/tool-contract.md) | The 16-step pipeline and the 10-layer resolution order, verbatim. |
-| [`specs/001-agent-platform/contracts/orchestration-plane.md`](https://github.com/truongpx396/nexus-agent/blob/2ad2a6a/specs/001-agent-platform/contracts/orchestration-plane.md) | Plan schema, lifecycle gates, zero-token routing invariant. |
-| [`specs/001-agent-platform/data-model.md`](https://github.com/truongpx396/nexus-agent/blob/2ad2a6a/specs/001-agent-platform/data-model.md) | Entity fields; the demo's schema is a subset with identical column semantics. |
-| [`specs/001-agent-platform/plan.md`](https://github.com/truongpx396/nexus-agent/blob/2ad2a6a/specs/001-agent-platform/plan.md) § MVP cut line | The seams-early/infrastructure-late rule this whole plan inherits. |
-| [`specs/001-agent-platform/quickstart.md`](https://github.com/truongpx396/nexus-agent/blob/2ad2a6a/specs/001-agent-platform/quickstart.md) | The nine validation scenarios; this repo's [quickstart](specs/001-agent-platform/quickstart.md) has their simplified analogues. |
+| [`.specify/memory/constitution.md`](https://github.com/truongpx396/nexus-agent-spec/blob/2ad2a6a/.specify/memory/constitution.md) | The nine principles. Every design decision here maps to one; it is also the code-review checklist. |
+| [`specs/001-agent-platform/contracts/kernel-abi.md`](https://github.com/truongpx396/nexus-agent-spec/blob/2ad2a6a/specs/001-agent-platform/contracts/kernel-abi.md) | The interface seams translated in §3 — Provider, Tool, Delegation, Memory, Workspace, Surface, Skills, RunControl, Oversight, BudgetGate, Persistence, Telemetry. |
+| [`specs/001-agent-platform/contracts/tool-contract.md`](https://github.com/truongpx396/nexus-agent-spec/blob/2ad2a6a/specs/001-agent-platform/contracts/tool-contract.md) | The 16-step pipeline and the 10-layer resolution order, verbatim. |
+| [`specs/001-agent-platform/contracts/orchestration-plane.md`](https://github.com/truongpx396/nexus-agent-spec/blob/2ad2a6a/specs/001-agent-platform/contracts/orchestration-plane.md) | Plan schema, lifecycle gates, zero-token routing invariant. |
+| [`specs/001-agent-platform/data-model.md`](https://github.com/truongpx396/nexus-agent-spec/blob/2ad2a6a/specs/001-agent-platform/data-model.md) | Entity fields; Nexus Agent's schema is a subset with identical column semantics. |
+| [`specs/001-agent-platform/plan.md`](https://github.com/truongpx396/nexus-agent-spec/blob/2ad2a6a/specs/001-agent-platform/plan.md) § MVP cut line | The seams-early/infrastructure-late rule this whole plan inherits. |
+| [`specs/001-agent-platform/quickstart.md`](https://github.com/truongpx396/nexus-agent-spec/blob/2ad2a6a/specs/001-agent-platform/quickstart.md) | The nine validation scenarios; this repo's [quickstart](specs/001-agent-platform/quickstart.md) has their simplified analogues. |
 
 This repo's own supplementary docs:
 
@@ -932,7 +932,7 @@ This repo's own supplementary docs:
 | `invalid or expired token` | `make token` prints three lines, so `NEXUS_TOKEN=$(make -s token)` captures all of them. Take the `token:` line: `make -s token \| awk '/^token:/ {print $2}'`. Tokens last 24 hours (`--ttl`) |
 | `make run` talks to the wrong model, or a run never finishes | `.env` is auto-loaded, so a `NEXUS_PROVIDER` there beats the `--dev` default. The startup line says which: `listening on :8085 (provider=…)`. Run `NEXUS_PROVIDER=fake make run` for the zero-setup path |
 | `GET /v1/sessions` is empty after minting a new token | Each `make token` is a new user and sessions are per user. Reuse the token, or mint with `--user=<uuid>` |
-| 404 or 401 that no code change explains | A stray container can publish the port and shadow the native `nexusd` (the compose service `nexus-agent-demo-nexusd-1`). Check `docker ps` before debugging |
+| 404 or 401 that no code change explains | A stray container can publish the port and shadow the native `nexusd` (the compose service `nexus-agent-nexusd-1`, or `nexus-agent-demo-nexusd-1` left over from before the rename). Check `docker ps` before debugging |
 | `verify-chain` reports `signature_invalid` | The database holds receipts that the current trusted public key does not verify, typically left over from an earlier `signerd` key. To reset the local stack (this deletes all local data): `docker compose -f deploy/docker-compose.yml down -v`, regenerate the `.dev/*.key` files, then `make up && make migrate && make seed` |
 | `serve: config: missing required environment variable(s) outside --dev mode` | Intended: outside `--dev`, `nexusd` fails closed. Set the five variables listed under [Configuration](#-configuration), or pass `--dev` |
 | `obs: send langfuse ingestion batch` or `pyroscope: upload profile` errors in the log | Harmless noise: tracing or profiling is configured in `.env` but its backend is down. Start it (`make langfuse-up`, `make profiling-up`) or remove the variable from `.env` |

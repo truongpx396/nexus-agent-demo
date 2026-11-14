@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/tools"
+	"github.com/truongpx396/nexus-agent/internal/tools"
 )
 
 // FileRead reads one file from the session workspace.

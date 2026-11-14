@@ -26,16 +26,16 @@ import (
 	tcredis "github.com/testcontainers/testcontainers-go/modules/redis"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/cost"
-	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
-	costredis "github.com/truongpx396/nexus-agent-demo/internal/cost/redis"
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
-	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
-	"github.com/truongpx396/nexus-agent-demo/kernel"
-	"github.com/truongpx396/nexus-agent-demo/migrations"
+	"github.com/truongpx396/nexus-agent/internal/cost"
+	costpg "github.com/truongpx396/nexus-agent/internal/cost/postgres"
+	costredis "github.com/truongpx396/nexus-agent/internal/cost/redis"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/internal/eventlog/postgres"
+	"github.com/truongpx396/nexus-agent/internal/provider"
+	"github.com/truongpx396/nexus-agent/internal/provider/fake"
+	"github.com/truongpx396/nexus-agent/internal/store"
+	"github.com/truongpx396/nexus-agent/kernel"
+	"github.com/truongpx396/nexus-agent/migrations"
 )
 
 // setupCostEnv starts a single postgres container (no PgBouncer needed —

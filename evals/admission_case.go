@@ -9,9 +9,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/skills"
-	"github.com/truongpx396/nexus-agent-demo/internal/tools"
-	"github.com/truongpx396/nexus-agent-demo/internal/tools/builtin"
+	"github.com/truongpx396/nexus-agent/internal/skills"
+	"github.com/truongpx396/nexus-agent/internal/tools"
+	"github.com/truongpx396/nexus-agent/internal/tools/builtin"
 )
 
 // DescriptorAdmissionCase grades internal/tools.Scan directly (task 3.3):

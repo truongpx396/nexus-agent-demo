@@ -14,7 +14,7 @@ nothing checked: a contract that was Go types only, a session lock that lapsed m
 
 ### Ledger Phase 18: Inbound-delivery dedup, webhook session locking and atomic conversation resume
 
-Not part of the original 67-pattern coverage — nothing here is a new architectural idea, and like
+Not part of the spec's 67-pattern coverage — nothing here is a new architectural idea, and like
 Phase 13 it closes a gap between claimed and shipped behavior rather than adding one. Driven by
 [`docs/webhook-concurrency-review.md`](../../docs/webhook-concurrency-review.md) (2026-09-18): Phase 11's
 conversational webhook surfaces (Telegram/Zalo/email) each did an unlocked check-then-act against
@@ -29,7 +29,7 @@ of this phase.
 
 ### Ledger Phase 19: Hexagonal architecture: persistence and use-case seams
 
-Not part of the original 67-pattern coverage and, like Phases 13 and 18, nothing here is a new
+Not part of the spec's 67-pattern coverage and, like Phases 13 and 18, nothing here is a new
 architectural idea: it closes the gap between "every seam is a Go interface" and a core that
 actually has no knowledge of its adapters. An architecture review (2026-10-29) found
 ports-and-adapters applied at the volatile edges (`provider.Provider`, `queue.Port`,
@@ -42,9 +42,9 @@ deployed, so each task below is a straight refactor with no data migration.
 
 ### Ledger Phase 20: A provable topology seam, and a session lock that holds
 
-Not part of the original 67-pattern coverage and, like Phases 13, 18 and 19, nothing here is a new
-architectural idea. Reframing the README around deployment topology and comparing it with the original's
-[Deployment topologies](https://github.com/truongpx396/nexus-agent#deployment-topologies) found three claims that
+Not part of the spec's 67-pattern coverage and, like Phases 13, 18 and 19, nothing here is a new
+architectural idea. Reframing the README around deployment topology and comparing it with the spec's
+[Deployment topologies](https://github.com/truongpx396/nexus-agent-spec#deployment-topologies) found three claims that
 rested on nothing that checked them: the control↔data-plane contract (#62) was Go types with no wire encoding and
 only `AdmitRun` ever crossed it; "any worker can take any job" depended on a session lock that was never renewed
 (`SessionLock.Renew` existed, and nothing outside its own test called it), so serial-per-session lapsed after the

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
+	"github.com/truongpx396/nexus-agent/internal/provider/fake"
 )
 
 func TestGateRunOverallPassOnCleanCorpus(t *testing.T) {

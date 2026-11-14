@@ -5,17 +5,17 @@ import (
 	"fmt"
 	"sync"
 
-	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
+	costpg "github.com/truongpx396/nexus-agent/internal/cost/postgres"
 
 	"github.com/google/uuid"
 
-	auditpg "github.com/truongpx396/nexus-agent-demo/internal/audit/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/contentaccess"
-	"github.com/truongpx396/nexus-agent-demo/internal/controlplane"
-	"github.com/truongpx396/nexus-agent-demo/internal/cost"
-	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
-	runspg "github.com/truongpx396/nexus-agent-demo/internal/runs/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
+	auditpg "github.com/truongpx396/nexus-agent/internal/audit/postgres"
+	"github.com/truongpx396/nexus-agent/internal/contentaccess"
+	"github.com/truongpx396/nexus-agent/internal/controlplane"
+	"github.com/truongpx396/nexus-agent/internal/cost"
+	"github.com/truongpx396/nexus-agent/internal/oversight"
+	runspg "github.com/truongpx396/nexus-agent/internal/runs/postgres"
+	"github.com/truongpx396/nexus-agent/internal/store"
 )
 
 // This file is the composition root for internal/controlplane.Port (README

@@ -6,16 +6,16 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/runstate"
+	"github.com/truongpx396/nexus-agent/internal/runstate"
 
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/obs"
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
-	"github.com/truongpx396/nexus-agent-demo/kernel"
+	"github.com/truongpx396/nexus-agent/internal/crypto"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/internal/obs"
+	"github.com/truongpx396/nexus-agent/internal/provider"
+	"github.com/truongpx396/nexus-agent/kernel"
 )
 
 // TaintFolder is the operations this package needs from

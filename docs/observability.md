@@ -224,7 +224,7 @@ identical either way: loopback-only, nothing off the machine can reach it.
 `make pprof-cpu`/`pprof-heap`/`pprof-goroutine` need no `PPROF_ADDR`
 override for this path — same host-side port either way. (Confirmed this
 wasn't automatic: `docker compose up` doesn't rebuild an image that already
-exists unless asked, so a plain `docker build -t nexus-agent-demo/nexusd:
+exists unless asked, so a plain `docker build -t nexus-agent/nexusd:
 latest .` — what `make docker-build` used to run — tagged a DIFFERENT image
 name than compose's own auto-generated one and was silently never used;
 `make docker-build` now runs `docker compose build` instead, so it always
@@ -321,14 +321,14 @@ make profiling-up
 
 This stack runs as its OWN Compose project, `nexus-agent-observability`
 — a separate Docker Desktop container group from the app stack's
-`nexus-agent-demo` (postgres/pgbouncer/redis/nexusd/signerd/litellm/
+`nexus-agent` (postgres/pgbouncer/redis/nexusd/signerd/litellm/
 langfuse-lite), the same split `docker-compose.agentic.yml` already made for
-Crawl4AI/OpenSandbox with its own `nexus-agent-demo-agentic`. Nothing
+Crawl4AI/OpenSandbox with its own `nexus-agent-agentic`. Nothing
 functional depends on the two sharing a project: every target this stack
 scrapes/tails is reached over a published host port or a bind-mounted file
 (see this file's own header comment), never container DNS across that
 boundary, and `docker-label-exporter`/Promtail's own Docker-discovery job
-both still explicitly target `nexus-agent-demo` regardless of what THIS
+both still explicitly target `nexus-agent` regardless of what THIS
 file's own project is named — see their own comments in
 `docker-compose.observability.yml`/`promtail-config.yml`. `docker compose
 ls` shows both projects side by side; `make observability-down` still stops
@@ -374,7 +374,7 @@ flag to start them in the first place).
 
 `docker-label-exporter` (task 17.15) takes two of its own, set in
 `docker-compose.observability.yml`'s own service block rather than here —
-`COMPOSE_PROJECT` (default `nexus-agent-demo`) is the label value it
+`COMPOSE_PROJECT` (default `nexus-agent`) is the label value it
 filters the Docker API on, and `LISTEN_ADDR` (default `:9101`) is its own
 bind address. Neither needs to change for this repo's own use.
 
@@ -418,7 +418,7 @@ bind address. Neither needs to change for this repo's own use.
   backend — and the Infrastructure dashboard joins the two by container ID
   at query time. This is also what scopes the dashboard to this project:
   the exporter's own Docker API call is server-side filtered to
-  `com.docker.compose.project=nexus-agent-demo`, so a container it was
+  `com.docker.compose.project=nexus-agent`, so a container it was
   never told about has nothing to join against.
 - **cAdvisor runs `privileged: true` with broad read-only host mounts**
   (`/rootfs`, `/sys`, `/var/lib/docker`, the containerd socket) — real,

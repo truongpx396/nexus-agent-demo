@@ -7,12 +7,12 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/internal/provider"
 )
 
 // TerminalReason is the typed union every run ends under (README task 2.3).
-// The demo ships 8 of the original design's 9 reasons — credit_exhausted is
+// Nexus Agent ships 8 of the spec's 9 reasons — credit_exhausted is
 // dropped with the billing plane (README.md §3, pattern 3) — each with a
 // named producer below. Most producers are called by a phase that hasn't
 // landed yet; they exist now, complete, so every switch over TerminalReason

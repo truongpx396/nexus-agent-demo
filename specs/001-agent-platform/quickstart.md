@@ -24,7 +24,7 @@ export NEXUS_TOKEN=$(make -s token)           # dev bearer token for tenant acme
 `make migrate` prints that row-level security is enabled on every tenant table. Without `--dev`, `nexusd serve` **fails closed**, listing every
 unset security-critical setting in one error (US9).
 
-> **Trap**: a stray container (`nexus-agent-demo-nexusd-1`) can publish the port and silently shadow the native `nexusd` — a 404 on a new route or
+> **Trap**: a stray container (`nexus-agent-nexusd-1`, or `nexus-agent-demo-nexusd-1` left over from before the rename) can publish the port and silently shadow the native `nexusd` — a 404 on a new route or
 > a 401 on a fresh token usually means that, not a regression. Check `docker ps` first.
 
 **Always-available check (no external services)**: `go test ./...` runs unit + property tests. **Integration** (needs Docker; starts its own

@@ -18,11 +18,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/obs"
-	"github.com/truongpx396/nexus-agent-demo/internal/reporting"
-	reportingpg "github.com/truongpx396/nexus-agent-demo/internal/reporting/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/internal/obs"
+	"github.com/truongpx396/nexus-agent/internal/reporting"
+	reportingpg "github.com/truongpx396/nexus-agent/internal/reporting/postgres"
+	"github.com/truongpx396/nexus-agent/internal/store"
 )
 
 func TestComputeGoldenSignals(t *testing.T) {

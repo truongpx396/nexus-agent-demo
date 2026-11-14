@@ -7,8 +7,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/hooks"
-	"github.com/truongpx396/nexus-agent-demo/internal/permissions"
+	"github.com/truongpx396/nexus-agent/internal/hooks"
+	"github.com/truongpx396/nexus-agent/internal/permissions"
 )
 
 // Invocation is what the pipeline receives for one tool_use. It is kept

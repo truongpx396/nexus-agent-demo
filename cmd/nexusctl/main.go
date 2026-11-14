@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/dotenv"
-	"github.com/truongpx396/nexus-agent-demo/internal/surfaces/cli"
+	"github.com/truongpx396/nexus-agent/internal/dotenv"
+	"github.com/truongpx396/nexus-agent/internal/surfaces/cli"
 )
 
 func main() {

@@ -1,6 +1,6 @@
 package zalo
 
-import "github.com/truongpx396/nexus-agent-demo/internal/surfaces/capability"
+import "github.com/truongpx396/nexus-agent/internal/surfaces/capability"
 
 // Descriptor is internal/surfaces/telegram.Descriptor's own counterpart —
 // a chat bot has no rich approval-context UI and no server-push streaming

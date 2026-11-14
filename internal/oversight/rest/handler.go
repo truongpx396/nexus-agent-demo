@@ -17,8 +17,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
-	restkit "github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
+	"github.com/truongpx396/nexus-agent/internal/oversight"
+	restkit "github.com/truongpx396/nexus-agent/internal/surfaces/rest"
 )
 
 // ApprovalSource is the part of oversight.Approvals the endpoints read through.

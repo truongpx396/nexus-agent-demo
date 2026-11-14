@@ -13,8 +13,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/controlplane"
-	"github.com/truongpx396/nexus-agent-demo/internal/controlplane/wire"
+	"github.com/truongpx396/nexus-agent/internal/controlplane"
+	"github.com/truongpx396/nexus-agent/internal/controlplane/wire"
 )
 
 var (

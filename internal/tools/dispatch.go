@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/hooks"
+	"github.com/truongpx396/nexus-agent/internal/hooks"
 )
 
 // resolveTool runs pipeline steps 1 (resolve) and 2 (digest re-verify),
@@ -69,7 +69,7 @@ func (p *Pipeline) finishCall(ctx context.Context, tool Tool, ref ToolRef, descr
 	// in-memory serial slot is the honest interim: it prevents this
 	// process's own goroutines from racing a non-concurrency-safe tool
 	// against itself within one session, which is the only concurrency this
-	// phase's single-process demo can produce in the first place.
+	// phase's single-process build can produce in the first place.
 	if !tool.IsConcurrencySafe(input) {
 		state.serialLock.Lock()
 		defer state.serialLock.Unlock()

@@ -1,6 +1,6 @@
 package mcp
 
-import "github.com/truongpx396/nexus-agent-demo/internal/surfaces/capability"
+import "github.com/truongpx396/nexus-agent/internal/surfaces/capability"
 
 // Descriptor declares this "surface" for task 11.8's conformance suite.
 // MCP is a tool SOURCE, not a principal-submitting surface — it never

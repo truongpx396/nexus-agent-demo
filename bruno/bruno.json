@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "name": "nexus-agent-demo",
+  "name": "nexus-agent",
   "type": "collection",
   "ignore": [
     "node_modules",

@@ -13,8 +13,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/tools"
-	"github.com/truongpx396/nexus-agent-demo/kernel"
+	"github.com/truongpx396/nexus-agent/internal/tools"
+	"github.com/truongpx396/nexus-agent/kernel"
 )
 
 // PipelineExecutor adapts *tools.Pipeline (the real ToolExecutor, README

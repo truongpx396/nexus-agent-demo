@@ -6,7 +6,7 @@
 // internal/retrieval is what turns them into an index.
 package ingest
 
-import "github.com/truongpx396/nexus-agent-demo/internal/tools"
+import "github.com/truongpx396/nexus-agent/internal/tools"
 
 // Document is one converted source file: its normalized text plus the
 // identity a caller needs to trace a chunk back to where it came from.

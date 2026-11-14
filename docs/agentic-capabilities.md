@@ -135,12 +135,14 @@ Editing anything under `skills/*/` (including `GUIDE.md`) changes `BundleDigest`
 the embedded `signature` in that skill's `skill.json` must be regenerated — otherwise
 `nexusd` logs `skipped a skill bundle with a missing or invalid signature` and drops
 it silently (skill bundles are less-trusted content than a first-party builtin, task
-7.5's own posture). This demo's signing key is a fixed, deterministic dev value (not
+7.5's own posture). The dev signing key is a fixed, deterministic value (not
 a secret worth protecting — only the public half is ever checked at runtime); a real
 deployment signs offline with a real, private key instead. To re-sign after an edit:
 
 ```go
 // go run this against the repo root (module-local: it imports internal/skills)
+// The seed string is frozen: it predates the rename from nexus-agent-demo, and
+// the embedded dev public key (devSkillsSigningPubkey) is derived from it.
 seed := sha256.Sum256([]byte("nexus-agent-demo dev skills signing key v1"))
 priv := ed25519.NewKeyFromSeed(seed[:])
 bundles, _ := skills.LoadBundles("skills")

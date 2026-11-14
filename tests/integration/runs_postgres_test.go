@@ -10,15 +10,15 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/controlplane"
-	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
-	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	eventlogpg "github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/runs"
-	runspg "github.com/truongpx396/nexus-agent-demo/internal/runs/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
+	"github.com/truongpx396/nexus-agent/internal/controlplane"
+	costpg "github.com/truongpx396/nexus-agent/internal/cost/postgres"
+	"github.com/truongpx396/nexus-agent/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent/internal/crypto/postgres"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	eventlogpg "github.com/truongpx396/nexus-agent/internal/eventlog/postgres"
+	"github.com/truongpx396/nexus-agent/internal/runs"
+	runspg "github.com/truongpx396/nexus-agent/internal/runs/postgres"
+	"github.com/truongpx396/nexus-agent/internal/store"
 )
 
 func admitReq(tenantID uuid.UUID) controlplane.AdmitRunV1 {

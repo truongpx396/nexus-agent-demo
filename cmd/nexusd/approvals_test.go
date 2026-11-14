@@ -9,10 +9,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
-	oversightpg "github.com/truongpx396/nexus-agent-demo/internal/oversight/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/queue"
-	"github.com/truongpx396/nexus-agent-demo/internal/reliability"
+	"github.com/truongpx396/nexus-agent/internal/oversight"
+	oversightpg "github.com/truongpx396/nexus-agent/internal/oversight/postgres"
+	"github.com/truongpx396/nexus-agent/internal/queue"
+	"github.com/truongpx396/nexus-agent/internal/reliability"
 )
 
 // flakyQueue fails the first failFor enqueues, then accepts.

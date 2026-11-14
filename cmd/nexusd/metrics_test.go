@@ -12,7 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/reporting"
+	"github.com/truongpx396/nexus-agent/internal/reporting"
 )
 
 // countingReports counts how often a render reads from storage.

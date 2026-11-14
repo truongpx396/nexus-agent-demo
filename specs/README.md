@@ -17,7 +17,7 @@ Each directory is one feature (or, like 001 and 002, a set of related stories), 
 | [005](005-modular-monolith-boundaries/spec.md) | Modular-monolith boundaries: infrastructure out of the core, each table owned by its feature, a composition root that only wires, every driving adapter beside its feature, a session aggregate no feature stamps or references, and the rules that enforce it | Implemented; one follow-up open ([tasks](005-modular-monolith-boundaries/tasks.md#open-follow-ups)) | none (new work) |
 | [006](006-openapi-contract/spec.md) | OpenAPI contract: the REST API described once in `api/openapi.yaml`, each feature's models and handler interface generated from it with oapi-codegen, and a test and a CI check that hold the spec, the routes and the generated code together | Implemented; two follow-ups open ([tasks](006-openapi-contract/tasks.md#open-follow-ups)) | none (new work) |
 
-Also in [001](001-agent-platform/): [pattern-coverage.md](001-agent-platform/pattern-coverage.md), the original design's 67 patterns against this demo.
+Also in [001](001-agent-platform/): [pattern-coverage.md](001-agent-platform/pattern-coverage.md), the spec's 67 patterns against Nexus Agent.
 
 ## Phase to spec
 

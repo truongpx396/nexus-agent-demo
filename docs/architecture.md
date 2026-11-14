@@ -1,6 +1,6 @@
 # Architecture diagrams
 
-Mermaid views of how nexus-agent-demo is put together and how its critical flows run. [`README.md`](../README.md) holds the narrative and one overview diagram; this file zooms in. Every diagram was drawn from the code at commit `a4beef8`, and each names the files it comes from. Where the check found the code doing something the README does not say, it is listed in [Where the code differs from the docs](#where-the-code-differs-from-the-docs).
+Mermaid views of how nexus-agent is put together and how its critical flows run. [`README.md`](../README.md) holds the narrative and one overview diagram; this file zooms in. Every diagram was drawn from the code at commit `a4beef8`, and each names the files it comes from. Where the check found the code doing something the README does not say, it is listed in [Where the code differs from the docs](#where-the-code-differs-from-the-docs).
 
 **Reading the diagrams.** Solid arrows are synchronous calls; dashed arrows are asynchronous, best-effort or optional. "Tx" is one tenant-scoped Postgres transaction. A box in double brackets is the kernel.
 

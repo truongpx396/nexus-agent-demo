@@ -19,9 +19,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/runs"
-	"github.com/truongpx396/nexus-agent-demo/internal/surfaces"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/internal/runs"
+	"github.com/truongpx396/nexus-agent/internal/surfaces"
 )
 
 // telegramNamespace is a fixed, arbitrary UUID used only as the namespace

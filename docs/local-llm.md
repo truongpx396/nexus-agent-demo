@@ -1,7 +1,7 @@
 # Local model + observability: Ollama, LiteLLM, Langfuse
 
 README.md §5 names LiteLLM and Langfuse as third-party integration adapters
-this demo defers until "one is actually wanted" — the ports already exist,
+Nexus Agent defers until "one is actually wanted" — the ports already exist,
 and the platform keeps working with all of them off. This is that
 integration: a local model (Ollama, running `qwen2.5:3b` natively on the
 Mac) reachable through `internal/provider.Provider` via a LiteLLM gateway,

@@ -29,5 +29,5 @@ This spec *is* conformance work, so the check is the reverse of usual: each stor
 ## Risks
 
 - **A per-sender limit needs a sender identity per provider** (`chat_id`, the Zalo sender id, the email `from`); an attacker who varies it defeats the limit. The tenant-wide limit should stay as a ceiling above the per-sender one.
-- **The external anchor is a new dependency.** It should sit behind a port, like `signerd` does, so the demo can keep a local implementation.
+- **The external anchor is a new dependency.** It should sit behind a port, like `signerd` does, so Nexus Agent can keep a local implementation.
 - **Masking changes what the model sees**, so it is behaviour-bearing and has to clear the eval gate (`make eval`) like a prompt change.

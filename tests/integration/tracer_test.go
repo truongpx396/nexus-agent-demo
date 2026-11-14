@@ -23,18 +23,18 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/authn"
-	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
-	cryptopg "github.com/truongpx396/nexus-agent-demo/internal/crypto/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/obs"
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
-	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
-	runspg "github.com/truongpx396/nexus-agent-demo/internal/runs/postgres"
-	runsrest "github.com/truongpx396/nexus-agent-demo/internal/runs/rest"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
-	restkit "github.com/truongpx396/nexus-agent-demo/internal/surfaces/rest"
-	"github.com/truongpx396/nexus-agent-demo/kernel"
+	"github.com/truongpx396/nexus-agent/internal/authn"
+	"github.com/truongpx396/nexus-agent/internal/crypto"
+	cryptopg "github.com/truongpx396/nexus-agent/internal/crypto/postgres"
+	"github.com/truongpx396/nexus-agent/internal/eventlog/postgres"
+	"github.com/truongpx396/nexus-agent/internal/obs"
+	"github.com/truongpx396/nexus-agent/internal/provider"
+	"github.com/truongpx396/nexus-agent/internal/provider/fake"
+	runspg "github.com/truongpx396/nexus-agent/internal/runs/postgres"
+	runsrest "github.com/truongpx396/nexus-agent/internal/runs/rest"
+	"github.com/truongpx396/nexus-agent/internal/store"
+	restkit "github.com/truongpx396/nexus-agent/internal/surfaces/rest"
+	"github.com/truongpx396/nexus-agent/kernel"
 )
 
 // spySpan records what it was started with and, once closed, what it was

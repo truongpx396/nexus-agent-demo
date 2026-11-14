@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
+	"github.com/truongpx396/nexus-agent/internal/provider"
 )
 
 // --- request shapes (the subset of the Messages API this adapter uses) ---

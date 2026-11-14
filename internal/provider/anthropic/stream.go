@@ -11,7 +11,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
+	"github.com/truongpx396/nexus-agent/internal/provider"
 )
 
 // Stream issues the request and returns a normalized Stream. An error

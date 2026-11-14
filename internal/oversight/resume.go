@@ -10,13 +10,13 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/crypto"
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
-	"github.com/truongpx396/nexus-agent-demo/internal/runstate"
-	"github.com/truongpx396/nexus-agent-demo/internal/tools"
-	"github.com/truongpx396/nexus-agent-demo/internal/tools/kerneladapter"
-	"github.com/truongpx396/nexus-agent-demo/kernel"
+	"github.com/truongpx396/nexus-agent/internal/crypto"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/internal/provider"
+	"github.com/truongpx396/nexus-agent/internal/runstate"
+	"github.com/truongpx396/nexus-agent/internal/tools"
+	"github.com/truongpx396/nexus-agent/internal/tools/kerneladapter"
+	"github.com/truongpx396/nexus-agent/kernel"
 )
 
 // Resumer is the ONE place in this codebase that both decides an approval
@@ -31,7 +31,7 @@ import (
 // suspended one.
 //
 // System/Catalog/MaxTurns mirror cmd/nexusd's kernelRunStarter fields
-// exactly: this demo has no per-tenant config store yet (Phase 7's
+// exactly: Nexus Agent has no per-tenant config store yet (Phase 7's
 // internal/config), so every run in the process shares one system prompt
 // and one resident catalog regardless of which session it belongs to.
 type Resumer struct {

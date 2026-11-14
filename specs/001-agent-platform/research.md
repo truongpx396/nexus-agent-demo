@@ -12,7 +12,7 @@ rationale is a commit message rather than a design note, the commit is cited so 
 ### R-01 — The kernel loop is a range-over-func generator
 
 - **Decision**: `Kernel.Run` returns `iter.Seq2[eventlog.Event, error]`; control flow lives only there (`kernel/loop.go`).
-- **Rationale**: The original's "single async generator" survives translation exactly: the caller pulls events, back-pressure
+- **Rationale**: The spec's "single async generator" survives translation exactly: the caller pulls events, back-pressure
   and cancellation are the caller's `break`/`ctx`, and a surface cannot interleave its own control flow. Typed terminal
   states fall out of the generator's single exit (FR-015–FR-017).
 - **Alternatives**: a goroutine pushing to a channel (leaks on a slow consumer, invites per-surface buffering policy); a
@@ -24,7 +24,7 @@ rationale is a commit message rather than a design note, the commit is cited so 
   `tests/contract/boundaries_test.go`.
 - **Rationale**: Keeps every seam while collapsing topology (README §2). A physical split later replaces `LocalPort` with an
   RPC client in `main.go`. v1 types are deliberately plain data so the wire shape does not move when an internal type does.
-- **Alternatives**: three binaries from day one (the original; operational cost with no demo benefit); no boundary at all
+- **Alternatives**: three binaries from day one (the spec's own deployment; operational cost with no benefit at this scale); no boundary at all
   (the state before F15 — the boundary was *documented* and two of its test rules `t.Skipf`'d because the package did not
   exist). The latter is why Phase 15 task 15.4 exists.
 
@@ -36,7 +36,7 @@ rationale is a commit message rather than a design note, the commit is cited so 
   pooler reassigns a connection between tenants between statements. PgBouncer is kept precisely because the rule is
   meaningless without a transaction pooler to prove it against (README §2).
 - **Alternatives**: session-level `SET` (banned by lint and by the test failing when `true`→`false`); per-tenant schemas or
-  databases (a topology cost this demo does not pay); application-level `WHERE tenant_id` (the exact failure RLS exists
+  databases (a topology cost Nexus Agent does not pay); application-level `WHERE tenant_id` (the exact failure RLS exists
   to survive).
 
 ### R-04 — Two database roles
@@ -71,8 +71,8 @@ rationale is a commit message rather than a design note, the commit is cited so 
   public half. `nexusd` cannot append an event unless `signerd` answers.
 - **Rationale**: A component that writes receipts must not be able to rewrite them. The socket makes framing/multiplexing
   needless; a fresh dial per call is fine (`internal/audit/protocol.go`). Fail-closed on unreachable.
-- **Alternatives**: in-process key (writer can forge); HMAC per record (not tamper-evident); a cloud KMS (a dependency the
-  demo does not need; the `Signer` interface admits it).
+- **Alternatives**: in-process key (writer can forge); HMAC per record (not tamper-evident); a cloud KMS (a dependency
+  Nexus Agent does not need; the `Signer` interface admits it).
 
 ### R-08 — One canonical digest does three jobs
 
@@ -104,7 +104,7 @@ rationale is a commit message rather than a design note, the commit is cited so 
   Pub/Sub event bus lets an SSE client be served by a different process than the one executing the run. Source: `2efa4ff`.
 - **Rationale**: The Postgres adapter wrote `lease_expires_at` on every lease and read it nowhere, so it could not reclaim an
   abandoned job — the swap is a real reliability gain, not a lateral port. Closes the single-process ceiling.
-- **Alternatives**: NATS JetStream (the original's choice, still deferred per README §5, trigger: concurrency beyond one
+- **Alternatives**: NATS JetStream (the spec's choice, still deferred per README §5, trigger: concurrency beyond one
   process's comfort); keep Postgres `SKIP LOCKED` (kept *only* for board-card claims, R-18, where its semantics are right).
 - **Ledger impact**: reverses the *adapter* in row #41; the port and the claim are unchanged.
 
@@ -125,7 +125,7 @@ rationale is a commit message rather than a design note, the commit is cited so 
 - **Rationale**: Pattern #44's own comment names the swap: "a config change later, not a schema or interface change." The
   in-sandbox broker is **not shipped**, so connector and MCP endpoints stay in the egress deny set — a bypass is never the
   interim state.
-- **Alternatives**: gVisor/Kata now (needs a runtime class and a warm pool the demo does not have); no sandbox (rejected by FR-061).
+- **Alternatives**: gVisor/Kata now (needs a runtime class and a warm pool Nexus Agent does not have); no sandbox (rejected by FR-061).
 
 ### R-13 — Plan predicates are a closed JSON AST
 
@@ -155,7 +155,7 @@ rationale is a commit message rather than a design note, the commit is cited so 
 ### R-16 — Memory is files; retrieval only past the trigger
 
 - **Decision**: file-first memory (`internal/memory`), retrieval (`pgvector`) added in Phase 12 once the ~1M-token trigger fired.
-  The demo's embedding column is `vector(32)` (a deterministic fake embedder), not a production dimension.
+  The embedding column is `vector(32)` (a deterministic fake embedder), not a production dimension.
 - **Rationale**: Constitution *Memory is files first*. Retrieval sits *beside* memory and obeys the same screening and tenant
   scoping; erasure must empty it in the same transaction (FR-130) so it is not a durable-knowledge side door.
 - **Alternatives**: a vector store from the start (infrastructure before the data shape justifies it).

@@ -10,8 +10,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/retrieval"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
+	"github.com/truongpx396/nexus-agent/internal/retrieval"
+	"github.com/truongpx396/nexus-agent/internal/store"
 )
 
 // These take a caller-supplied tx, the same convention internal/cost's

@@ -11,7 +11,7 @@ import (
 
 	xoauth2 "golang.org/x/oauth2"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/connectors"
+	"github.com/truongpx396/nexus-agent/internal/connectors"
 )
 
 // TestRegistry_Config is README task 13.8 (closing production-readiness finding

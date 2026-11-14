@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/obs"
+	"github.com/truongpx396/nexus-agent/internal/obs"
 
 	"go.opentelemetry.io/otel/trace"
 )

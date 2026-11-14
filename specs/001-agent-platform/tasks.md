@@ -428,7 +428,7 @@ foundational deliverable, and the property test for the paired-result invariant 
 - [X] T188 [P] [US11] Surface wiring in the composition root in `cmd/nexusd/surfaces_wiring.go` (bp 11.9; FR-124)
 - [X] T189 [P] [US11] Messaging session continuity — deterministic per-peer key, resume `awaiting_input`, deliver the model's reply — in `internal/surfaces/telegram/webhook.go`, `internal/surfaces/zalo/webhook.go`, `internal/surfaces/email/webhook.go` (post-ledger, `7606e15`; FR-121)
 
-**Checkpoint**: every surface the original names, on the same seam.
+**Checkpoint**: every surface the spec names, on the same seam.
 
 ---
 
@@ -508,7 +508,7 @@ foundational deliverable, and the property test for the paired-result invariant 
 - [X] T219 [P] [US14] `observability-up` / `observability-down` / `docker-down`, and the doc, in `Makefile`, `docs/observability.md` (bp 17.8; FR-133)
 - [X] T220 [P] [US14] Native Langfuse exporter and multi-destination span fan-out, with Tempo as the generic OTLP sink, in `internal/obs/langfuse/exporter.go`, `internal/obs/multi.go`, `internal/obs/tracer.go`, `deploy/observability/tempo.yaml` (post-ledger, `1c4f02d`; FR-138)
 - [X] T221 [P] [US14] Opt-in pprof and Pyroscope continuous profiling for `nexusd` and `signerd` in `internal/obs/profiling/pprof.go`, `internal/obs/profiling/pyroscope.go`, `deploy/observability/grafana/dashboards/nexus-profiling.json` (post-ledger, `dda32cf`; FR-139)
-- [X] T255 [P] [US14] Promtail Docker service discovery, filtered to the `nexus-agent-demo` compose project, so containerized `nexusd`/`signerd` logs keep shipping, in `deploy/observability/promtail-config.yml` (bp 17.14) — added 2026-11-02: the baseline missed this ledger row
+- [X] T255 [P] [US14] Promtail Docker service discovery, filtered to the `nexus-agent` compose project, so containerized `nexusd`/`signerd` logs keep shipping, in `deploy/observability/promtail-config.yml` (bp 17.14) — added 2026-11-02: the baseline missed this ledger row
 
 **Checkpoint**: operability, strictly additive.
 
@@ -672,3 +672,4 @@ A review at `7b94aaa` read the path from a request to the model and back, the to
 - [X] T281 Stop leasing on shutdown and let in-flight runs finish within a grace period, and turn a panic in a job into a permanent failure of that job, in `internal/queue/worker.go`, `cmd/nexusd/background.go`, `cmd/nexusd/workers.go`, `docs/go-live.md`, `.env.example`, `deploy/docker-compose.yml` per Principle VIII
 - [X] T282 Size a cost reservation's input half from the prompt being sent, in `internal/cost/gate.go`, `internal/cost/gate_helpers.go`, `internal/cost/reserve.go`, `internal/promptctx/estimate.go`, `kernel/turns.go`, `kernel/metering.go` per Principle IV
 - [X] T283 Validate every request the real kernel and resident catalog send against the provider's documented rules in an integration test, and add live eval cases that use the resident catalog, in `internal/provider/anthropic/validate.go`, `cmd/nexusd/wire_rules_integration_test.go`, `evals/live_corpus.go` per Principle IX
+- [X] T284 Rename the project from Nexus Agent Demo to Nexus Agent, and stop describing it as a simplified reimplementation of the design repo, now `nexus-agent-spec`: the Go module path, the Compose project and image names, the tenant-id namespace and the MCP client name, the README, CLAUDE.md and spec framing, and every link to the design repo, in `go.mod`, `README.md`, `CLAUDE.md`, `deploy/docker-compose.yml`, `cmd/nexusd/cli_seed.go`, `internal/surfaces/mcp/client.go`, `specs/001-agent-platform/pattern-coverage.md`

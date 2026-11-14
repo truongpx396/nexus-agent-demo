@@ -10,7 +10,7 @@ import (
 
 	goredis "github.com/redis/go-redis/v9"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/queue"
+	"github.com/truongpx396/nexus-agent/internal/queue"
 )
 
 var _ queue.Stater = (*Streams)(nil)

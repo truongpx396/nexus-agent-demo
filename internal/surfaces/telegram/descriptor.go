@@ -1,6 +1,6 @@
 package telegram
 
-import "github.com/truongpx396/nexus-agent-demo/internal/surfaces/capability"
+import "github.com/truongpx396/nexus-agent/internal/surfaces/capability"
 
 // Descriptor declares this surface's static capability (README task 7.12,
 // 11.8's conformance suite extended to it): a chat bot has no rich

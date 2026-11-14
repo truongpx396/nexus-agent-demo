@@ -3,10 +3,10 @@ package main
 import (
 	"github.com/redis/go-redis/v9"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/cost"
-	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
-	costredis "github.com/truongpx396/nexus-agent-demo/internal/cost/redis"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
+	"github.com/truongpx396/nexus-agent/internal/cost"
+	costpg "github.com/truongpx396/nexus-agent/internal/cost/postgres"
+	costredis "github.com/truongpx396/nexus-agent/internal/cost/redis"
+	"github.com/truongpx396/nexus-agent/internal/store"
 )
 
 // newCostGate wires the budget gate to its two adapters: the Postgres ledger

@@ -6,8 +6,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/oversight"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/internal/oversight"
 )
 
 type userMessagePayload struct {
@@ -24,7 +24,7 @@ type userMessagePayload struct {
 //
 // "Drained at a turn boundary under the serial lock" describes how a LIVE
 // worker (internal/queue's Worker, holding this session's SessionLock)
-// would apply a queued steer between turns — this demo's synchronous REST
+// would apply a queued steer between turns — Nexus Agent's synchronous REST
 // fast path has no live-goroutine interrupt to drain into (the same honest
 // gap internal/tools/pipeline.go's own step-12 doc comment names for
 // cross-worker concurrency generally), so Steer here durably records the

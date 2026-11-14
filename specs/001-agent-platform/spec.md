@@ -15,9 +15,9 @@
 > listed under [Assumptions](#assumptions) rather than smoothed over.
 >
 > `[orig: FR-nnn]` tags point at the requirement numbers the ledger and code comments cite from the upstream design
-> (`truongpx396/nexus-agent`, whose `specs/001-agent-platform/spec.md` is not vendored here). The requirement *text*
+> (`truongpx396/nexus-agent-spec`, whose `specs/001-agent-platform/spec.md` is not vendored here). The requirement *text*
 > is reconstructed from how this repo uses each number, so treat a tag as a best-fit cross-reference, not a quotation.
-> Requirements without a tag are new to this demo.
+> Requirements without a tag are new to Nexus Agent.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -279,7 +279,7 @@ listing every missing setting. A request with no token is rejected; readiness is
 A fixed roster of agents collaborates through a shared task board, claiming cards without ever double-claiming, under one
 shared budget.
 
-*Ledger*: Phase 9. **Why this priority**: new scope beyond the original design; valuable but not foundational.
+*Ledger*: Phase 9. **Why this priority**: new scope beyond the spec; valuable but not foundational.
 
 **Independent Test**: Spin up a three-member team on a six-card board; two members race for one card and exactly one
 wins; a clean member reading a card written under a tainted session becomes tainted; total spend stays within the
@@ -781,7 +781,7 @@ target-down alert.
 
 - **Provenance.** Requirement *numbers* come from the upstream design as cited by `09d54f8:docs/build-phases.md`; their *text* here
   is reconstructed. Before treating an `[orig: …]` tag as authoritative, reconcile it against
-  `truongpx396/nexus-agent@2ad2a6a` (`specs/001-agent-platform/spec.md`).
+  `truongpx396/nexus-agent-spec@2ad2a6a` (`specs/001-agent-platform/spec.md`).
 - **Single-binary topology.** The control plane and data plane run in one process behind a versioned in-process contract;
   a physical split is a composition-root change. Three binaries exist: the server, a CLI, and a sign-only key custodian.
 - **Deliberately out of scope** (the ledger's four *seams* and six *omissions*): credit ledger, billing periods, FX and

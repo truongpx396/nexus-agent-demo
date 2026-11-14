@@ -8,7 +8,7 @@
 // literally true, including the one with no Go server code behind it.
 package web
 
-import "github.com/truongpx396/nexus-agent-demo/internal/surfaces/capability"
+import "github.com/truongpx396/nexus-agent/internal/surfaces/capability"
 
 // Descriptor mirrors REST's own (internal/surfaces/rest/capability.go) —
 // the web app is a full-fidelity client of the exact same API REST itself

@@ -6,8 +6,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/eventlog"
-	"github.com/truongpx396/nexus-agent-demo/internal/teams"
+	"github.com/truongpx396/nexus-agent/internal/eventlog"
+	"github.com/truongpx396/nexus-agent/internal/teams"
 )
 
 func TestWriteCard_ARoutineCardIsCleanAndAFlaggedOneIsRecordedButNeverShown(t *testing.T) {

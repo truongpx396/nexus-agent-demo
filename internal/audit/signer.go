@@ -21,7 +21,7 @@ type Signer interface {
 
 // SignerClient dials cmd/signerd's unix socket once per call. A local
 // socket makes a persistent, reconnecting connection pool unneeded
-// complexity for this demo — every call this package makes is already
+// complexity for Nexus Agent — every call this package makes is already
 // inside a Postgres transaction with its own latency budget, and a fresh
 // dial to a local socket is sub-millisecond.
 type SignerClient struct {

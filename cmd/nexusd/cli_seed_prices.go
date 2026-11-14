@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/cost"
+	"github.com/truongpx396/nexus-agent/internal/cost"
 )
 
 // modelPrice is one model's rates in currency-micros per million tokens.

@@ -11,10 +11,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	configpg "github.com/truongpx396/nexus-agent-demo/internal/config/postgres"
-	costpg "github.com/truongpx396/nexus-agent-demo/internal/cost/postgres"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
-	tenancypg "github.com/truongpx396/nexus-agent-demo/internal/tenancy/postgres"
+	configpg "github.com/truongpx396/nexus-agent/internal/config/postgres"
+	costpg "github.com/truongpx396/nexus-agent/internal/cost/postgres"
+	"github.com/truongpx396/nexus-agent/internal/store"
+	tenancypg "github.com/truongpx396/nexus-agent/internal/tenancy/postgres"
 )
 
 func runSeed(ctx context.Context, args []string) error {
@@ -33,7 +33,7 @@ func runSeed(ctx context.Context, args []string) error {
 
 	// Deterministic from the name, so `make seed TENANT=acme` is idempotent
 	// across runs rather than minting a new tenant every time.
-	tenantID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("nexus-agent-demo/tenant/"+*tenantName))
+	tenantID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("nexus-agent/tenant/"+*tenantName))
 
 	s := store.New(pool)
 	err = s.InTenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {

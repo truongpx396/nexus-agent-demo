@@ -3,7 +3,7 @@ package ingest
 import (
 	"fmt"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/tools"
+	"github.com/truongpx396/nexus-agent/internal/tools"
 )
 
 // Admit runs the same injection scanner internal/tools/admit.go uses for a

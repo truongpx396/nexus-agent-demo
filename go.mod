@@ -1,4 +1,4 @@
-module github.com/truongpx396/nexus-agent-demo
+module github.com/truongpx396/nexus-agent
 
 go 1.26.10
 

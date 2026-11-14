@@ -8,7 +8,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/tools"
+	"github.com/truongpx396/nexus-agent/internal/tools"
 )
 
 func TestFileSearch_MatchesGlobPattern(t *testing.T) {

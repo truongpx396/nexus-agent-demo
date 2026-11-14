@@ -12,7 +12,7 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
+	"github.com/truongpx396/nexus-agent/internal/provider"
 )
 
 // Build assembles the prompt one turn is sent with, plus the prefix bytes

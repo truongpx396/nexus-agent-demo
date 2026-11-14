@@ -16,8 +16,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/truongpx396/nexus-agent-demo/evals"
-	"github.com/truongpx396/nexus-agent-demo/internal/dotenv"
+	"github.com/truongpx396/nexus-agent/evals"
+	"github.com/truongpx396/nexus-agent/internal/dotenv"
 )
 
 // capabilityKTrials is how many times a capability-class case runs before

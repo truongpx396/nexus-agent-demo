@@ -19,7 +19,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// EmbeddingDimensions is the fixed vector width this demo's schema and
+// EmbeddingDimensions is the fixed vector width Nexus Agent's schema and
 // embedder agree on — see internal/provider/fake.EmbeddingDimensions's own
 // doc comment for why the two constants are declared independently rather
 // than one importing the other, and migrations/0022_retrieval.sql's

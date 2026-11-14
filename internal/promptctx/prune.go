@@ -6,7 +6,7 @@ import (
 	"slices"
 	"unicode/utf8"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
+	"github.com/truongpx396/nexus-agent/internal/provider"
 )
 
 // PrunePolicy configures live pruning (README task 7.10): three ordered

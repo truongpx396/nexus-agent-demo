@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
-	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
+	"github.com/truongpx396/nexus-agent/internal/provider"
+	"github.com/truongpx396/nexus-agent/internal/provider/fake"
 )
 
 // TestRunLiveTaskCase_ against the deterministic fake provider proves the

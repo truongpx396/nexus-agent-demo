@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/cost"
+	"github.com/truongpx396/nexus-agent/internal/cost"
 )
 
 func entriesFor(entries []cost.PriceBookEntry, model string) map[cost.MeterID]int64 {

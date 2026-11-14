@@ -4,8 +4,8 @@
 # nexusd image is self-contained with no extra COPY for them.
 #
 # Build one target at a time:
-#   docker build --target nexusd  -t nexus-agent-demo/nexusd  .
-#   docker build --target signerd -t nexus-agent-demo/signerd .
+#   docker build --target nexusd  -t nexus-agent/nexusd  .
+#   docker build --target signerd -t nexus-agent/signerd .
 
 # The golang image sets GOTOOLCHAIN=local, so an image older than go.mod's `go`
 # directive (which is bumped by hand to stay on a patched release) cannot build

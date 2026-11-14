@@ -7,8 +7,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// DefaultCurrency is used wherever a caller doesn't specify one — this
-// demo is single-currency throughout (FX is explicitly out of scope,
+// DefaultCurrency is used wherever a caller doesn't specify one — Nexus
+// Agent is single-currency throughout (FX is explicitly out of scope,
 // README §8).
 const DefaultCurrency = "USD"
 
@@ -87,7 +87,7 @@ type GateConfig struct {
 	// plus a conservative output ceiling. A production deployment would
 	// derive these from the routed model's real context window and a
 	// configured max_output_tokens; neither is carried on
-	// internal/provider's config yet, so this demo uses fixed, documented
+	// internal/provider's config yet, so Nexus Agent uses fixed, documented
 	// defaults instead of inventing that plumbing as a Phase 4 side quest.
 	MaxInputTokenEstimate  int64
 	MaxOutputTokenEstimate int64

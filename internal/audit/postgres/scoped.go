@@ -7,8 +7,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/audit"
-	"github.com/truongpx396/nexus-agent-demo/internal/store"
+	"github.com/truongpx396/nexus-agent/internal/audit"
+	"github.com/truongpx396/nexus-agent/internal/store"
 )
 
 // Scoped is a Chain bound to a Store, for the callers that are not already

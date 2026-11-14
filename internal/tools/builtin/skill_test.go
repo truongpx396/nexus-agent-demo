@@ -8,8 +8,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/skills"
-	"github.com/truongpx396/nexus-agent-demo/internal/tools"
+	"github.com/truongpx396/nexus-agent/internal/skills"
+	"github.com/truongpx396/nexus-agent/internal/tools"
 )
 
 type fakeCatalog struct {

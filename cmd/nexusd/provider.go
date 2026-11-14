@@ -10,14 +10,14 @@ import (
 
 	"github.com/rs/zerolog/log"
 
-	"github.com/truongpx396/nexus-agent-demo/internal/obs"
-	"github.com/truongpx396/nexus-agent-demo/internal/obs/langfuse"
-	"github.com/truongpx396/nexus-agent-demo/internal/obs/otlp"
-	"github.com/truongpx396/nexus-agent-demo/internal/provider"
-	"github.com/truongpx396/nexus-agent-demo/internal/provider/anthropic"
-	"github.com/truongpx396/nexus-agent-demo/internal/provider/fake"
-	"github.com/truongpx396/nexus-agent-demo/internal/provider/litellm"
-	runsrest "github.com/truongpx396/nexus-agent-demo/internal/runs/rest"
+	"github.com/truongpx396/nexus-agent/internal/obs"
+	"github.com/truongpx396/nexus-agent/internal/obs/langfuse"
+	"github.com/truongpx396/nexus-agent/internal/obs/otlp"
+	"github.com/truongpx396/nexus-agent/internal/provider"
+	"github.com/truongpx396/nexus-agent/internal/provider/anthropic"
+	"github.com/truongpx396/nexus-agent/internal/provider/fake"
+	"github.com/truongpx396/nexus-agent/internal/provider/litellm"
+	runsrest "github.com/truongpx396/nexus-agent/internal/runs/rest"
 )
 
 // newProvider picks the fake (default, no credentials needed — the demo
@@ -268,7 +268,7 @@ func parseHeaderList(raw string) map[string]string {
 	return headers
 }
 
-// newEmbedder returns this demo's one Embedder: internal/provider/fake's
+// newEmbedder returns Nexus Agent's one Embedder: internal/provider/fake's
 // deterministic fake (README task 12.5 — "no correctness test calls a live
 // embedding model"). Unlike newProvider, there is no real-adapter branch
 // here: Anthropic has no first-party embedding endpoint, and adding a

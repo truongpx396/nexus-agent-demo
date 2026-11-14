@@ -51,7 +51,7 @@ var routeTable = map[DataLabel]map[Difficulty]string{
 		DifficultyComplex: "claude-opus-5",
 	},
 	// restricted never routes off-VPC to a hosted model in the source
-	// design; this demo has no self-hosted adapter yet (out of scope, README
+	// design; Nexus Agent has no self-hosted adapter yet (out of scope, README
 	// §8), so it routes to the most capable hosted model available and
 	// names that fact in Reason rather than silently treating "restricted"
 	// the same as "confidential".
